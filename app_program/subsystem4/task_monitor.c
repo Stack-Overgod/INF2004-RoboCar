@@ -4,12 +4,11 @@
  *
  *	APIs shown: tk_sta_alm, tk_stp_alm, alarm handler, tk_wai_flg,
  *	            tk_rcv_mbf, tk_loc_mtx/tk_unl_mtx, tk_ref_sem, tk_ref_mpf,
- *	            tk_ref_tsk, tk_sus_tsk, tk_rsm_tsk, tk_chg_pri,
+ *	            tk_ref_tsk,
  *	            tk_get_tid, tk_get_tim
  */
 
 #include "subsystem4.h"
-#include "../subsystem1/subsystem1.h"	/* IF-05: tid_led */
 #include "../subsystem2/subsystem2.h"	/* sem_slots, mpf_samples (read only) */
 #include "../subsystem3/subsystem3.h"	/* IF-04: app_stats, mtx_stats */
 
@@ -49,7 +48,6 @@ EXPORT void monitor_task(INT stacd, void *exinf)
 	T_RTSK		rtsk;
 	SYSTIM		now;
 	UW		reports = 0;
-	BOOL		led_paused = FALSE;
 	ER		er;
 
 	(void)stacd; (void)exinf;
@@ -97,22 +95,12 @@ EXPORT void monitor_task(INT stacd, void *exinf)
 			  snap.received ? (INT)(snap.sum / (W)snap.received) : 0,
 			  rsem.semcnt, (INT)rmpf.frbcnt);
 
-		/* 4. Every few reports, pause or resume subsystem 1's LED task
-		      (IF-05) and look at it with tk_ref_tsk. */
+		/* 4. Every few reports, look at this task with tk_ref_tsk.
+		      (The template paused subsystem 1's LED task here via IF-05;
+		      subsystem 1 is now telemetry, so that LED task is gone.) */
 		if (++reports % S4_LED_TOGGLE_REPORTS == 0) {
-			if (led_paused) {
-				tk_rsm_tsk(tid_led);
-				tk_chg_pri(tid_led, S1_PRI_LED);	/* back to normal */
-			} else {
-				tk_sus_tsk(tid_led);
-				/* Changing the priority of a task: */
-				tk_chg_pri(tid_led, S1_PRI_LED + 1);
-			}
-			led_paused = !led_paused;
-
-			tk_ref_tsk(tid_led, &rtsk);
-			tm_printf((UB*)"monitor: LED task %s, state=%s, pri=%d\n",
-				  led_paused ? "paused" : "resumed",
+			tk_ref_tsk(TSK_SELF, &rtsk);
+			tm_printf((UB*)"monitor: own task state=%s, pri=%d\n",
 				  state_name(rtsk.tskstat), rtsk.tskpri);
 		}
 	}
