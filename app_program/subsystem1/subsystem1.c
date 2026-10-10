@@ -1,35 +1,21 @@
 /*
- *	subsystem1.c
- *	Subsystem 1 -- LED heartbeat: creates its objects and starts its task.
+ * subsystem1.c -- Subsystem 1: telemetry and commands. ID: <your ID>.
  *
- *	APIs shown: tk_cre_cyc, tk_sta_cyc
+ * The template's two entry points. usermain() runs every _init() first,
+ * then every _start(), so all kernel objects exist before any task runs.
+ *
+ * NOTE: sub_telemetry returns rc_result_t (RC_OK == 0); the template wants
+ * ER. RC_OK becomes E_OK, anything else E_SYS so usermain()'s CHECK() flags
+ * it. (There's no RC_ER helper in the shared headers, so convert by hand.)
  */
-
 #include "subsystem1.h"
-
-EXPORT ID	tid_led;	/* IF-05, see subsystem1.h */
-EXPORT ID	cyc_led;
 
 EXPORT ER subsystem1_init(void)
 {
-	T_CCYC	ccyc = {0};
-
-	/* Cyclic handler: once started, the kernel calls led_cyclic_handler
-	   every S1_TICK_MS.  Without TA_STA it is created stopped; it is
-	   started in subsystem1_start(), once the task it wakes exists. */
-	ccyc.cycatr = TA_HLNG;
-	ccyc.cychdr = (FP)led_cyclic_handler;
-	ccyc.cyctim = S1_TICK_MS;	/* period, ms */
-	ccyc.cycphs = S1_TICK_MS;	/* delay before the first call, ms */
-	cyc_led = tk_cre_cyc(&ccyc);
-	return (cyc_led < E_OK) ? cyc_led : E_OK;
+    return (sub_telemetry_init() == RC_OK) ? E_OK : E_SYS;
 }
 
 EXPORT ER subsystem1_start(void)
 {
-	tid_led = app_start_task(led_task, S1_PRI_LED, 0, "led_task");
-	if (tid_led < E_OK) {
-		return tid_led;
-	}
-	return tk_sta_cyc(cyc_led);	/* start the cyclic handler now */
+    return (sub_telemetry_start_task() == RC_OK) ? E_OK : E_SYS;
 }

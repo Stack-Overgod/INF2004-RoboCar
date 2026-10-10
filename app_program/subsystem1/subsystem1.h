@@ -1,27 +1,24 @@
 /*
- *	subsystem1.h
- *	Subsystem 1 -- LED heartbeat.  Student ID: <student ID>.
+ * subsystem1.h -- Subsystem 1: telemetry and commands. ID: <your ID>.
  *
- *	This header is subsystem 1's PUBLIC interface: only what other
- *	subsystems are allowed to use.  Everything else stays LOCAL in the .c
- *	files.  Other subsystems include it as "../subsystem1/subsystem1.h".
+ * Subsystem 1's public interface -- only what other parts of the build need
+ * to see. The telemetry API itself lives in sub_telemetry.h.
  */
-
 #ifndef SUBSYSTEM1_H
 #define SUBSYSTEM1_H
 
 #include "../app.h"
+#include "sub_telemetry.h"
 
-#define S1_PRI_LED	12		/* priority band 12-13 (TEAM.md) */
-#define S1_LED_PIN	19		/* GP19: LED + 330R resistor to GND */
-#define S1_TICK_MS	250		/* LED toggles every tick */
+#define S1_PRI_TELEMETRY  12    /* band 12-13 (TEAM.md) */
+#define S1_MSG_MAX        240   /* TOPIC_MAX 48 + PAYLOAD_MAX 192 */
+#define S1_CMD_MAX        16
 
-/* IF-05: the LED task's ID, so subsystem 4 may pause/resume it */
-IMPORT ID	tid_led;
-
-/* Private to subsystem 1, shared between its own .c files */
-IMPORT ID	cyc_led;
-IMPORT void	led_task(INT stacd, void *exinf);
-IMPORT void	led_cyclic_handler(void *exinf);
+/* The two message buffers that carry data to/from the kernel's MQTT task.
+ * Defined in sub_telemetry_mqtt.c; mqtt_utk.c sees them as IMPORT too.
+ *   IF-12  s1_mbf_tx  outgoing "<topic>\0<payload>", drained by mqtt_utk.c
+ *   IF-13  s1_mbf_rx  raw inbound command payloads, written by mqtt_utk.c */
+IMPORT ID s1_mbf_tx;
+IMPORT ID s1_mbf_rx;
 
 #endif /* SUBSYSTEM1_H */
