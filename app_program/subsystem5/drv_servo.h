@@ -12,7 +12,7 @@
 #ifndef DRV_SERVO_H
 #define DRV_SERVO_H
 
-#include "rc_types.h"
+#include "../rc_types.h"
 
 /* The physical limits of the servo bracket's swing, in degrees. 0 is
  * fully one side, 180 fully the other, 90 is straight ahead (see
