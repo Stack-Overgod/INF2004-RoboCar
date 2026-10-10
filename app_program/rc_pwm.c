@@ -19,6 +19,26 @@
 static uint32_t slice_wrap[8];
 static uint32_t slice_div[8];
 
+/* The template kernel takes the PWM block out of reset only when its
+ * physical-timer option is on (USE_PTMR in config/config.h, which is 0;
+ * see kernel/sysdepend/pico_rp2040/hw_setting.c). While the block is in
+ * reset every PWM register write is ignored and the pins stay low, so
+ * release it here on first use. Only ever clears the reset bit: a slice
+ * another driver already configured is left running. */
+static void pwm_block_release(void)
+{
+    uint32_t spin = 1000U;      /* RESET_DONE sets within a few cycles */
+
+    if ((in_w(RESETS_RESET_DONE) & RESETS_RESET_PWM) != 0U) {
+        return;
+    }
+    clr_w(RESETS_RESET, RESETS_RESET_PWM);
+    while (((in_w(RESETS_RESET_DONE) & RESETS_RESET_PWM) == 0U)
+           && (spin > 0U)) {
+        spin--;
+    }
+}
+
 rc_result_t rc_pwm_init_pin(uint32_t pin, uint32_t freq_hz)
 {
     uint32_t slice;
@@ -27,6 +47,11 @@ rc_result_t rc_pwm_init_pin(uint32_t pin, uint32_t freq_hz)
 
     if ((pin >= 30U) || (freq_hz == 0U)) {
         return RC_ERR_PARAM;
+    }
+
+    pwm_block_release();
+    if ((in_w(RESETS_RESET_DONE) & RESETS_RESET_PWM) == 0U) {
+        return RC_ERR_HARDWARE;
     }
 
     slice = PWM_SLICE(pin);
