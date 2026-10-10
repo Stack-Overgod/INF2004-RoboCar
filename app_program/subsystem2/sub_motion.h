@@ -40,7 +40,7 @@
 #ifndef SUB_MOTION_H
 #define SUB_MOTION_H
 
-#include "rc_types.h"
+#include "../rc_types.h"
 
 /* The shape of a "move finished" callback function. A "function pointer"
  * (the `(*sub_motion_done_cb_t)` syntax) is a variable that holds the

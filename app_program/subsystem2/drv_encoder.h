@@ -29,7 +29,7 @@
 #ifndef DRV_ENCODER_H
 #define DRV_ENCODER_H
 
-#include "rc_types.h"
+#include "../rc_types.h"
 
 /* Call once at boot. Attaches the interrupt handlers to both encoder
  * pins and registers the deferred ("bottom half") worker that turns raw

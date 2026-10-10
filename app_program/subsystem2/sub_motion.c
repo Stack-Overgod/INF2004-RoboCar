@@ -25,13 +25,13 @@
  *  that starts the next move (sub_nav's bypass legs do) never runs inside
  *  this module.
  */
-#include "rc_prelude.h"
+#include "../rc_prelude.h"
 #include <tm/tmonitor.h>
 #include "sub_motion.h"
 #include "drv_motor.h"
 #include "drv_encoder.h"
-#include "rc_config.h"
-#include "rc_event.h"
+#include "../rc_config.h"
+#include "../rc_event.h"
 
 /* ------------------------------------------------------------------ *
  *  Tuning constants

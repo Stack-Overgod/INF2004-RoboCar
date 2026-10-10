@@ -7,13 +7,13 @@
  *  way the wheel is turning. See drv_encoder.h for the odometry
  *  explanation.
  */
-#include "rc_prelude.h"
+#include "../rc_prelude.h"
 #include "drv_encoder.h"
-#include "rc_config.h"
-#include "rc_gpioirq.h"
-#include "rc_event.h"
-#include "rc_defer.h"
-#include "rc_time.h"
+#include "../rc_config.h"
+#include "../rc_gpioirq.h"
+#include "../rc_event.h"
+#include "../rc_defer.h"
+#include "../rc_time.h"
 
 /* If no new edge arrives within this many microseconds, treat the wheel
  * as stopped rather than as "very slow". The encoder counts the motor

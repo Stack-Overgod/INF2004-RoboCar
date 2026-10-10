@@ -6,10 +6,10 @@
  *  it just obeys "spin this hard, this direction." See sub_motion.c for
  *  the code that decides *what* duty to send based on target speed.
  */
-#include "rc_prelude.h"
+#include "../rc_prelude.h"
 #include "drv_motor.h"
-#include "rc_config.h"
-#include "rc_pwm.h"
+#include "../rc_config.h"
+#include "../rc_pwm.h"
 
 /* PWM switching frequency in Hz. 20 kHz is above human hearing (so the
  * motor doesn't whine) and well inside what the Robo Pico output stage

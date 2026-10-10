@@ -22,7 +22,7 @@
 #ifndef DRV_MOTOR_H
 #define DRV_MOTOR_H
 
-#include "rc_types.h"
+#include "../rc_types.h"
 
 /* An "enum" (enumeration) is just a named list of integer constants -
  * here, the two ways a motor can be told to stop. Using the names
