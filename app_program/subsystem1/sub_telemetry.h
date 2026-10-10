@@ -72,4 +72,12 @@ void sub_telemetry_mqtt_poll(void);
  * event bus). Keeps the caller out of nav's state. */
 rc_result_t sub_telemetry_deliver_command(rc_nav_cmd_t cmd, int32_t arg);
 
+/* One command character -> a driving command: L/R/S/U/X or barcode letters
+ * A/B/C/D, either case (P is also stop). Anything else is RC_CMD_NONE. */
+rc_nav_cmd_t sub_telemetry_parse_cmd(char c);
+
+/* The telemetry task's ID, or 0 before sub_telemetry_start_task(). It's a
+ * kernel ID; int32_t keeps this header free of kernel types. */
+int32_t sub_telemetry_task_id(void);
+
 #endif /* SUB_TELEMETRY_H */

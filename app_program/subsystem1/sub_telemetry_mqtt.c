@@ -99,23 +99,9 @@ static rc_result_t mqtt_publish_fn(const char *topic, const char *payload,
            ? RC_OK : RC_ERR_NOSPACE;
 }
 
-/* First character of the payload -> a driving command. Accepts the mnemonic
- * letters (L/R/S/U/X) and the barcode letters (A/B/C/D). Unchanged from the
- * old sink. */
-static rc_nav_cmd_t parse_cmd(char c)
-{
-    switch (c)
-    {
-        case 'L': case 'l': case 'A': case 'a': return RC_CMD_TURN_LEFT;
-        case 'R': case 'r': case 'B': case 'b': return RC_CMD_TURN_RIGHT;
-        case 'S': case 's': case 'C': case 'c': return RC_CMD_GO_STRAIGHT;
-        case 'U': case 'u': case 'D': case 'd': return RC_CMD_U_TURN;
-        case 'X': case 'x': case 'P': case 'p': return RC_CMD_STOP;
-        default:                                return RC_CMD_NONE;
-    }
-}
-
-/* Called each telemetry tick: drain every pending command and run it. */
+/* Called each telemetry tick: drain every pending command and run it. Only
+ * the first character of the payload matters (see sub_telemetry_parse_cmd
+ * in sub_telemetry.c). */
 void sub_telemetry_mqtt_poll(void)
 {
     UB buf[S1_CMD_MAX];
@@ -123,7 +109,7 @@ void sub_telemetry_mqtt_poll(void)
 
     while (tk_rcv_mbf(s1_mbf_rx, buf, TMO_POL) > 0)
     {
-        cmd = parse_cmd((char)buf[0]);
+        cmd = sub_telemetry_parse_cmd((char)buf[0]);
         if (cmd != RC_CMD_NONE)
         {
             (void)sub_telemetry_deliver_command(cmd, 0);

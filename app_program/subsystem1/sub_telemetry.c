@@ -46,6 +46,8 @@ static uint32_t tx_fail;        /* messages that failed (in the heartbeat) */
 static sub_telemetry_cmd_cb_t cmd_cb;
 static void *cmd_ctx;
 
+static ID telem_tid;            /* the telemetry task, for the self-tests */
+
 /* Latest readings, cached by the event callbacks and read by the task.
  * Each is written by one callback and read by one task, so a word-sized
  * copy is safe without a lock; volatile stops the compiler caching a
@@ -212,10 +214,16 @@ static void publish_heartbeat(void)
 
 static void on_odometry(const rc_event_t *evt, void *ctx)
 {
+    uint32_t l = evt->u.odometry.dist_l_mm;
+    uint32_t r = evt->u.odometry.dist_r_mm;
+
     (void)ctx;
     st_speed_l = evt->u.odometry.speed_l_mm_s;
     st_speed_r = evt->u.odometry.speed_r_mm_s;
-    st_dist_mm = (evt->u.odometry.dist_l_mm + evt->u.odometry.dist_r_mm) / 2U;
+
+    /* Average of the two wheels. Halve each one first: (l + r) / 2 would
+     * overflow 32 bits once the sum passes ~4,295 km. */
+    st_dist_mm = (l / 2U) + (r / 2U) + (l & r & 1U);
 }
 
 static void on_line(const rc_event_t *evt, void *ctx)
@@ -408,9 +416,17 @@ rc_result_t sub_telemetry_init(void)
  * (TEAM.md section 4). It's the slow lane, so it never holds up control. */
 rc_result_t sub_telemetry_start_task(void)
 {
-    ID tid = app_start_task(telemetry_task, S1_PRI_TELEMETRY, 0, "telemetry");
+    telem_tid = app_start_task(telemetry_task, S1_PRI_TELEMETRY, 0,
+                               "telemetry");
 
-    return (tid < E_OK) ? RC_ERR_HARDWARE : RC_OK;
+    return (telem_tid < E_OK) ? RC_ERR_HARDWARE : RC_OK;
+}
+
+/* The telemetry task's ID (0 before start_task). Lets subsystem1_test.c
+ * check its priority and that it sleeps between ticks. */
+int32_t sub_telemetry_task_id(void)
+{
+    return (int32_t)telem_tid;
 }
 
 /* Swap the transport. Closes the old one, points at the new (or console on
@@ -431,6 +447,23 @@ rc_result_t sub_telemetry_on_command(sub_telemetry_cmd_cb_t cb, void *ctx)
     cmd_cb = cb;
     cmd_ctx = ctx;
     return RC_OK;
+}
+
+/* One command character -> a driving command. Takes the mnemonic letters
+ * (L/R/S/U/X) and the barcode letters (A/B/C/D), either case; P also means
+ * stop. Anything else is RC_CMD_NONE and gets ignored. Lives here rather
+ * than in the MQTT file so it can be tested without a WiFi build. */
+rc_nav_cmd_t sub_telemetry_parse_cmd(char c)
+{
+    switch (c)
+    {
+        case 'L': case 'l': case 'A': case 'a': return RC_CMD_TURN_LEFT;
+        case 'R': case 'r': case 'B': case 'b': return RC_CMD_TURN_RIGHT;
+        case 'S': case 's': case 'C': case 'c': return RC_CMD_GO_STRAIGHT;
+        case 'U': case 'u': case 'D': case 'd': return RC_CMD_U_TURN;
+        case 'X': case 'x': case 'P': case 'p': return RC_CMD_STOP;
+        default:                                return RC_CMD_NONE;
+    }
 }
 
 /* Called once a command has been decoded. Prefer the registered callback;
