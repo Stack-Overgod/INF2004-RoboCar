@@ -9,13 +9,13 @@
  *  (docs/buddy5-scan-avoidance/) for the full 5-step interrupt relay this file
  *  implements instead of a simple busy-wait.
  */
-#include "rc_prelude.h"
+#include "../rc_prelude.h"
 #include "drv_ultrasonic.h"
-#include "rc_config.h"
-#include "rc_gpioirq.h"
-#include "rc_event.h"
-#include "rc_defer.h"
-#include "rc_time.h"
+#include "../rc_config.h"
+#include "../rc_gpioirq.h"
+#include "../rc_event.h"
+#include "../rc_defer.h"
+#include "../rc_time.h"
 
 /* RP2040 TIMER alarm interrupts are IRQ 0..3.
  * A "TIMER alarm" is a piece of hardware built into the chip: you tell it

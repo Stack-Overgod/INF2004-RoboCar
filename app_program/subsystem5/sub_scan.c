@@ -9,12 +9,12 @@
  * for the full
  *  walkthrough and the sonar/security-camera analogies.
  */
-#include "rc_prelude.h"
+#include "../rc_prelude.h"
 #include "sub_scan.h"
 #include "drv_servo.h"
 #include "drv_ultrasonic.h"
-#include "rc_config.h"
-#include "rc_event.h"
+#include "../rc_config.h"
+#include "../rc_event.h"
 
 /* Anything further than this is background, not an obstacle. Both
  * build_profile() (deciding what counts as a "hit") and build_plan()

@@ -32,7 +32,7 @@
 #ifndef DRV_ULTRASONIC_H
 #define DRV_ULTRASONIC_H
 
-#include "rc_types.h"
+#include "../rc_types.h"
 
 /*
  *  This is a *function pointer type* (see sub_telemetry.h for the fuller

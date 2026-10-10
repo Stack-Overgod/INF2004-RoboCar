@@ -7,10 +7,10 @@
  * analogy and
  *  the full walkthrough of how this fits into a scan.
  */
-#include "rc_prelude.h"
+#include "../rc_prelude.h"
 #include "drv_servo.h"
-#include "rc_config.h"
-#include "rc_pwm.h"
+#include "../rc_config.h"
+#include "../rc_pwm.h"
 
 /* Standard hobby-servo PWM frame rate: the signal pin is pulsed once
  * every 1/50 second (20 ms). This is fixed by the servo's own design,

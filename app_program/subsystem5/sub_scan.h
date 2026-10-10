@@ -14,7 +14,7 @@
 #ifndef SUB_SCAN_H
 #define SUB_SCAN_H
 
-#include "rc_types.h"
+#include "../rc_types.h"
 
 /* Function pointer type (see sub_telemetry.h's sub_telemetry_cmd_cb_t
  * comment for the general idea) for "a function that gets called once a
