@@ -54,6 +54,9 @@
  */
 
 #include "app.h"
+#include "rc_defer.h"		/* shared layer: interrupt bottom halves */
+#include "rc_event.h"		/* shared layer: the event bus */
+#include "rc_gpioirq.h"		/* shared layer: one GPIO interrupt, many pins */
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -106,6 +109,20 @@ EXPORT INT usermain(void)
 #else
 	tm_printf((UB*)"single-core build\n");
 #endif
+
+	/* Phase 0: the shared layer every subsystem builds on.  The event bus
+	   must be running before any subsystemN_init() subscribes to it, and
+	   rc_defer before any driver registers a bottom half.  Each of these
+	   is safe to call again later (the second call does nothing). */
+	if (rc_defer_init() != RC_OK) {
+		tm_printf((UB*)"ERROR rc_defer_init\n");
+	}
+	if (rc_event_init() != RC_OK) {
+		tm_printf((UB*)"ERROR rc_event_init\n");
+	}
+	if (rc_gpioirq_init() != RC_OK) {
+		tm_printf((UB*)"ERROR rc_gpioirq_init\n");
+	}
 
 	/* Phase 1: every subsystem creates its kernel objects */
 	CHECK(subsystem1_init(), "subsystem1_init");

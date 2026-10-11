@@ -1,0 +1,532 @@
+   0.1s SETUP  opened COM4
+   0.3s SETUP  broker 3.121.14.149:1883 as b1-pc-79288, subscribing car/01/#
+   0.3s CAR    microT-Kernel Version 3.00
+   0.3s CAR    === micro T-Kernel on Raspberry Pi Pico W (spec 0x6300, product 0x0003) ===
+   0.3s CAR    dual-core (SMP) build, usermain on core 0
+   0.3s CAR    all subsystems started
+   0.3s CAR    [TEST] === test run start ===
+   0.3s CAR    [TEST] subsystem1: telemetry + commands
+   0.3s CAR    [TEST] S1-U01 PASS  console sink present and up
+   0.3s CAR    [telem] car/01/test {"t":1}
+   0.3s CAR    [TEST] S1-U02 PASS  console sink publishes
+   0.3s CAR    [TEST] S1-U03 PASS  L/R/S/U/X decode, either case
+   0.3s CAR    [TEST] S1-U04 PASS  barcode letters A/B/C/D (and P) decode
+   0.3s CAR    [TEST] S1-U05 PASS  anything else decodes to no command
+   0.3s CAR    [TEST] S1-U06 PASS  command reaches a registered callback unchanged
+   0.3s CAR    [TEST] S1-U07 PASS  telemetry task at its TEAM.md priority (12)
+   0.3s CAR    wifi: cyw43_utk_task starting (proc 1)
+   0.3s CAR    wifi: cyw43_init() ...
+   0.3s CAR    wifi: cyw43_init() returned, bringing interface up ...
+   0.4s CAR    [TEST] S1-U08 PASS  telemetry task sleeps between ticks
+   0.4s CAR    [TEST] S1-U09 PASS  barcode/hump/obstacle/impact accepted
+   0.4s CAR    [TEST] S1-U10 PASS  unrelated event rejected, nothing sent
+   0.4s CAR    [TEST] S1-U11 PASS  barcode message: exact topic + JSON
+   0.4s CAR    [TEST] S1-U12 PASS  hump message: exact topic + JSON
+   0.4s CAR    [TEST] S1-U13 PASS  obstacle message: exact topic + JSON
+   0.4s CAR    [TEST] S1-U14 PASS  impact message: exact topic + JSON
+   0.5s BROKER CONNACK rc=0
+   0.6s BROKER SUBACK qos=0
+   0.6s CAR    wifi: joining "Rexzer" ...
+   0.8s CAR    wifi: link status -> joined AP, waiting for IP (1)
+   3.7s CAR    [TEST]   8 state msgs: 2080 ms by kernel clock, 2080 ms by telemetry's t
+   3.7s CAR    [TEST] S1-U15 PASS  state every 250 ms, no seq gaps
+   3.8s CAR    wifi: link status -> joined AP, no IP yet (2)
+   4.0s CAR    wifi: link up, ip=172.20.10.5
+   4.6s CAR    mqtt: connected to 3.121.14.149
+   4.8s CAR    mqtt: subscribed to car/01/cmd
+   5.3s CAR    [TEST] S1-U16 PASS  heartbeat ~2 s with sink + counters
+   5.3s CAR    [TEST] S1-U17 PASS  every topic under car/01/
+   5.3s CAR    [TEST] S1-U21 PASS  message timestamps keep real time (5 %)
+   5.3s CAR    [TEST] S1-U22 PASS  state carries every telemetry item in the brief
+   5.3s CAR    [TEST] S1-I01 PASS  event bus running (event delivered)
+   5.8s CAR    [TEST] S1-I02 PASS  B2 odometry -> speed + distance in state
+   5.8s CAR    [TEST] S1-I03 PASS  B3 line sample -> line field
+   5.8s CAR    [TEST] S1-I04 PASS  B4 motion class -> cls field
+   6.3s CAR    [TEST] S1-I05 PASS  B3 barcode -> barcode message + bc field
+   6.8s CAR    [TEST] S1-I06 PASS  B4 hump end -> hump message + peak field
+   6.8s CAR    [TEST] S1-I07 PASS  B4 impact -> impact message
+   6.8s CAR    [TEST] S1-I08 PASS  B5 obstacle profile -> obstacle message
+   6.8s CAR    [TEST] S1-I09 PASS  command -> RC_EVT_COMMAND_RX for sub_nav
+   7.3s CAR    [TEST]   state is 155 bytes now, 195 at worst (limit 223)
+   7.3s CAR    [TEST] S1-I10 PASS  worst-case inputs: state fits, no overflow
+   7.3s CAR    [TEST] S1-I11 PASS  no event-bus drops on either lane
+   9.1s CAR    [TEST] S1-U18 PASS  dead link: stop sending, fail fast, keep retrying
+   9.3s CAR    [TEST] S1-U19 PASS  link back: telemetry resumes on its own
+   9.6s CAR    [telem] car/01/state {"seq":25,"t":10449,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+   9.8s CAR    [telem] car/01/state {"seq":26,"t":10709,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  10.2s CAR    [telem] car/01/state {"seq":27,"t":10969,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  10.3s CAR    [TEST] S1-U20 PASS  set_sink(NULL) falls back to console
+  10.3s CAR    [TEST] S1-W01 PASS  MQTT sink present
+  10.3s CAR    [TEST] S1-W02 PASS  kernel message buffers exist, agreed sizes
+  10.3s CAR    [TEST] S1-W03 PASS  kernel subscribes to car/01/cmd
+  10.3s CAR    [TEST]   WiFi + broker up after 0 ms of waiting
+  10.3s CAR    [TEST] S1-W04 PASS  WiFi joined + broker connected (30 s)
+  10.3s CAR    [TEST] S1-W05 PASS  oversize message rejected, not cut short
+  10.3s CAR    [TEST] S1-W06 PASS  message handed to the kernel for the broker
+  10.4s CAR    [TEST] S1-W07 PASS  inbound 'R' from kernel buffer -> turn right
+  10.5s MQTT   car/01/test {"test":"S1-W06"}
+  10.8s MQTT   car/01/state {"seq":28,"t":11229,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  11.1s MQTT   car/01/state {"seq":29,"t":11489,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  11.3s MQTT   car/01/state {"seq":30,"t":11749,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  11.5s MQTT   car/01/state {"seq":31,"t":12009,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  11.5s MQTT   car/01/status {"up":12010,"tx":48,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  11.8s MQTT   car/01/state {"seq":32,"t":12269,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  12.0s CAR    [TEST] S1-W08 PASS  inbound garbage ignored
+  12.1s MQTT   car/01/state {"seq":33,"t":12529,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  12.3s CAR    mqtt: RX [car/01/cmd] "L"
+  12.3s MQTT   car/01/state {"seq":34,"t":12789,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  12.3s MQTT   car/01/cmd L
+  12.5s CAR    [TEST] S1-W09 PASS  command round trip car -> broker -> car
+  12.5s MQTT   car/01/state {"seq":35,"t":13049,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  12.8s MQTT   car/01/state {"seq":36,"t":13309,"spd_l":0,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  13.0s CAR    [TEST] S1-I12 PASS  a 2nd rc_event_init() doesn't cut Buddy 1 off
+  13.0s CAR    [TEST] subsystem1 SUMMARY 43 passed, 0 failed
+  13.0s CAR    [TEST] S2-U01 PASS  placeholder: replace with real tests
+  13.0s CAR    [TEST] subsystem2 SUMMARY 1 passed, 0 failed
+  13.0s CAR    [TEST] S3-U01 PASS  placeholder: replace with real tests
+  13.0s CAR    [TEST] subsystem3 SUMMARY 1 passed, 0 failed
+  13.0s CAR    [TEST] S4-U01 PASS  placeholder: replace with real tests
+  13.0s CAR    [TEST] subsystem4 SUMMARY 1 passed, 0 failed
+  13.0s CAR    [TEST] S5-U01 PASS  shared core starts (defer list, event bus, GPIO IRQ)
+  13.0s CAR    [TEST] S5-U02 PASS  servo PWM starts on GP15 and centres at 90 deg
+  13.0s CAR    [TEST] S5-U12 PASS  GP15 is outputting PWM (block live, pin routed, counter running)
+  13.0s CAR    [TEST] S5-U03 PASS  servo clamps commands to 0..180 deg
+  13.0s CAR    [TEST] S5-U04 PASS  settle time is positive, symmetric and grows with travel
+  13.0s CAR    [TEST] S5-U05 PASS  ultrasonic driver claims TRIG/ECHO, IRQ and timer alarms
+  13.4s MQTT   car/01/state {"seq":39,"t":14089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  13.6s CAR    [TEST] S5-U06 PASS  a ping ends in a result event within 100 ms, tagged 90 deg
+  13.6s CAR    [TEST] S5-U07 PASS  a second ping while one is in flight is refused
+  13.6s CAR    [INFO] S5 straight ahead: no echo (no sensor wired, or nothing within range)
+  13.6s CAR    [TEST] S5-U08 PASS  scan task starts
+  13.7s MQTT   car/01/status {"up":14089,"tx":57,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  13.7s MQTT   car/01/state {"seq":40,"t":14349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  14.1s MQTT   car/01/state {"seq":41,"t":14609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  14.4s CAR    [TEST] S5-U09 PASS  full scan finishes within 5 s with all 5 coarse bearings
+  14.4s CAR    [INFO] S5 profile: 5 points, closest 0 mm at 0 deg, width 0 mm, clear L=0 R=0
+  14.4s CAR    [INFO] S5 plan: GO_STRAIGHT lateral 0 mm forward 0 mm
+  14.4s CAR    [TEST] subsystem5 SUMMARY 10 passed, 0 failed
+  14.4s CAR    [TEST] === test run end ===
+  14.4s MQTT   car/01/state {"seq":42,"t":14869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  14.7s MQTT   car/01/state {"seq":43,"t":15129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  14.7s MQTT   car/01/obstacle {"n":5,"near_mm":0,"at_deg":0,"w_mm":0,"cl_l":0,"cl_r":0}
+  14.9s MQTT   car/01/state {"seq":44,"t":15389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  15.1s MQTT   car/01/state {"seq":45,"t":15649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  15.3s MQTT   car/01/state {"seq":46,"t":15909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  15.6s MQTT   car/01/state {"seq":47,"t":16169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  15.8s MQTT   car/01/status {"up":16169,"tx":67,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  15.8s MQTT   car/01/state {"seq":48,"t":16429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  16.1s MQTT   car/01/state {"seq":49,"t":16689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  16.3s MQTT   car/01/state {"seq":50,"t":16949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  16.5s MQTT   car/01/state {"seq":51,"t":17209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  16.9s MQTT   car/01/state {"seq":52,"t":17469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  17.1s MQTT   car/01/state {"seq":53,"t":17729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  17.4s MQTT   car/01/state {"seq":54,"t":17989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  17.6s MQTT   car/01/state {"seq":55,"t":18249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  17.8s MQTT   car/01/status {"up":18249,"tx":76,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  18.1s MQTT   car/01/state {"seq":56,"t":18509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  18.1s MQTT   car/01/state {"seq":57,"t":18769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  18.4s MQTT   car/01/state {"seq":58,"t":19029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  18.7s MQTT   car/01/state {"seq":59,"t":19289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  19.0s MQTT   car/01/state {"seq":60,"t":19549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  19.3s MQTT   car/01/state {"seq":61,"t":19809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  19.6s MQTT   car/01/state {"seq":62,"t":20069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  19.8s MQTT   car/01/state {"seq":63,"t":20329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  19.8s MQTT   car/01/status {"up":20329,"tx":85,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  20.0s MQTT   car/01/state {"seq":64,"t":20589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  20.3s MQTT   car/01/state {"seq":65,"t":20849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  20.5s MQTT   car/01/state {"seq":66,"t":21109,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  20.7s MQTT   car/01/state {"seq":67,"t":21369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  21.0s MQTT   car/01/state {"seq":68,"t":21629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  21.2s MQTT   car/01/state {"seq":69,"t":21889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  21.5s MQTT   car/01/state {"seq":70,"t":22149,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  21.9s MQTT   car/01/state {"seq":71,"t":22409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  21.9s MQTT   car/01/status {"up":22409,"tx":94,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  22.1s MQTT   car/01/state {"seq":72,"t":22669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  22.5s MQTT   car/01/state {"seq":73,"t":22929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  22.7s MQTT   car/01/state {"seq":74,"t":23189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  23.0s MQTT   car/01/state {"seq":75,"t":23449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  23.2s MQTT   car/01/state {"seq":76,"t":23709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  23.5s MQTT   car/01/state {"seq":77,"t":23969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  23.8s MQTT   car/01/state {"seq":78,"t":24229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  24.2s MQTT   car/01/state {"seq":79,"t":24489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  24.2s MQTT   car/01/status {"up":24490,"tx":103,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  24.2s MQTT   car/01/state {"seq":80,"t":24749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  24.5s MQTT   car/01/state {"seq":81,"t":25009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  24.7s MQTT   car/01/state {"seq":82,"t":25269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  24.9s MQTT   car/01/state {"seq":83,"t":25529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  25.1s MQTT   car/01/state {"seq":84,"t":25789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  25.4s MQTT   car/01/state {"seq":85,"t":26049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  25.7s MQTT   car/01/state {"seq":86,"t":26309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  25.9s MQTT   car/01/state {"seq":87,"t":26569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  26.3s MQTT   car/01/status {"up":26569,"tx":112,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  26.3s MQTT   car/01/state {"seq":88,"t":26829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  26.5s MQTT   car/01/state {"seq":89,"t":27089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  26.8s MQTT   car/01/state {"seq":90,"t":27349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  27.1s MQTT   car/01/state {"seq":91,"t":27609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  27.4s MQTT   car/01/state {"seq":92,"t":27869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  27.7s MQTT   car/01/state {"seq":93,"t":28129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  28.0s MQTT   car/01/state {"seq":94,"t":28389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  28.1s MQTT   car/01/state {"seq":95,"t":28649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  28.1s MQTT   car/01/status {"up":28649,"tx":121,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  28.3s MQTT   car/01/state {"seq":96,"t":28909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  28.7s MQTT   car/01/state {"seq":97,"t":29169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  28.9s MQTT   car/01/state {"seq":98,"t":29429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  29.1s MQTT   car/01/state {"seq":99,"t":29689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  29.4s MQTT   car/01/state {"seq":100,"t":29949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  29.7s MQTT   car/01/state {"seq":101,"t":30209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  30.0s MQTT   car/01/state {"seq":102,"t":30469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  30.2s MQTT   car/01/state {"seq":103,"t":30729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  30.2s MQTT   car/01/status {"up":30730,"tx":130,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  30.4s MQTT   car/01/state {"seq":104,"t":30989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  30.6s MQTT   car/01/state {"seq":105,"t":31249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  30.9s MQTT   car/01/state {"seq":106,"t":31509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  31.1s MQTT   car/01/state {"seq":107,"t":31769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  31.5s MQTT   car/01/state {"seq":108,"t":32029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  31.7s MQTT   car/01/state {"seq":109,"t":32289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  32.0s MQTT   car/01/state {"seq":110,"t":32549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  32.1s MQTT   car/01/state {"seq":111,"t":32809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  32.4s MQTT   car/01/status {"up":32809,"tx":139,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  32.7s MQTT   car/01/state {"seq":112,"t":33069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  33.0s MQTT   car/01/state {"seq":113,"t":33329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  33.0s MQTT   car/01/state {"seq":114,"t":33589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  33.2s MQTT   car/01/state {"seq":115,"t":33849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  33.5s MQTT   car/01/state {"seq":116,"t":34109,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  33.7s MQTT   car/01/state {"seq":117,"t":34369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  34.0s MQTT   car/01/state {"seq":118,"t":34629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  34.3s MQTT   car/01/state {"seq":119,"t":34889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  34.3s MQTT   car/01/status {"up":34889,"tx":148,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  35.1s MQTT   car/01/state {"seq":120,"t":35149,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  35.1s MQTT   car/01/state {"seq":121,"t":35409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  35.1s MQTT   car/01/state {"seq":122,"t":35669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  35.2s MQTT   car/01/state {"seq":123,"t":35929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  35.6s MQTT   car/01/state {"seq":124,"t":36189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  35.9s MQTT   car/01/state {"seq":125,"t":36449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  36.1s MQTT   car/01/state {"seq":126,"t":36709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  36.4s MQTT   car/01/state {"seq":127,"t":36969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  36.6s MQTT   car/01/status {"up":36969,"tx":157,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  36.7s MQTT   car/01/state {"seq":128,"t":37229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  36.9s MQTT   car/01/state {"seq":129,"t":37489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  37.2s MQTT   car/01/state {"seq":130,"t":37749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  37.4s MQTT   car/01/state {"seq":131,"t":38009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  37.6s MQTT   car/01/state {"seq":132,"t":38269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  37.9s MQTT   car/01/state {"seq":133,"t":38529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  38.1s MQTT   car/01/state {"seq":134,"t":38789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  38.4s MQTT   car/01/state {"seq":135,"t":39049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  38.6s MQTT   car/01/status {"up":39049,"tx":166,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  38.9s MQTT   car/01/state {"seq":136,"t":39309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  39.2s MQTT   car/01/state {"seq":137,"t":39569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  39.2s MQTT   car/01/state {"seq":138,"t":39829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  39.4s MQTT   car/01/state {"seq":139,"t":40089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  39.7s MQTT   car/01/state {"seq":140,"t":40349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  39.9s MQTT   car/01/state {"seq":141,"t":40609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  40.2s MQTT   car/01/state {"seq":142,"t":40869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  40.6s MQTT   car/01/state {"seq":143,"t":41129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  40.6s MQTT   car/01/status {"up":41129,"tx":175,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  40.9s MQTT   car/01/state {"seq":144,"t":41389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  41.2s MQTT   car/01/state {"seq":145,"t":41649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  41.4s MQTT   car/01/state {"seq":146,"t":41909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  41.6s MQTT   car/01/state {"seq":147,"t":42169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  41.8s MQTT   car/01/state {"seq":148,"t":42429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  42.1s MQTT   car/01/state {"seq":149,"t":42689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  42.4s MQTT   car/01/state {"seq":150,"t":42949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  42.8s MQTT   car/01/state {"seq":151,"t":43209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  42.8s MQTT   car/01/status {"up":43209,"tx":184,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  42.9s MQTT   car/01/state {"seq":152,"t":43469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  43.1s MQTT   car/01/state {"seq":153,"t":43729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  43.5s MQTT   car/01/state {"seq":154,"t":43989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  43.6s MQTT   car/01/state {"seq":155,"t":44249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  43.8s MQTT   car/01/state {"seq":156,"t":44509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  44.2s MQTT   car/01/state {"seq":157,"t":44769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  44.4s MQTT   car/01/state {"seq":158,"t":45029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  44.7s MQTT   car/01/state {"seq":159,"t":45289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  44.9s MQTT   car/01/status {"up":45289,"tx":193,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  45.1s MQTT   car/01/state {"seq":160,"t":45549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  45.3s MQTT   car/01/state {"seq":161,"t":45809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  45.5s MQTT   car/01/state {"seq":162,"t":46069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  45.7s MQTT   car/01/state {"seq":163,"t":46329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  46.0s MQTT   car/01/state {"seq":164,"t":46589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  46.2s MQTT   car/01/state {"seq":165,"t":46849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  46.4s MQTT   car/01/state {"seq":166,"t":47109,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  46.7s MQTT   car/01/state {"seq":167,"t":47369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  47.0s MQTT   car/01/status {"up":47369,"tx":202,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  47.0s MQTT   car/01/state {"seq":168,"t":47629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  47.3s MQTT   car/01/state {"seq":169,"t":47889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  47.6s MQTT   car/01/state {"seq":170,"t":48149,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  47.8s MQTT   car/01/state {"seq":171,"t":48409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  48.0s MQTT   car/01/state {"seq":172,"t":48669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  48.4s MQTT   car/01/state {"seq":173,"t":48929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  48.7s MQTT   car/01/state {"seq":174,"t":49189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  49.2s MQTT   car/01/state {"seq":175,"t":49449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  49.2s MQTT   car/01/status {"up":49449,"tx":211,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  49.2s MQTT   car/01/state {"seq":176,"t":49709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  49.7s MQTT   car/01/state {"seq":177,"t":49969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  49.7s MQTT   car/01/state {"seq":178,"t":50229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  50.0s MQTT   car/01/state {"seq":179,"t":50489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  50.3s MQTT   car/01/state {"seq":180,"t":50749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  50.5s MQTT   car/01/state {"seq":181,"t":51009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  50.7s MQTT   car/01/state {"seq":182,"t":51269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  51.0s MQTT   car/01/state {"seq":183,"t":51529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  51.0s MQTT   car/01/status {"up":51529,"tx":220,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  51.4s MQTT   car/01/state {"seq":184,"t":51789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  51.5s MQTT   car/01/state {"seq":185,"t":52049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  51.8s MQTT   car/01/state {"seq":186,"t":52309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  52.0s MQTT   car/01/state {"seq":187,"t":52569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  52.2s MQTT   car/01/state {"seq":188,"t":52829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  52.4s MQTT   car/01/state {"seq":189,"t":53089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  52.7s MQTT   car/01/state {"seq":190,"t":53349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  53.0s MQTT   car/01/state {"seq":191,"t":53609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  53.3s MQTT   car/01/status {"up":53609,"tx":229,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  53.3s MQTT   car/01/state {"seq":192,"t":53869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  53.5s MQTT   car/01/state {"seq":193,"t":54129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  53.9s MQTT   car/01/state {"seq":194,"t":54389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  54.1s MQTT   car/01/state {"seq":195,"t":54649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  54.5s MQTT   car/01/state {"seq":196,"t":54909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  54.8s MQTT   car/01/state {"seq":197,"t":55169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  54.8s MQTT   car/01/state {"seq":198,"t":55429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  55.1s MQTT   car/01/state {"seq":199,"t":55689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  55.4s MQTT   car/01/status {"up":55689,"tx":238,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  55.4s MQTT   car/01/state {"seq":200,"t":55949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  55.6s MQTT   car/01/state {"seq":201,"t":56209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  56.0s MQTT   car/01/state {"seq":202,"t":56469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  56.1s MQTT   car/01/state {"seq":203,"t":56729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  56.4s MQTT   car/01/state {"seq":204,"t":56989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  56.6s MQTT   car/01/state {"seq":205,"t":57249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  56.9s MQTT   car/01/state {"seq":206,"t":57509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  57.1s MQTT   car/01/state {"seq":207,"t":57769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  57.4s MQTT   car/01/status {"up":57770,"tx":247,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  57.7s MQTT   car/01/state {"seq":208,"t":58029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  57.7s MQTT   car/01/state {"seq":209,"t":58289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  58.1s MQTT   car/01/state {"seq":210,"t":58549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  58.3s MQTT   car/01/state {"seq":211,"t":58809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  58.6s MQTT   car/01/state {"seq":212,"t":59069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  58.8s MQTT   car/01/state {"seq":213,"t":59329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  59.0s MQTT   car/01/state {"seq":214,"t":59589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  59.2s MQTT   car/01/state {"seq":215,"t":59849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  59.4s MQTT   car/01/status {"up":59849,"tx":256,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  59.6s MQTT   car/01/state {"seq":216,"t":60109,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  59.8s MQTT   car/01/state {"seq":217,"t":60369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  60.0s MQTT   car/01/state {"seq":218,"t":60629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  60.4s MQTT   car/01/state {"seq":219,"t":60889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  60.7s MQTT   car/01/state {"seq":220,"t":61149,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  61.0s MQTT   car/01/state {"seq":221,"t":61409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  61.0s MQTT   car/01/state {"seq":222,"t":61669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  61.4s MQTT   car/01/state {"seq":223,"t":61929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  61.5s MQTT   car/01/status {"up":61929,"tx":265,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  61.7s MQTT   car/01/state {"seq":224,"t":62189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  61.9s MQTT   car/01/state {"seq":225,"t":62449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  62.1s MQTT   car/01/state {"seq":226,"t":62709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  62.3s MQTT   car/01/state {"seq":227,"t":62969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  62.6s MQTT   car/01/state {"seq":228,"t":63229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  62.9s MQTT   car/01/state {"seq":229,"t":63489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  63.1s MQTT   car/01/state {"seq":230,"t":63749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  63.4s MQTT   car/01/state {"seq":231,"t":64009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  63.6s MQTT   car/01/status {"up":64009,"tx":274,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  63.9s MQTT   car/01/state {"seq":232,"t":64269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  64.1s MQTT   car/01/state {"seq":233,"t":64529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  64.4s MQTT   car/01/state {"seq":234,"t":64789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  64.9s MQTT   car/01/state {"seq":235,"t":65049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  64.9s MQTT   car/01/state {"seq":236,"t":65309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  65.1s MQTT   car/01/state {"seq":237,"t":65569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  65.2s MQTT   car/01/state {"seq":238,"t":65829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  65.5s MQTT   car/01/state {"seq":239,"t":66089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  65.8s MQTT   car/01/status {"up":66089,"tx":283,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  65.8s MQTT   car/01/state {"seq":240,"t":66349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  65.9s MQTT   car/01/state {"seq":241,"t":66609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  66.2s MQTT   car/01/state {"seq":242,"t":66869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  66.4s MQTT   car/01/state {"seq":243,"t":67129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  66.8s MQTT   car/01/state {"seq":244,"t":67389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  67.1s MQTT   car/01/state {"seq":245,"t":67649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  67.3s MQTT   car/01/state {"seq":246,"t":67909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  67.5s MQTT   car/01/state {"seq":247,"t":68169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  67.8s MQTT   car/01/status {"up":68169,"tx":292,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  67.8s MQTT   car/01/state {"seq":248,"t":68429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  68.3s MQTT   car/01/state {"seq":249,"t":68689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  68.6s MQTT   car/01/state {"seq":250,"t":68949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  68.6s MQTT   car/01/state {"seq":251,"t":69209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  68.8s MQTT   car/01/state {"seq":252,"t":69469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  69.1s MQTT   car/01/state {"seq":253,"t":69729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  69.3s MQTT   car/01/state {"seq":254,"t":69989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  69.6s MQTT   car/01/state {"seq":255,"t":70249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  69.8s MQTT   car/01/status {"up":70250,"tx":301,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  70.1s MQTT   car/01/state {"seq":256,"t":70509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  70.3s MQTT   car/01/state {"seq":257,"t":70769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  70.6s MQTT   car/01/state {"seq":258,"t":71029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  70.8s MQTT   car/01/state {"seq":259,"t":71289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  71.2s MQTT   car/01/state {"seq":260,"t":71549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  71.2s MQTT   car/01/state {"seq":261,"t":71809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  71.5s MQTT   car/01/state {"seq":262,"t":72069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  71.8s MQTT   car/01/state {"seq":263,"t":72329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  71.8s MQTT   car/01/status {"up":72329,"tx":310,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  72.1s MQTT   car/01/state {"seq":264,"t":72589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  72.3s MQTT   car/01/state {"seq":265,"t":72849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  72.5s MQTT   car/01/state {"seq":266,"t":73109,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  72.7s MQTT   car/01/state {"seq":267,"t":73369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  73.0s MQTT   car/01/state {"seq":268,"t":73629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  73.4s MQTT   car/01/state {"seq":269,"t":73889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  73.5s MQTT   car/01/state {"seq":270,"t":74149,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  73.8s MQTT   car/01/state {"seq":271,"t":74409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  74.0s MQTT   car/01/status {"up":74409,"tx":319,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  74.2s MQTT   car/01/state {"seq":272,"t":74669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  74.5s MQTT   car/01/state {"seq":273,"t":74929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  74.8s MQTT   car/01/state {"seq":274,"t":75189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  75.0s MQTT   car/01/state {"seq":275,"t":75449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  75.2s MQTT   car/01/state {"seq":276,"t":75709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  75.5s MQTT   car/01/state {"seq":277,"t":75969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  75.7s MQTT   car/01/state {"seq":278,"t":76229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  75.9s MQTT   car/01/state {"seq":279,"t":76489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  75.9s MQTT   car/01/status {"up":76489,"tx":328,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  76.1s MQTT   car/01/state {"seq":280,"t":76749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  76.4s MQTT   car/01/state {"seq":281,"t":77009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  76.7s MQTT   car/01/state {"seq":282,"t":77269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  76.9s MQTT   car/01/state {"seq":283,"t":77529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  77.1s MQTT   car/01/state {"seq":284,"t":77789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  77.4s MQTT   car/01/state {"seq":285,"t":78049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  77.7s MQTT   car/01/state {"seq":286,"t":78309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  77.9s MQTT   car/01/state {"seq":287,"t":78569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  78.2s MQTT   car/01/status {"up":78569,"tx":337,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  78.2s MQTT   car/01/state {"seq":288,"t":78829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  78.7s MQTT   car/01/state {"seq":289,"t":79089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  79.0s MQTT   car/01/state {"seq":290,"t":79349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  79.0s MQTT   car/01/state {"seq":291,"t":79609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  79.3s MQTT   car/01/state {"seq":292,"t":79869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  79.6s MQTT   car/01/state {"seq":293,"t":80129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  79.7s MQTT   car/01/state {"seq":294,"t":80389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  80.0s MQTT   car/01/state {"seq":295,"t":80649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  80.3s MQTT   car/01/status {"up":80649,"tx":346,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  80.3s MQTT   car/01/state {"seq":296,"t":80909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  80.6s MQTT   car/01/state {"seq":297,"t":81169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  80.9s MQTT   car/01/state {"seq":298,"t":81429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  81.1s MQTT   car/01/state {"seq":299,"t":81689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  81.3s MQTT   car/01/state {"seq":300,"t":81949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  81.6s MQTT   car/01/state {"seq":301,"t":82209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  81.8s MQTT   car/01/state {"seq":302,"t":82469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  82.1s MQTT   car/01/state {"seq":303,"t":82729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  82.3s MQTT   car/01/status {"up":82729,"tx":355,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  82.4s MQTT   car/01/state {"seq":304,"t":82989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  82.6s MQTT   car/01/state {"seq":305,"t":83249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  82.9s MQTT   car/01/state {"seq":306,"t":83509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  83.1s MQTT   car/01/state {"seq":307,"t":83769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  83.4s MQTT   car/01/state {"seq":308,"t":84029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  83.6s MQTT   car/01/state {"seq":309,"t":84289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  83.9s MQTT   car/01/state {"seq":310,"t":84549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  84.2s MQTT   car/01/state {"seq":311,"t":84809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  84.5s MQTT   car/01/status {"up":84809,"tx":364,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  84.5s MQTT   car/01/state {"seq":312,"t":85069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  84.8s MQTT   car/01/state {"seq":313,"t":85329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  85.0s SEND   car/01/cmd 'L'
+  85.2s MQTT   car/01/cmd L
+  85.3s CAR    mqtt: RX [car/01/cmd] "L"
+  85.3s MQTT   car/01/state {"seq":314,"t":85589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  85.3s MQTT   car/01/state {"seq":315,"t":85849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  85.4s MQTT   car/01/state {"seq":316,"t":86110,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  85.7s MQTT   car/01/state {"seq":317,"t":86369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  86.0s MQTT   car/01/state {"seq":318,"t":86629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  86.3s MQTT   car/01/state {"seq":319,"t":86889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  86.5s MQTT   car/01/status {"up":86889,"tx":373,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  86.8s MQTT   car/01/state {"seq":320,"t":87149,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  86.9s MQTT   car/01/state {"seq":321,"t":87409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  87.1s MQTT   car/01/state {"seq":322,"t":87669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  87.4s MQTT   car/01/state {"seq":323,"t":87929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  87.6s MQTT   car/01/state {"seq":324,"t":88189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  87.9s MQTT   car/01/state {"seq":325,"t":88449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  88.1s MQTT   car/01/state {"seq":326,"t":88709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  88.3s MQTT   car/01/state {"seq":327,"t":88969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  88.7s MQTT   car/01/status {"up":88970,"tx":382,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  88.7s MQTT   car/01/state {"seq":328,"t":89229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  89.0s MQTT   car/01/state {"seq":329,"t":89489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  89.3s MQTT   car/01/state {"seq":330,"t":89749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  89.5s MQTT   car/01/state {"seq":331,"t":90009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  89.7s MQTT   car/01/state {"seq":332,"t":90269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  90.0s MQTT   car/01/state {"seq":333,"t":90529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  90.3s MQTT   car/01/state {"seq":334,"t":90789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  90.6s MQTT   car/01/state {"seq":335,"t":91049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  90.6s MQTT   car/01/status {"up":91049,"tx":391,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  90.9s MQTT   car/01/state {"seq":336,"t":91309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  91.1s MQTT   car/01/state {"seq":337,"t":91569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  91.3s MQTT   car/01/state {"seq":338,"t":91829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  91.5s MQTT   car/01/state {"seq":339,"t":92089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  91.7s MQTT   car/01/state {"seq":340,"t":92349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  91.9s MQTT   car/01/state {"seq":341,"t":92609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  92.0s SEND   car/01/cmd 'X'
+  92.2s MQTT   car/01/cmd X
+  92.3s CAR    mqtt: RX [car/01/cmd] "X"
+  92.4s MQTT   car/01/state {"seq":342,"t":92869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  92.6s MQTT   car/01/state {"seq":343,"t":93130,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  92.6s MQTT   car/01/status {"up":93130,"tx":400,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  92.8s MQTT   car/01/state {"seq":344,"t":93389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  93.0s MQTT   car/01/state {"seq":345,"t":93649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  93.3s MQTT   car/01/state {"seq":346,"t":93909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  93.6s MQTT   car/01/state {"seq":347,"t":94169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  93.8s MQTT   car/01/state {"seq":348,"t":94429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  94.1s MQTT   car/01/state {"seq":349,"t":94689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  94.3s MQTT   car/01/state {"seq":350,"t":94949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  94.6s MQTT   car/01/state {"seq":351,"t":95209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  94.6s MQTT   car/01/status {"up":95209,"tx":409,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  94.9s MQTT   car/01/state {"seq":352,"t":95469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  95.1s MQTT   car/01/state {"seq":353,"t":95729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  95.3s MQTT   car/01/state {"seq":354,"t":95989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  95.6s MQTT   car/01/state {"seq":355,"t":96249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  95.8s MQTT   car/01/state {"seq":356,"t":96509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  96.3s MQTT   car/01/state {"seq":357,"t":96769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  96.6s MQTT   car/01/state {"seq":358,"t":97029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  96.8s MQTT   car/01/state {"seq":359,"t":97289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  96.8s MQTT   car/01/status {"up":97289,"tx":418,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  97.1s MQTT   car/01/state {"seq":360,"t":97549,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  97.3s MQTT   car/01/state {"seq":361,"t":97809,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  97.5s MQTT   car/01/state {"seq":362,"t":98069,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  97.7s MQTT   car/01/state {"seq":363,"t":98329,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  98.0s MQTT   car/01/state {"seq":364,"t":98589,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  98.2s MQTT   car/01/state {"seq":365,"t":98849,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  98.5s MQTT   car/01/state {"seq":366,"t":99109,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  98.7s MQTT   car/01/state {"seq":367,"t":99369,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  98.9s MQTT   car/01/status {"up":99369,"tx":427,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+  99.0s SEND   car/01/cmd 'B'
+  99.2s MQTT   car/01/state {"seq":368,"t":99629,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  99.2s MQTT   car/01/cmd B
+  99.3s CAR    mqtt: RX [car/01/cmd] "B"
+  99.3s MQTT   car/01/state {"seq":369,"t":99889,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  99.5s MQTT   car/01/state {"seq":370,"t":100150,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+  99.8s MQTT   car/01/state {"seq":371,"t":100409,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 100.1s MQTT   car/01/state {"seq":372,"t":100669,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 100.3s MQTT   car/01/state {"seq":373,"t":100929,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 100.7s MQTT   car/01/state {"seq":374,"t":101189,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 100.9s MQTT   car/01/state {"seq":375,"t":101449,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 100.9s MQTT   car/01/status {"up":101449,"tx":436,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+ 101.2s MQTT   car/01/state {"seq":376,"t":101709,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 101.5s MQTT   car/01/state {"seq":377,"t":101969,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 101.7s MQTT   car/01/state {"seq":378,"t":102229,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 101.9s MQTT   car/01/state {"seq":379,"t":102489,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 102.1s MQTT   car/01/state {"seq":380,"t":102749,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 102.4s MQTT   car/01/state {"seq":381,"t":103009,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 102.7s MQTT   car/01/state {"seq":382,"t":103269,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 102.9s MQTT   car/01/state {"seq":383,"t":103529,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 103.2s MQTT   car/01/status {"up":103529,"tx":445,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+ 103.2s MQTT   car/01/state {"seq":384,"t":103789,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 103.5s MQTT   car/01/state {"seq":385,"t":104049,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 103.7s MQTT   car/01/state {"seq":386,"t":104309,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 104.0s MQTT   car/01/state {"seq":387,"t":104569,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 104.2s MQTT   car/01/state {"seq":388,"t":104829,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 104.5s MQTT   car/01/state {"seq":389,"t":105089,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 105.0s MQTT   car/01/state {"seq":390,"t":105349,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 105.3s MQTT   car/01/state {"seq":391,"t":105609,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 105.3s MQTT   car/01/status {"up":105609,"tx":454,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+ 105.3s MQTT   car/01/state {"seq":392,"t":105869,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 105.6s MQTT   car/01/state {"seq":393,"t":106129,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 105.8s MQTT   car/01/state {"seq":394,"t":106389,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 106.0s MQTT   car/01/state {"seq":395,"t":106649,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 106.3s MQTT   car/01/state {"seq":396,"t":106909,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 106.5s MQTT   car/01/state {"seq":397,"t":107169,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 106.8s MQTT   car/01/state {"seq":398,"t":107429,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 107.0s MQTT   car/01/state {"seq":399,"t":107689,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 107.3s MQTT   car/01/status {"up":107690,"tx":463,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+ 107.4s MQTT   car/01/state {"seq":400,"t":107949,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 107.6s MQTT   car/01/state {"seq":401,"t":108209,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 107.8s MQTT   car/01/state {"seq":402,"t":108469,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 108.1s MQTT   car/01/state {"seq":403,"t":108729,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 108.3s MQTT   car/01/state {"seq":404,"t":108989,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 108.6s MQTT   car/01/state {"seq":405,"t":109249,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 108.9s MQTT   car/01/state {"seq":406,"t":109509,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 109.1s MQTT   car/01/state {"seq":407,"t":109769,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 109.5s MQTT   car/01/status {"up":109769,"tx":472,"fail":1,"drop_fast":0,"drop_slow":0,"sink":"mqtt"}
+ 109.5s MQTT   car/01/state {"seq":408,"t":110029,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}
+ 109.8s MQTT   car/01/state {"seq":409,"t":110289,"spd_l":77,"spd_r":0,"dist":0,"enc_l":0,"enc_r":0,"m_l":0,"m_r":0,"line":"00","cls":0,"peak":65535,"bc":"C"}

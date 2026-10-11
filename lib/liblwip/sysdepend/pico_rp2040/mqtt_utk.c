@@ -6,14 +6,23 @@
  *	the CYW43439 and the rest of lwIP (docs/RELEASE.md safety rule 6):
  *	cyw43_utk_task() (cyw43_utk.c) calls mqtt_utk_start() once, the first
  *	time it observes CYW43_LINK_UP. mqtt.c's own keepalive/ping/retry
- *	timers, and the heartbeat below, both ride the same sys_check_timeouts()
+ *	timers, and the drain below, both ride the same sys_check_timeouts()
  *	polling that task already does for DHCP and TCP -- nothing extra runs
  *	on any other task or core.
  *
- *	This file does not include tk/tkernel.h or any pico-sdk/cyw43 header
- *	(unlike cyw43_utk.c and sys_arch.c), so it isn't subject to either
- *	file's size_t workaround -- tm/tmonitor.h alone is namespace-safe here.
+ *	Buddy 1 (subsystem 1) edit: this file now DRAINS subsystem 1's outgoing
+ *	telemetry from the message buffer s1_mbf_tx and publishes it, and
+ *	forwards inbound command payloads into s1_mbf_rx. That needs the kernel
+ *	message-buffer API (tk_rcv_mbf/tk_snd_mbf), so this file now includes
+ *	tk/tkernel.h -- and therefore applies the same size_t workaround
+ *	sys_arch.c uses (PROHIBIT_DEF_SIZE_T, below) before any libc header.
  */
+
+/* --- Buddy 1 edit (a): tk/tkernel.h for the message buffers, with the
+ * size_t workaround, BEFORE every other include. --- */
+#define PROHIBIT_DEF_SIZE_T
+#include <stddef.h>
+#include <tk/tkernel.h>
 
 #include "lwip/apps/mqtt.h"
 #include "lwip/ip_addr.h"
@@ -22,15 +31,27 @@
 #include "mqtt_utk.h"
 #include <tm/tmonitor.h>
 
-#define MQTT_UTK_HEARTBEAT_MS   5000
+/* --- Buddy 1 edit (a), continued --- */
+#include <string.h>
+
+IMPORT ID s1_mbf_tx;              /* IF-12: outgoing telemetry, drained here */
+IMPORT ID s1_mbf_rx;              /* IF-13: inbound commands, written here   */
+
+#define MQTT_UTK_DRAIN_MS   50
+#define MQTT_UTK_MSG_MAX    240   /* must equal S1_MSG_MAX in subsystem1.h */
+
+static volatile int connected_flag;
+int mqtt_utk_is_connected(void) { return connected_flag; }
+
+#define MQTT_UTK_HEARTBEAT_MS   5000   /* unused after the drain change */
 #define MQTT_UTK_KEEPALIVE_S    60
 #define MQTT_UTK_RETRY_MS       3000
 
 /* Inbound message staging. A publish arrives as one topic callback followed by
  * one or more data callbacks, so the topic has to be kept until the fragment
  * carrying MQTT_DATA_FLAG_LAST shows up. Both buffers are sized well past the
- * heartbeat this demo publishes; anything longer is truncated and flagged
- * rather than being allowed to run off the end. */
+ * commands this expects; anything longer is truncated and flagged rather than
+ * being allowed to run off the end. */
 #define MQTT_UTK_RX_TOPIC_MAX   64
 #define MQTT_UTK_RX_DATA_MAX    128
 
@@ -43,7 +64,8 @@ static UB		rx_data[MQTT_UTK_RX_DATA_MAX];
 static u16_t		rx_len;
 static u8_t		rx_truncated;
 
-static void heartbeat_timeout(void *arg);
+/* --- Buddy 1 edit (b): renamed from heartbeat_timeout. --- */
+static void drain_timeout(void *arg);
 
 /* mqtt.c NUL-terminates the topic before handing it over, but it is only
  * valid for the duration of this call -- copy it out. */
@@ -84,6 +106,15 @@ static void incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t flags)
 		rx_data[rx_len] = '\0';
 		tm_printf((UB*)"mqtt: RX [%s] \"%s\"%s\n", rx_topic, rx_data,
 			  rx_truncated? " (truncated)": "");
+
+		/* --- Buddy 1 edit (d): forward the payload to subsystem 1's RX
+		 * buffer. sub_telemetry_mqtt_poll() parses it (first byte -> a
+		 * navigation command). Non-blocking; a full buffer just drops it. */
+		if((s1_mbf_rx > 0) && (rx_len > 0U)) {
+			(void)tk_snd_mbf(s1_mbf_rx, rx_data,
+					 (INT)((rx_len < 16U)? rx_len: 16U),
+					 TMO_POL);
+		}
 	}
 }
 
@@ -105,26 +136,34 @@ static void publish_done_cb(void *arg, err_t result)
 	}
 }
 
-static void heartbeat_timeout(void *arg)
+/* --- Buddy 1 edit (b): replaces heartbeat_timeout(). Publishes at most one
+ * message per tick, drained from s1_mbf_tx. lwIP's MQTT output buffer is 256
+ * bytes (default) and our largest message is ~245 bytes, so a message that
+ * doesn't fit yet (ERR_MEM) stays pending and is retried on the next tick --
+ * a busy link never loses it. --- */
+static void drain_timeout(void *arg)
 {
-	static unsigned int	count = 0;
-	UB			payload[48];
-	int			len;
+	static UB	msg[MQTT_UTK_MSG_MAX];
+	static INT	pending = 0;
 
 	(void)arg;
 
-	if(mqtt_client_is_connected(client)) {
-		len = tm_sprintf(payload, (const UB*)"hb %u", count++);
-		tm_printf((UB*)"mqtt: TX [" MQTT_TOPIC "] \"%s\"\n", payload);
-		(void)mqtt_publish(client, MQTT_TOPIC, payload, (u16_t)len,
-				   0 /* qos */, 0 /* retain */,
-				   publish_done_cb, NULL);
+	if((pending == 0) && (s1_mbf_tx > 0)) {
+		INT n = tk_rcv_mbf(s1_mbf_tx, msg, TMO_POL);
+		pending = (n > 0)? n: 0;
+	}
+	if((pending > 0) && mqtt_client_is_connected(client)) {
+		size_t	tlen = strlen((const char *)msg) + 1U;
+		err_t	err  = mqtt_publish(client, (const char *)msg, &msg[tlen],
+					    (u16_t)(pending - (INT)tlen),
+					    0 /* qos */, 0 /* retain */,
+					    publish_done_cb, NULL);
+		if(err != ERR_MEM) {
+			pending = 0;	/* sent, or failed for good: move on */
+		}
 	}
 
-	/* Re-arms itself every call -- mqtt.c's connection callback (below)
-	 * only starts this chain once, on the transition into MQTT_CONNECT_
-	 * ACCEPTED, so there is exactly one heartbeat chain alive at a time. */
-	sys_timeout(MQTT_UTK_HEARTBEAT_MS, heartbeat_timeout, NULL);
+	sys_timeout(MQTT_UTK_DRAIN_MS, drain_timeout, NULL);
 }
 
 static void retry_timeout(void *arg)
@@ -147,15 +186,14 @@ static void connection_cb(mqtt_client_t *c, void *arg, mqtt_connection_status_t 
 		 * is allowed to reconnect. Leaving it set would wedge the client
 		 * permanently after the first disconnect. */
 		connecting = 0;
+		connected_flag = 1;		/* Buddy 1 edit (c) */
 
 		tm_printf((UB*)"mqtt: connected to " MQTT_BROKER_IP "\n");
 
-		/* Subscribe to the same topic this client publishes to, so every
-		 * heartbeat comes back from the broker and is printed by
-		 * incoming_data_cb(). A matching RX for each TX is end-to-end
-		 * proof of the round trip without needing mosquitto_sub on the
-		 * broker host. Callbacks must be registered before subscribing,
-		 * or the first delivery has nowhere to go. */
+		/* Subscribe to MQTT_TOPIC (= car/01/cmd). Every message the
+		 * broker delivers on it arrives in incoming_data_cb(), which now
+		 * forwards it to subsystem 1. Callbacks must be registered before
+		 * subscribing, or the first delivery has nowhere to go. */
 		mqtt_set_inpub_callback(client, incoming_publish_cb,
 					incoming_data_cb, NULL);
 
@@ -168,11 +206,13 @@ static void connection_cb(mqtt_client_t *c, void *arg, mqtt_connection_status_t 
 
 		/* Drop any chain left over from a previous connection before
 		 * arming a new one. Each reconnect would otherwise add another
-		 * self-perpetuating heartbeat, and every one of them holds a
+		 * self-perpetuating timer, and every one of them holds a
 		 * MEMP_SYS_TIMEOUT slot until the pool is exhausted. */
-		sys_untimeout(heartbeat_timeout, NULL);
-		sys_timeout(MQTT_UTK_HEARTBEAT_MS, heartbeat_timeout, NULL);
+		sys_untimeout(drain_timeout, NULL);		/* Buddy 1 edit (c) */
+		sys_timeout(MQTT_UTK_DRAIN_MS, drain_timeout, NULL);
 	} else {
+		connected_flag = 0;		/* Buddy 1 edit (c) */
+
 		/* mqtt_client_connect() reconnects on its own for a dropped
 		 * keepalive; a rejected/never-established connection does not
 		 * retry itself, so do that here -- on a delay, so a broker

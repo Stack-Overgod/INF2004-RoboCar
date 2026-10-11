@@ -10,9 +10,21 @@
  * publishes the exact event that buddy would publish, on the real event
  * bus, and checks Buddy 1 does the right thing with it.
  *
- *   S1-U01..U20  unit: sinks, command decoding, framing, timing, the link
- *   S1-I01..I11  integration: event-bus contracts with Buddies 2-5 + nav
- *   S1-W01..W08  WiFi/MQTT: only in an MQTT=1 build, SKIP otherwise
+ *   S1-U01..U22  unit: sinks, command decoding, framing, timing, the link
+ *   S1-I01..I12  integration: event-bus contracts with Buddies 2-5 + nav
+ *   S1-W01..W09  WiFi/MQTT: only in an MQTT=1 build, SKIP otherwise
+ *
+ * What each Buddy 1 task in the project brief is proven by:
+ *
+ *   Establish WiFi connectivity        W04
+ *   Implement MQTT communication       W01 W02 W06 W09
+ *   Design communication topics        U17 W03
+ *   Define telemetry message structs   U11-U14 U22 I10
+ *   Implement telemetry publishing     U15 U21 I02-I08
+ *   Implement command subscription     U03-U06 I09 W07 W08 W09
+ *   Implement connection recovery      U18 U19 U20
+ *   Implement heartbeat/status         U16 I11
+ *   Telemetry API is safe to run       U01 U02 U07-U10 I12
  *
  * Every check prints one "[TEST] <id> PASS/FAIL" line. Save the console to
  * testing/subsystem1/logs/ and record the run in testing/subsystem1/
@@ -46,8 +58,8 @@
 #define BARRIER()           __asm volatile ("" ::: "memory")
 
 #define CAP_TOPIC_MAX       (48)
-#define CAP_PAYLOAD_MAX     (200)
-#define STATE_PAYLOAD_MAX   (192)   /* PAYLOAD_MAX in sub_telemetry.c */
+#define CAP_PAYLOAD_MAX     (240)
+#define STATE_PAYLOAD_MAX   (224)   /* PAYLOAD_MAX in sub_telemetry.c */
 
 /* --------------------------------------------------------------------
  * Capture sink
@@ -561,42 +573,114 @@ static bool check_impact_frame(void)
            snap_is(RC_TOPIC_BASE "/impact", "{\"impact\":1}");
 }
 
-/* Two state messages ~2 s apart: the seq numbers must account for every
- * message in between (none skipped), and the time per message should be
- * the 250 ms in rc_config.h (a few ms over is normal: work + tick). */
-static bool check_state_schedule(void)
-{
-    uint32_t seq_a;
-    uint32_t t_a;
-    uint32_t n_a;
-    uint32_t seq_b;
-    uint32_t t_b;
-    uint32_t n_b;
-    uint32_t period;
+/* One measurement, used by S1-U15 and S1-U21: eight state messages timed
+ * two ways. The kernel clock (tk_get_tim) is the reference; the "t" field
+ * is what telemetry stamps into each message (rc_time_ms). Keeping them
+ * separate means a wrong clock can't hide behind a correct schedule. */
+#define SCHED_MSGS      (8U)
 
+static bool     sched_ok;
+static uint32_t sched_msgs;         /* messages that arrived */
+static uint32_t sched_seq;          /* how far "seq" moved over them */
+static uint32_t sched_kernel_ms;    /* the span, by the kernel clock */
+static uint32_t sched_car_ms;       /* the span, by telemetry's own "t" */
+
+static void measure_schedule(void)
+{
+    SYSTIM   t0;
+    SYSTIM   t1;
+    uint32_t n_a;
+    uint32_t seq_a;
+    uint32_t car_a;
+
+    sched_ok = false;
     if (!fresh_state())
     {
-        return false;
+        return;
     }
-    seq_a = snap_u32("\"seq\":");
-    t_a   = snap_u32("\"t\":");
+    (void)tk_get_tim(&t0);
     n_a   = cap_count(&cap_state);
+    seq_a = snap_u32("\"seq\":");
+    car_a = snap_u32("\"t\":");
 
-    tk_dly_tsk(2000);
+    if (!cap_wait(&cap_state, n_a + SCHED_MSGS - 1U, 4000))
+    {
+        return;
+    }
+    (void)tk_get_tim(&t1);
     cap_read(&cap_state);
-    seq_b = snap_u32("\"seq\":");
-    t_b   = snap_u32("\"t\":");
-    n_b   = cap_count(&cap_state);
 
-    if ((seq_b <= seq_a) || ((seq_b - seq_a) != (n_b - n_a)))
+    sched_msgs      = cap_count(&cap_state) - n_a;
+    sched_seq       = snap_u32("\"seq\":") - seq_a;
+    sched_kernel_ms = t1.lo - t0.lo;
+    sched_car_ms    = snap_u32("\"t\":") - car_a;
+    sched_ok        = (sched_seq > 0U);
+
+    tm_printf((UB *)"[TEST]   %lu state msgs: %lu ms by kernel clock, "
+              "%lu ms by telemetry's t\n", (unsigned long)sched_msgs,
+              (unsigned long)sched_kernel_ms, (unsigned long)sched_car_ms);
+}
+
+/* A state message every 250 ms (rc_config.h; a few ms over is normal:
+ * the work itself plus the 1 ms tick), and "seq" accounts for every one
+ * of them, so none were skipped. Timed by the kernel clock. */
+static bool check_state_schedule(void)
+{
+    uint32_t period;
+
+    measure_schedule();
+    if (!sched_ok || (sched_seq != sched_msgs))
     {
         return false;
     }
-    period = (t_b - t_a) / (seq_b - seq_a);
-    tm_printf((UB *)"[TEST]   state period %lu ms over %lu messages\n",
-              (unsigned long)period, (unsigned long)(seq_b - seq_a));
+    period = sched_kernel_ms / SCHED_MSGS;
     return (period >= (uint32_t)RC_PERIOD_TELEM_MS) &&
            (period <= ((uint32_t)RC_PERIOD_TELEM_MS + 25U));
+}
+
+/* The "t" timestamps in the messages move at the same speed as real time
+ * (within 5 %). A dashboard plots against "t", so a slow clock would
+ * squash every graph. This is what caught the 42.7x slow TIMER after a
+ * cold power-on (fixed in rc_time_init()). */
+static bool check_timestamps_real_time(void)
+{
+    uint32_t car_per;
+    uint32_t ker_per;
+    uint32_t diff;
+
+    if (!sched_ok)
+    {
+        return false;
+    }
+    car_per = sched_car_ms / sched_seq;
+    ker_per = sched_kernel_ms / SCHED_MSGS;
+    diff    = (car_per > ker_per) ? (car_per - ker_per) : (ker_per - car_per);
+    return (diff * 20U) <= ker_per;
+}
+
+/* Every telemetry item the project brief lists has a field in the state
+ * message: state (cls), speeds, encoder counts, motor duty, line sensors,
+ * barcode, hump peak, distance -- plus seq and t to order them. */
+static bool check_state_fields(void)
+{
+    static const char *const keys[] =
+    {
+        "\"seq\":", "\"t\":", "\"spd_l\":", "\"spd_r\":", "\"dist\":",
+        "\"enc_l\":", "\"enc_r\":", "\"m_l\":", "\"m_r\":", "\"line\":",
+        "\"cls\":", "\"peak\":", "\"bc\":"
+    };
+    uint32_t i;
+
+    cap_read(&cap_state);
+    for (i = 0U; i < (sizeof(keys) / sizeof(keys[0])); i++)
+    {
+        if (!snap_has(keys[i]))
+        {
+            tm_printf((UB *)"[TEST]   state has no %s\n", keys[i]);
+            return false;
+        }
+    }
+    return true;
 }
 
 /* Heartbeat comes every 8 ticks (~2 s) and says which sink is active. */
@@ -730,14 +814,36 @@ static bool check_command_to_nav(void)
            (cmdrx_cmd == RC_CMD_STOP) && (cmdrx_arg == 7);
 }
 
-/* The longest state line the other buddies can cause: most negative
- * speeds, 4,000 km on both wheels, both line sensors on, the highest
- * motion class, the tallest hump. It must still end in '}', fit the
- * telemetry buffer, fit one MQTT message, and report the right distance. */
+/* How many characters the value after `key` takes up in snap_payload
+ * (up to the next ',' or '}'). */
+static uint32_t field_len(const char *key)
+{
+    const char *p = strstr(snap_payload, key);
+    uint32_t n = 0U;
+
+    if (p == NULL)
+    {
+        return 0U;
+    }
+    for (p += strlen(key); (*p != ',') && (*p != '}') && (*p != '\0'); p++)
+    {
+        n++;
+    }
+    return n;
+}
+
+/* The longest state line possible. The test drives everything it can to
+ * its longest: most negative speeds, 4,000 km on both wheels, both line
+ * sensors on, the highest motion class, the tallest hump. Some numbers it
+ * can't drive (seq, t, encoder counts, motor duty), so it adds the digits
+ * those would need at their longest. The result must fit the telemetry
+ * buffer and one MQTT message, and the real message must end in '}' and
+ * report the right distance (no overflow in the average). */
 static bool check_worst_case_state(void)
 {
     rc_event_t e;
     size_t len;
+    size_t worst;
     bool ok;
 
     make_hump(&e, 65535U, 1U, 0);
@@ -749,12 +855,17 @@ static bool check_worst_case_state(void)
         return false;
     }
 
-    len = strlen(snap_payload);
-    tm_printf((UB *)"[TEST]   worst-case state is %lu bytes\n",
-              (unsigned long)len);
-    ok = (len > 0U) && (len < (STATE_PAYLOAD_MAX - 1U)) &&
+    len   = strlen(snap_payload);
+    worst = len
+          + (10U - field_len("\"seq\":"))   + (10U - field_len("\"t\":"))
+          + (10U - field_len("\"enc_l\":")) + (10U - field_len("\"enc_r\":"))
+          + (5U - field_len("\"m_l\":"))    + (5U - field_len("\"m_r\":"));
+    tm_printf((UB *)"[TEST]   state is %lu bytes now, %lu at worst "
+              "(limit %d)\n", (unsigned long)len, (unsigned long)worst,
+              STATE_PAYLOAD_MAX - 1);
+    ok = (len > 0U) && (worst < STATE_PAYLOAD_MAX) &&
          (snap_payload[len - 1U] == '}') &&
-         ((strlen(snap_topic) + 1U + len) <= S1_MSG_MAX) &&
+         ((strlen(snap_topic) + 1U + worst) <= S1_MSG_MAX) &&
          snap_has("\"spd_l\":-2147483648") &&
          snap_has("\"dist\":4000000000") &&
          snap_has("\"line\":\"11\"") && snap_has("\"cls\":7") &&
@@ -769,6 +880,42 @@ static bool check_no_drops(void)
 {
     return (rc_event_dropped(RC_LANE_FAST) == 0U) &&
            (rc_event_dropped(RC_LANE_SLOW) == 0U);
+}
+
+/* Somebody else calling rc_event_init() a second time (subsystem5_test.c
+ * does) must not cut Buddy 1 off the bus. Re-init it on purpose, then check
+ * both directions still work: an event from "Buddy 2" still reaches the
+ * state message, and a command still reaches sub_nav's listener. Runs last,
+ * because on a bus that isn't safe to re-init it does exactly that damage. */
+static bool check_survives_reinit(void)
+{
+    rc_event_t e;
+    bool events_ok;
+    bool cmds_ok;
+
+    (void)rc_event_init();
+
+    (void)sub_telemetry_set_sink(&cap_sink);
+    make_simple(&e, RC_EVT_ODOMETRY);
+    e.u.odometry.speed_l_mm_s = 77;
+    (void)rc_event_publish(&e);
+    events_ok = fresh_state() && snap_has("\"spd_l\":77,");
+
+    (void)sub_telemetry_on_command(NULL, NULL);
+    cmdrx_hits = 0U;
+    cmds_ok = (sub_telemetry_deliver_command(RC_CMD_TURN_RIGHT, 3) == RC_OK) &&
+              wait_hits(&cmdrx_hits, 1U, 1000) &&
+              (cmdrx_cmd == RC_CMD_TURN_RIGHT) && (cmdrx_arg == 3);
+
+    if (!events_ok)
+    {
+        tm_printf((UB *)"[TEST]   telemetry lost its subscriptions\n");
+    }
+    if (!cmds_ok)
+    {
+        tm_printf((UB *)"[TEST]   commands no longer reach the bus\n");
+    }
+    return events_ok && cmds_ok;
 }
 
 /* --------------------------------------------------------------------
@@ -928,6 +1075,33 @@ static bool check_inbound_garbage(void)
     return !delivered;
 }
 
+/* The whole trip over the real network: the car publishes "L" to its own
+ * command topic, the broker sends it straight back (the car is subscribed
+ * to that topic), mqtt_utk.c drops it into s1_mbf_rx, and Buddy 1 decodes
+ * it as turn-left. Car -> WiFi -> broker -> WiFi -> car, no PC involved.
+ * Retries once, because a public broker can be slow on the first try. */
+static bool check_broker_round_trip(void)
+{
+    static const char cmd[] = "L";
+    const sub_telemetry_sink_t *m = sub_telemetry_mqtt_sink();
+    INT attempt;
+    bool ok = false;
+
+    (void)sub_telemetry_on_command(test_cmd_cb, NULL);
+    for (attempt = 0; (attempt < 2) && !ok; attempt++)
+    {
+        cb_hits = 0U;
+        if (m->publish(RC_TOPIC_CMD, cmd, (uint16_t)(sizeof(cmd) - 1U))
+            == RC_OK)
+        {
+            ok = wait_hits(&cb_hits, 1U, 5000) &&
+                 (cb_cmd == RC_CMD_TURN_LEFT);
+        }
+    }
+    (void)sub_telemetry_on_command(NULL, NULL);
+    return ok;
+}
+
 #else /* console build: the S1-W tests can't run, say so */
 
 static void skip(const char *id, const char *why)
@@ -988,6 +1162,10 @@ EXPORT void subsystem1_test(void)
                "heartbeat ~2 s with sink + counters");
     TEST_CHECK("S1-U17", check_topics(),
                "every topic under " RC_TOPIC_BASE "/");
+    TEST_CHECK("S1-U21", check_timestamps_real_time(),
+               "message timestamps keep real time (5 %)");
+    TEST_CHECK("S1-U22", check_state_fields(),
+               "state carries every telemetry item in the brief");
 
     /* --- integration: the test plays Buddies 2-5 and sub_nav -------- */
     listeners_attach();
@@ -1049,6 +1227,8 @@ EXPORT void subsystem1_test(void)
                "inbound 'R' from kernel buffer -> turn right");
     TEST_CHECK("S1-W08", check_inbound_garbage(),
                "inbound garbage ignored");
+    TEST_CHECK("S1-W09", check_broker_round_trip(),
+               "command round trip car -> broker -> car");
 #else
     skip("S1-W01", "MQTT sink present (needs NET=lwip MQTT=1)");
     skip("S1-W02", "kernel message buffers (needs MQTT=1)");
@@ -1058,7 +1238,12 @@ EXPORT void subsystem1_test(void)
     skip("S1-W06", "handed to kernel (needs MQTT=1)");
     skip("S1-W07", "inbound command (needs MQTT=1)");
     skip("S1-W08", "inbound garbage (needs MQTT=1)");
+    skip("S1-W09", "broker round trip (needs MQTT=1)");
 #endif
+
+    /* --- last: must survive someone re-initialising the bus --------- */
+    TEST_CHECK("S1-I12", check_survives_reinit(),
+               "a 2nd rc_event_init() doesn't cut Buddy 1 off");
 
     /* Leave things as start-up had them: no callback, and MQTT if this
      * build has it (NULL -> console otherwise). */

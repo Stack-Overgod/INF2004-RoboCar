@@ -11,7 +11,7 @@
 #include "sub_telemetry.h"
 
 #define S1_PRI_TELEMETRY  12    /* band 12-13 (TEAM.md) */
-#define S1_MSG_MAX        240   /* TOPIC_MAX 48 + PAYLOAD_MAX 192 */
+#define S1_MSG_MAX        240   /* longest topic + '\0' + PAYLOAD_MAX 224 */
 #define S1_CMD_MAX        16
 
 /* The two message buffers that carry data to/from the kernel's MQTT task.
