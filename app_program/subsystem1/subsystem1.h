@@ -1,6 +1,6 @@
 /*
  * subsystem1.h -- Subsystem 1: WiFi, commands and telemetry (Buddy 1).
- * Student ID: <student ID>.
+ * Student ID: 2503331.
  *
  * Subsystem 1's public interface: only what other parts of the build need
  * to see. The telemetry calls themselves are in sub_telemetry.h. The long

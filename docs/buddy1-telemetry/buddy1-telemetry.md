@@ -222,7 +222,7 @@ into TEAM.md, so the team can agree them in one go:
 
 | Section | Row |
 |---|---|
-| §1 Members | `1` · WiFi communication, commands and telemetry · *ID* · Rexzer · `app_program/subsystem1/` · `testing/subsystem1/` |
+| §1 Members | `1` · WiFi communication, commands and telemetry · 2503331 · Rexzer · `app_program/subsystem1/` · `testing/subsystem1/` |
 | §2 Pins | none (the radio's GP23/24/25/29 are already *reserved*) |
 | §3 Peripherals | none. WiFi/TCP-IP/MQTT stay with the kernel's `cyw43_utk_task`. |
 | §4 Priorities | `1` · 12–13 · `telemetry` – 12 – any |
