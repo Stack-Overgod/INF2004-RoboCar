@@ -4,27 +4,34 @@
  * Built only with: make TEST=1   (add NET=lwip MQTT=1 for the S1-W tests)
  *
  * Buddy 1 sits in the middle of everyone else: it listens to the other
- * buddies' events and reports them, and it takes commands in for sub_nav.
- * So these tests don't need the other buddies' code to be finished. Where
- * Buddy 1 depends on someone, the test plays that buddy itself: it
- * publishes the exact event that buddy would publish, on the real event
- * bus, and checks Buddy 1 does the right thing with it.
+ * buddies' events and reports them, and it takes commands in for the
+ * vehicle controller (sub_nav). So these tests don't need the other
+ * buddies' code to be finished. Where Buddy 1 depends on someone, the test
+ * plays that buddy itself: it publishes the exact event that buddy would
+ * publish, on the real event bus, and checks Buddy 1 does the right thing
+ * with it. That makes the S1-I tests the contract the other buddies link
+ * to (subsystem1.h has it as a table).
  *
- *   S1-U01..U22  unit: sinks, command decoding, framing, timing, the link
- *   S1-I01..I12  integration: event-bus contracts with Buddies 2-5 + nav
- *   S1-W01..W09  WiFi/MQTT: only in an MQTT=1 build, SKIP otherwise
+ *   S1-U01..U29  unit: sinks, command decoding, framing, timing, the link
+ *   S1-I01..I20  integration: event-bus contracts with Buddies 2-5 + nav
+ *   S1-W01..W10  WiFi/MQTT: only in an MQTT=1 build, SKIP otherwise
  *
  * What each Buddy 1 task in the project brief is proven by:
  *
- *   Establish WiFi connectivity        W04
+ *   Establish WiFi connectivity        W04 W10
  *   Implement MQTT communication       W01 W02 W06 W09
  *   Design communication topics        U17 W03
- *   Define telemetry message structs   U11-U14 U22 I10
- *   Implement telemetry publishing     U15 U21 I02-I08
- *   Implement command subscription     U03-U06 I09 W07 W08 W09
+ *   Define telemetry message structs   U11-U14 U22-U27 I10
+ *   Implement telemetry publishing     U15 U21 I02-I08 I13-I17
+ *   Implement command subscription     U03-U06 U27 I09 I20 W07 W08 W09
  *   Implement connection recovery      U18 U19 U20
- *   Implement heartbeat/status         U16 I11
+ *   Implement heartbeat/status         U16 U28 I11 I18
+ *   Link state for other subsystems    U29 I19 W10
  *   Telemetry API is safe to run       U01 U02 U07-U10 I12
+ *
+ * And the design review's requirements: FR10a U15 U22 I02-I08 I16,
+ * FR10b I09 I20 W07-W09, FR11a U16 U28, FR11b U18-U20, FR14 U26 I17,
+ * FR15 I18.
  *
  * Every check prints one "[TEST] <id> PASS/FAIL" line. Save the console to
  * testing/subsystem1/logs/ and record the run in testing/subsystem1/
@@ -49,7 +56,7 @@
 #include "../test_report.h"
 
 #if TM_MQTT
-#include "wifi_secrets.h"           /* MQTT_TOPIC: what the kernel subscribes to */
+#include "wifi_secrets.h"       /* MQTT_TOPIC, the kernel subscribes to it */
 #endif
 
 #if APP_TEST
@@ -66,8 +73,9 @@
  *
  * A fake transport that keeps the last message it was given, so a test
  * can read back exactly what telemetry would have put on the wire. State,
- * status and event messages go into separate slots because the telemetry
- * task keeps writing state/status in the background while a test runs.
+ * status, motion, ack and the other event messages go into separate slots
+ * because the telemetry task keeps writing state/status/motion in the
+ * background while a test runs.
  *
  * seq is odd while a slot is being written. A reader copies the slot and
  * only trusts the copy if seq was even and didn't change (see cap_read).
@@ -81,7 +89,9 @@ typedef struct
 
 static cap_slot_t cap_state;
 static cap_slot_t cap_status;
-static cap_slot_t cap_event;
+static cap_slot_t cap_motion;       /* streamed by the task on a change */
+static cap_slot_t cap_ack;          /* echo of each command character */
+static cap_slot_t cap_event;        /* everything else */
 
 static volatile bool     cap_up = true;     /* flip to fake a dead link */
 static volatile uint32_t cap_opens;
@@ -129,6 +139,14 @@ static rc_result_t cap_publish(const char *topic, const char *payload,
     else if (ends_with(topic, "/status"))
     {
         s = &cap_status;
+    }
+    else if (ends_with(topic, "/motion"))
+    {
+        s = &cap_motion;
+    }
+    else if (ends_with(topic, "/ack"))
+    {
+        s = &cap_ack;
     }
     else
     {
@@ -221,21 +239,26 @@ static bool fresh_state(void)
 }
 
 /* Send one event straight through telemetry (no bus) and read back the
- * message it produced. */
-static bool frame_event(const rc_event_t *evt)
+ * message it produced from slot s. */
+static bool frame_into(const cap_slot_t *s, const rc_event_t *evt)
 {
-    uint32_t c = cap_count(&cap_event);
+    uint32_t c = cap_count(s);
 
     if (sub_telemetry_publish_event(evt) != RC_OK)
     {
         return false;
     }
-    if (!cap_wait(&cap_event, c, 200))
+    if (!cap_wait(s, c, 200))
     {
         return false;
     }
-    cap_read(&cap_event);
+    cap_read(s);
     return true;
+}
+
+static bool frame_event(const rc_event_t *evt)
+{
+    return frame_into(&cap_event, evt);
 }
 
 /* Publish an event on the real bus, the way another buddy would, and read
@@ -297,6 +320,9 @@ static volatile uint32_t     probe_hits;
 static volatile uint32_t     cmdrx_hits;
 static volatile rc_nav_cmd_t cmdrx_cmd;
 static volatile int32_t      cmdrx_arg;
+static volatile uint32_t     link_hits;
+static volatile bool         link_conn;
+static volatile bool         link_broker;
 static bool                  listeners_on;
 
 static void on_probe(const rc_event_t *evt, void *ctx)
@@ -306,7 +332,8 @@ static void on_probe(const rc_event_t *evt, void *ctx)
     probe_hits++;
 }
 
-/* Stands in for sub_nav, which is who really listens for commands. */
+/* Stands in for the vehicle controller, which is who really listens for
+ * commands (on the fast lane; the slow one is fine for a test). */
 static void on_cmdrx(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
@@ -315,16 +342,26 @@ static void on_cmdrx(const rc_event_t *evt, void *ctx)
     cmdrx_hits++;
 }
 
+/* Stands in for anyone who wants to know when the network comes and goes. */
+static void on_link(const rc_event_t *evt, void *ctx)
+{
+    (void)ctx;
+    link_conn = evt->u.link.connected;
+    link_broker = evt->u.link.broker_up;
+    link_hits++;
+}
+
 static void listeners_attach(void)
 {
     if (!listeners_on)
     {
-        /* RC_EVT_LINK_STATE is Buddy 1's own id and nobody else uses it,
-         * so it's a safe event to probe the bus with. */
-        (void)rc_event_subscribe(RC_EVT_LINK_STATE, RC_LANE_SLOW,
-                                 on_probe, NULL);
+        /* Nothing publishes RC_EVT_TICK on this car, so it's a safe event
+         * to probe the bus with. */
+        (void)rc_event_subscribe(RC_EVT_TICK, RC_LANE_SLOW, on_probe, NULL);
         (void)rc_event_subscribe(RC_EVT_COMMAND_RX, RC_LANE_SLOW,
                                  on_cmdrx, NULL);
+        (void)rc_event_subscribe(RC_EVT_LINK_STATE, RC_LANE_SLOW,
+                                 on_link, NULL);
         listeners_on = true;
     }
 }
@@ -508,6 +545,41 @@ static void make_simple(rc_event_t *e, rc_evt_id_t id)
     e->id = id;
 }
 
+static void make_move(rc_event_t *e, uint32_t id, bool done, uint32_t mm)
+{
+    make_simple(e, RC_EVT_MOTION_DONE);
+    e->u.motion_done.move_id      = id;
+    e->u.motion_done.completed    = done;
+    e->u.motion_done.travelled_mm = mm;
+}
+
+static void make_plan(rc_event_t *e, rc_nav_cmd_t act, uint16_t lat,
+                      uint16_t fwd)
+{
+    make_simple(e, RC_EVT_AVOIDANCE_PLAN);
+    e->u.plan.action     = act;
+    e->u.plan.lateral_mm = lat;
+    e->u.plan.forward_mm = fwd;
+}
+
+static void make_class(rc_event_t *e, rc_motion_class_t cls)
+{
+    make_simple(e, RC_EVT_MOTION_CLASS);
+    e->u.motion_class.cls = cls;
+}
+
+/* Buddy 5's ultrasonic driver: one reading, tagged with the servo angle. */
+static void play_ultra(int16_t deg, uint16_t mm, bool valid)
+{
+    rc_event_t e;
+
+    make_simple(&e, RC_EVT_ULTRA_RESULT);
+    e.u.ultra.angle_deg = deg;
+    e.u.ultra.range_mm  = mm;
+    e.u.ultra.valid     = valid;
+    (void)rc_event_publish(&e);
+}
+
 static bool check_events_accepted(void)
 {
     rc_event_t e;
@@ -540,7 +612,8 @@ static bool check_barcode_frame(void)
 
     make_barcode(&e, 'A', RC_CMD_TURN_LEFT, false);
     return frame_event(&e) &&
-           snap_is(RC_TOPIC_BASE "/barcode", "{\"sym\":\"A\",\"cmd\":1,\"rev\":0}");
+           snap_is(RC_TOPIC_BASE "/barcode",
+                   "{\"sym\":\"A\",\"cmd\":1,\"rev\":0}");
 }
 
 static bool check_hump_frame(void)
@@ -571,6 +644,76 @@ static bool check_impact_frame(void)
     make_simple(&e, RC_EVT_IMPACT);
     return frame_event(&e) &&
            snap_is(RC_TOPIC_BASE "/impact", "{\"impact\":1}");
+}
+
+static bool check_line_frames(void)
+{
+    rc_event_t e;
+    bool ok;
+
+    make_simple(&e, RC_EVT_LINE_LOST);
+    ok = frame_event(&e) &&
+         snap_is(RC_TOPIC_BASE "/line", "{\"lost\":1}");
+    make_simple(&e, RC_EVT_LINE_REACQUIRED);
+    return ok && frame_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/line", "{\"lost\":0}");
+}
+
+static bool check_move_frame(void)
+{
+    rc_event_t e;
+
+    make_move(&e, 7U, true, 86U);
+    return frame_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/move", "{\"id\":7,\"ok\":1,\"mm\":86}");
+}
+
+static bool check_avoid_frame(void)
+{
+    rc_event_t e;
+
+    make_plan(&e, RC_CMD_TURN_LEFT, 150U, 300U);
+    return frame_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/avoid",
+                   "{\"act\":1,\"lat_mm\":150,\"fwd_mm\":300}");
+}
+
+static bool check_motion_frame(void)
+{
+    rc_event_t e;
+
+    make_class(&e, RC_MOTION_TURNING);
+    return frame_into(&cap_motion, &e) &&
+           snap_is(RC_TOPIC_BASE "/motion", "{\"cls\":4}");
+}
+
+/* A command character is passed on (the callback sees it) and echoed on
+ * car/01/ack. Something that isn't a command is echoed with "cmd":0 and not
+ * passed on, and a quote -- which would break the JSON -- shows as '?'. */
+static bool check_ack_frames(void)
+{
+    uint32_t c;
+    bool ok;
+
+    cb_hits = 0U;
+    (void)sub_telemetry_on_command(test_cmd_cb, NULL);
+
+    c = cap_count(&cap_ack);
+    ok = (sub_telemetry_receive_command('L') == RC_CMD_TURN_LEFT) &&
+         cap_wait(&cap_ack, c, 200);
+    cap_read(&cap_ack);
+    ok = ok && snap_is(RC_TOPIC_BASE "/ack", "{\"rx\":\"L\",\"cmd\":1}") &&
+         (cb_hits == 1U) && (cb_cmd == RC_CMD_TURN_LEFT);
+
+    c = cap_count(&cap_ack);
+    ok = ok && (sub_telemetry_receive_command('"') == RC_CMD_NONE) &&
+         cap_wait(&cap_ack, c, 200);
+    cap_read(&cap_ack);
+    ok = ok && snap_is(RC_TOPIC_BASE "/ack", "{\"rx\":\"?\",\"cmd\":0}") &&
+         (cb_hits == 1U);
+
+    (void)sub_telemetry_on_command(NULL, NULL);
+    return ok;
 }
 
 /* One measurement, used by S1-U15 and S1-U21: eight state messages timed
@@ -658,16 +801,16 @@ static bool check_timestamps_real_time(void)
     return (diff * 20U) <= ker_per;
 }
 
-/* Every telemetry item the project brief lists has a field in the state
- * message: state (cls), speeds, encoder counts, motor duty, line sensors,
- * barcode, hump peak, distance -- plus seq and t to order them. */
+/* Every telemetry item FR10a lists has a field in the state message:
+ * state (cls), speeds, encoder counts, motor duty, line sensors, barcode,
+ * hump peak, scan result (rng), distance -- plus seq and t to order them. */
 static bool check_state_fields(void)
 {
     static const char *const keys[] =
     {
         "\"seq\":", "\"t\":", "\"spd_l\":", "\"spd_r\":", "\"dist\":",
         "\"enc_l\":", "\"enc_r\":", "\"m_l\":", "\"m_r\":", "\"line\":",
-        "\"cls\":", "\"peak\":", "\"bc\":"
+        "\"cls\":", "\"peak\":", "\"rng\":", "\"bc\":"
     };
     uint32_t i;
 
@@ -698,6 +841,54 @@ static bool check_heartbeat(void)
            snap_has("\"drop_slow\":");
 }
 
+/* FR11a asks for a link-state heartbeat, so status also carries the WiFi
+ * and broker state, commands received, link retries and the four "live"
+ * flags. Its longest is 185 characters, well inside the buffer. */
+static bool check_heartbeat_link(void)
+{
+    uint32_t c = cap_count(&cap_status);
+    size_t len;
+
+    if (!cap_wait(&cap_status, c, 3000))
+    {
+        return false;
+    }
+    cap_read(&cap_status);
+    len = strlen(snap_payload);
+    tm_printf((UB *)"[TEST]   status is %lu bytes\n", (unsigned long)len);
+    return snap_has("\"wifi\":") && snap_has("\"mqtt\":") &&
+           snap_has("\"cmds\":") && snap_has("\"retries\":") &&
+           snap_has("\"live\":\"") &&
+           (len > 0U) && (snap_payload[len - 1U] == '}');
+}
+
+/* The link telemetry announces (sub_telemetry_get_link) is the one the
+ * network side reports, give or take one tick to notice a change. In a
+ * build without MQTT that's both down. */
+static bool link_matches(INT timeout_ms)
+{
+    rc_pl_link_t got;
+    bool wifi;
+    bool broker;
+    INT waited = 0;
+
+    for (;;)
+    {
+        sub_telemetry_mqtt_link(&wifi, &broker);
+        sub_telemetry_get_link(&got);
+        if ((got.connected == wifi) && (got.broker_up == broker))
+        {
+            return true;
+        }
+        if (waited >= timeout_ms)
+        {
+            return false;
+        }
+        tk_dly_tsk(50);
+        waited += 50;
+    }
+}
+
 /* Every topic hangs off RC_TOPIC_BASE, so the broker side can subscribe to
  * car/01/# and get everything. */
 static bool check_topics(void)
@@ -723,7 +914,7 @@ static bool check_bus_running(void)
     rc_event_t e;
 
     probe_hits = 0U;
-    make_simple(&e, RC_EVT_LINK_STATE);
+    make_simple(&e, RC_EVT_TICK);
     (void)rc_event_publish(&e);
     return wait_hits(&probe_hits, 1U, 500);
 }
@@ -760,7 +951,8 @@ static bool check_bus_barcode(void)
 
     make_barcode(&e, 'C', RC_CMD_GO_STRAIGHT, true);
     if (!bus_event(&e) ||
-        !snap_is(RC_TOPIC_BASE "/barcode", "{\"sym\":\"C\",\"cmd\":3,\"rev\":1}"))
+        !snap_is(RC_TOPIC_BASE "/barcode",
+                 "{\"sym\":\"C\",\"cmd\":3,\"rev\":1}"))
     {
         return false;
     }
@@ -773,7 +965,8 @@ static bool check_bus_hump(void)
 
     make_hump(&e, 55U, 300U, 9);
     if (!bus_event(&e) ||
-        !snap_is(RC_TOPIC_BASE "/hump", "{\"peak_mm\":55,\"ms\":300,\"pitch\":9}"))
+        !snap_is(RC_TOPIC_BASE "/hump",
+                 "{\"peak_mm\":55,\"ms\":300,\"pitch\":9}"))
     {
         return false;
     }
@@ -814,6 +1007,158 @@ static bool check_command_to_nav(void)
            (cmdrx_cmd == RC_CMD_STOP) && (cmdrx_arg == 7);
 }
 
+/* A registered callback is an extra, not a replacement: the command still
+ * reaches everyone on the bus, and the callback gets it too. */
+static bool check_command_bus_and_callback(void)
+{
+    bool ok;
+
+    cmdrx_hits = 0U;
+    cb_hits = 0U;
+    (void)sub_telemetry_on_command(test_cmd_cb, NULL);
+    ok = (sub_telemetry_deliver_command(RC_CMD_GO_STRAIGHT, 5) == RC_OK) &&
+         wait_hits(&cmdrx_hits, 1U, 1000) &&
+         (cmdrx_cmd == RC_CMD_GO_STRAIGHT) && (cmdrx_arg == 5) &&
+         (cb_hits == 1U) && (cb_cmd == RC_CMD_GO_STRAIGHT);
+    (void)sub_telemetry_on_command(NULL, NULL);
+    return ok;
+}
+
+/* Buddy 2: a finished move. */
+static bool check_bus_move(void)
+{
+    rc_event_t e;
+
+    make_move(&e, 12U, false, 40U);
+    return bus_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/move", "{\"id\":12,\"ok\":0,\"mm\":40}");
+}
+
+/* Buddy 3: the line lost, then found again. */
+static bool check_bus_line(void)
+{
+    rc_event_t e;
+    bool ok;
+
+    make_simple(&e, RC_EVT_LINE_LOST);
+    ok = bus_event(&e) && snap_is(RC_TOPIC_BASE "/line", "{\"lost\":1}");
+    make_simple(&e, RC_EVT_LINE_REACQUIRED);
+    return ok && bus_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/line", "{\"lost\":0}");
+}
+
+/* Buddy 5: the avoidance plan that follows a scan. */
+static bool check_bus_avoid(void)
+{
+    rc_event_t e;
+
+    make_plan(&e, RC_CMD_TURN_RIGHT, 200U, 450U);
+    return bus_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/avoid",
+                   "{\"act\":2,\"lat_mm\":200,\"fwd_mm\":450}");
+}
+
+/* Buddy 5: a reading straight ahead is the "rng" in state, a reading off
+ * to the side doesn't change it, and an echo timeout reads as 0. */
+static bool check_bus_range(void)
+{
+    bool ok;
+
+    play_ultra(90, 432U, true);
+    ok = fresh_state() && snap_has("\"rng\":432,");
+    play_ultra(30, 111U, true);
+    ok = ok && fresh_state() && snap_has("\"rng\":432,");
+    play_ultra(93, 999U, false);
+    return ok && fresh_state() && snap_has("\"rng\":0,");
+}
+
+/* Buddy 4: a new motion class is streamed once on car/01/motion; the same
+ * class again sends nothing. Waits a tick first so any change left over
+ * from earlier tests has gone out. */
+static bool check_bus_motion_stream(void)
+{
+    rc_event_t e;
+    uint32_t c;
+    bool ok;
+
+    tk_dly_tsk(400);
+    c = cap_count(&cap_motion);
+    make_class(&e, RC_MOTION_CLIMBING);
+    (void)rc_event_publish(&e);
+    ok = cap_wait(&cap_motion, c, 1000);
+    cap_read(&cap_motion);
+    ok = ok && snap_is(RC_TOPIC_BASE "/motion", "{\"cls\":5}");
+
+    c = cap_count(&cap_motion);
+    (void)rc_event_publish(&e);
+    tk_dly_tsk(600);
+    ok = ok && (cap_count(&cap_motion) == c);
+
+    make_class(&e, RC_MOTION_STATIONARY);
+    (void)rc_event_publish(&e);
+    ok = ok && cap_wait(&cap_motion, c, 1000);
+    cap_read(&cap_motion);
+    return ok && snap_is(RC_TOPIC_BASE "/motion", "{\"cls\":0}");
+}
+
+/* All four buddies' streams arriving show as "live":"1111" in the next
+ * heartbeat. The test keeps the streams going until one arrives, because
+ * a flag only stays up for a second after the last sample. */
+static bool check_bus_liveness(void)
+{
+    rc_event_t e;
+    uint32_t c = cap_count(&cap_status);
+    INT waited = 0;
+
+    while ((cap_count(&cap_status) <= c) && (waited < 3000))
+    {
+        make_simple(&e, RC_EVT_ODOMETRY);
+        (void)rc_event_publish(&e);
+        make_simple(&e, RC_EVT_LINE_SAMPLE);
+        (void)rc_event_publish(&e);
+        make_simple(&e, RC_EVT_IMU_SAMPLE);
+        (void)rc_event_publish(&e);
+        play_ultra(0, 0U, false);           /* off to the side: rng stays */
+        tk_dly_tsk(100);
+        waited += 100;
+    }
+    cap_read(&cap_status);
+    return snap_has("\"live\":\"1111\"");
+}
+
+/* RC_EVT_LINK_STATE goes out when the link changes, carrying the new
+ * state, and not again while nothing changes. The test fakes the link
+ * (sub_telemetry_test_fake_link) so it can be run without touching the
+ * WiFi, then hands the real one back. The first fake is the opposite of
+ * whatever is announced now (in an MQTT build the link may already be
+ * up), so it's always a change; the second, WiFi up but broker down,
+ * differs from both. */
+static bool check_link_events(void)
+{
+    rc_pl_link_t got;
+    bool up;
+    bool ok;
+
+    sub_telemetry_get_link(&got);
+    up = !(got.connected && got.broker_up);
+
+    link_hits = 0U;
+    sub_telemetry_test_fake_link(true, up, up);
+    ok = wait_hits(&link_hits, 1U, 1000) &&
+         (link_conn == up) && (link_broker == up);
+    sub_telemetry_get_link(&got);
+    ok = ok && (got.connected == up) && (got.broker_up == up);
+
+    sub_telemetry_test_fake_link(true, true, false);    /* broker drops */
+    ok = ok && wait_hits(&link_hits, 2U, 1000) && link_conn && !link_broker;
+
+    tk_dly_tsk(600);                                    /* no change, no news */
+    ok = ok && (link_hits == 2U);
+
+    sub_telemetry_test_fake_link(false, false, false);
+    return ok && link_matches(1000);
+}
+
 /* How many characters the value after `key` takes up in snap_payload
  * (up to the next ',' or '}'). */
 static uint32_t field_len(const char *key)
@@ -834,11 +1179,12 @@ static uint32_t field_len(const char *key)
 
 /* The longest state line possible. The test drives everything it can to
  * its longest: most negative speeds, 4,000 km on both wheels, both line
- * sensors on, the highest motion class, the tallest hump. Some numbers it
- * can't drive (seq, t, encoder counts, motor duty), so it adds the digits
- * those would need at their longest. The result must fit the telemetry
- * buffer and one MQTT message, and the real message must end in '}' and
- * report the right distance (no overflow in the average). */
+ * sensors on, the highest motion class, the tallest hump, the longest
+ * range. Some numbers it can't drive (seq, t, encoder counts, motor
+ * duty), so it adds the digits those would need at their longest. The
+ * result must fit the telemetry buffer and one MQTT message, and the real
+ * message must end in '}' and report the right distance (no overflow in
+ * the average). */
 static bool check_worst_case_state(void)
 {
     rc_event_t e;
@@ -848,6 +1194,7 @@ static bool check_worst_case_state(void)
 
     make_hump(&e, 65535U, 1U, 0);
     (void)rc_event_publish(&e);
+    play_ultra(90, 65535U, true);
     play_sensor_buddies(INT32_MIN, INT32_MIN, 4000000000U, 4000000000U,
                         true, true, RC_MOTION_IMPACT);
     if (!fresh_state())
@@ -869,9 +1216,10 @@ static bool check_worst_case_state(void)
          snap_has("\"spd_l\":-2147483648") &&
          snap_has("\"dist\":4000000000") &&
          snap_has("\"line\":\"11\"") && snap_has("\"cls\":7") &&
-         snap_has("\"peak\":65535");
+         snap_has("\"peak\":65535") && snap_has("\"rng\":65535");
 
     /* Put the sensors back to something sane for whatever runs next. */
+    play_ultra(90, 0U, false);
     play_sensor_buddies(0, 0, 0U, 0U, false, false, RC_MOTION_STATIONARY);
     return ok;
 }
@@ -1102,6 +1450,20 @@ static bool check_broker_round_trip(void)
     return ok;
 }
 
+/* With WiFi and the broker up (S1-W04), telemetry has told the bus so:
+ * the announced link is up on both counts. */
+static bool check_link_announced_up(void)
+{
+    rc_pl_link_t got;
+
+    if (!link_matches(1000))
+    {
+        return false;
+    }
+    sub_telemetry_get_link(&got);
+    return got.connected && got.broker_up;
+}
+
 #else /* console build: the S1-W tests can't run, say so */
 
 static void skip(const char *id, const char *why)
@@ -1125,7 +1487,8 @@ EXPORT void subsystem1_test(void)
     TEST_CHECK("S1-U01", (console != NULL) && console->is_up(),
                "console sink present and up");
     TEST_CHECK("S1-U02",
-               console->publish(RC_TOPIC_BASE "/test", "{\"t\":1}", 7U) == RC_OK,
+               console->publish(RC_TOPIC_BASE "/test", "{\"t\":1}", 7U)
+                   == RC_OK,
                "console sink publishes");
     TEST_CHECK("S1-U03", check_mnemonics(),
                "L/R/S/U/X decode, either case");
@@ -1165,7 +1528,21 @@ EXPORT void subsystem1_test(void)
     TEST_CHECK("S1-U21", check_timestamps_real_time(),
                "message timestamps keep real time (5 %)");
     TEST_CHECK("S1-U22", check_state_fields(),
-               "state carries every telemetry item in the brief");
+               "state carries every telemetry item in FR10a");
+    TEST_CHECK("S1-U23", check_line_frames(),
+               "line lost/found messages: exact topic + JSON");
+    TEST_CHECK("S1-U24", check_move_frame(),
+               "move-done message: exact topic + JSON");
+    TEST_CHECK("S1-U25", check_avoid_frame(),
+               "avoidance-plan message: exact topic + JSON");
+    TEST_CHECK("S1-U26", check_motion_frame(),
+               "motion-class message: exact topic + JSON");
+    TEST_CHECK("S1-U27", check_ack_frames(),
+               "command echoed on ack; bad chars can't break JSON");
+    TEST_CHECK("S1-U28", check_heartbeat_link(),
+               "heartbeat carries link state + live flags");
+    TEST_CHECK("S1-U29", link_matches(1000),
+               "announced link = what the network side says");
 
     /* --- integration: the test plays Buddies 2-5 and sub_nav -------- */
     listeners_attach();
@@ -1197,6 +1574,22 @@ EXPORT void subsystem1_test(void)
                "command -> RC_EVT_COMMAND_RX for sub_nav");
     TEST_CHECK("S1-I10", check_worst_case_state(),
                "worst-case inputs: state fits, no overflow");
+    TEST_CHECK("S1-I13", check_bus_move(),
+               "B2 move done -> move message");
+    TEST_CHECK("S1-I14", check_bus_line(),
+               "B3 line lost/found -> line messages");
+    TEST_CHECK("S1-I15", check_bus_avoid(),
+               "B5 avoidance plan -> avoid message");
+    TEST_CHECK("S1-I16", check_bus_range(),
+               "B5 range straight ahead -> rng field");
+    TEST_CHECK("S1-I17", check_bus_motion_stream(),
+               "B4 class change -> one motion message");
+    TEST_CHECK("S1-I18", check_bus_liveness(),
+               "B2-B5 streams -> live \"1111\" in heartbeat");
+    TEST_CHECK("S1-I19", check_link_events(),
+               "link change -> RC_EVT_LINK_STATE, once");
+    TEST_CHECK("S1-I20", check_command_bus_and_callback(),
+               "command reaches the bus even with a callback");
     TEST_CHECK("S1-I11", check_no_drops(),
                "no event-bus drops on either lane");
 
@@ -1229,6 +1622,8 @@ EXPORT void subsystem1_test(void)
                "inbound garbage ignored");
     TEST_CHECK("S1-W09", check_broker_round_trip(),
                "command round trip car -> broker -> car");
+    TEST_CHECK("S1-W10", check_link_announced_up(),
+               "link announced up: WiFi + broker");
 #else
     skip("S1-W01", "MQTT sink present (needs NET=lwip MQTT=1)");
     skip("S1-W02", "kernel message buffers (needs MQTT=1)");
@@ -1239,6 +1634,7 @@ EXPORT void subsystem1_test(void)
     skip("S1-W07", "inbound command (needs MQTT=1)");
     skip("S1-W08", "inbound garbage (needs MQTT=1)");
     skip("S1-W09", "broker round trip (needs MQTT=1)");
+    skip("S1-W10", "link announced up (needs MQTT=1)");
 #endif
 
     /* --- last: must survive someone re-initialising the bus --------- */
