@@ -8,9 +8,10 @@
  * Template migration, in short:
  *   - includes reach one folder up for the shared rc_* headers;
  *   - every field we report comes off the event bus and is cached here, so
- *     we don't reach into other buddies' folders -- the one exception is
- *     drv_motor_get(), which Buddy 2 publishes in drv_motor.h on purpose
- *     for telemetry (there is no motor-duty event to subscribe to);
+ *     we don't reach into other buddies' folders -- the two exceptions are
+ *     Buddy 2's read-backs drv_motor_get() (motor duty) and
+ *     drv_encoder_count() (encoder clicks). There's no event for either,
+ *     and both just read a value Buddy 2 already keeps;
  *   - init() only makes objects; start_task() starts the task (priority 12);
  *   - the task drains inbound commands each tick;
  *   - the tx counters are locked because two tasks touch them.
@@ -26,11 +27,12 @@
 #include "../rc_event.h"
 #include "../rc_time.h"
 #include "../subsystem2/drv_motor.h"    /* drv_motor_get(): last duty, Buddy 2 */
+#include "../subsystem2/drv_encoder.h"  /* drv_encoder_count(): clicks, Buddy 2 */
 
 /* Topic buffer holds "car/01/<leaf>"; payload buffer holds one JSON body.
  * Bump PAYLOAD_MAX first if a message ever looks cut off. */
 #define TOPIC_MAX       (48)
-#define PAYLOAD_MAX     (192)
+#define PAYLOAD_MAX     (224)   /* worst-case state is 195; see S1-I10 */
 
 /* One prefix for every topic (rc_config.h), so the publish topics and the
  * command topic can't drift apart. */
@@ -158,23 +160,30 @@ static rc_result_t send(const char *leaf, const char *payload)
     return res;
 }
 
-/* The per-tick status line: speed, distance, motor duty, line sensors,
- * motion class, tallest hump, last barcode. Every field is a cached value
- * updated by the event callbacks above, except the motor duty, which
- * Buddy 2 reports live through drv_motor_get(). */
+/* The per-tick status line: speed, distance, encoder counts, motor duty,
+ * line sensors, motion class, tallest hump, last barcode -- the telemetry
+ * the project brief asks for. Every field is a cached value updated by the
+ * event callbacks above, except encoder counts and motor duty, which
+ * Buddy 2 reports live through drv_encoder_count() and drv_motor_get(). */
 static void publish_state(void)
 {
     char buf[PAYLOAD_MAX];
 
+    /* NOTE: with every number at its longest this is 195 characters, so
+     * PAYLOAD_MAX is 224. At 192 the encoder counts pushed it over and the
+     * JSON would have been cut off; subsystem1_test.c S1-I10 checks it. */
     (void)rc_snprintf(buf, sizeof(buf),
         "{\"seq\":%lu,\"t\":%lu,\"spd_l\":%ld,\"spd_r\":%ld,"
-        "\"dist\":%lu,\"m_l\":%d,\"m_r\":%d,\"line\":\"%c%c\","
+        "\"dist\":%lu,\"enc_l\":%lu,\"enc_r\":%lu,"
+        "\"m_l\":%d,\"m_r\":%d,\"line\":\"%c%c\","
         "\"cls\":%d,\"peak\":%u,\"bc\":\"%c\"}",
         (unsigned long)seq,
         (unsigned long)rc_time_ms(),
         (long)st_speed_l,
         (long)st_speed_r,
         (unsigned long)st_dist_mm,
+        (unsigned long)drv_encoder_count(RC_SIDE_LEFT),
+        (unsigned long)drv_encoder_count(RC_SIDE_RIGHT),
         (int)drv_motor_get(RC_SIDE_LEFT),
         (int)drv_motor_get(RC_SIDE_RIGHT),
         st_line_l ? '1' : '0',
