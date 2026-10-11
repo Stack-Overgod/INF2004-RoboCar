@@ -292,7 +292,7 @@ static void dispatcher_task(INT stacd, void *exinf)
  *  Init
  * ------------------------------------------------------------------ */
 
-rc_result_t rc_event_init(void)
+static rc_result_t event_init_once(void)
 {
     static const INT lane_pri[RC_LANE_COUNT] = {
         RC_PRI_DISPATCH_FAST,
@@ -347,4 +347,24 @@ rc_result_t rc_event_init(void)
     }
 
     return RC_OK;
+}
+
+/* Safe to call more than once. A second call used to wipe
+ * every registration made so far (and, for rc_event, start a second set of
+ * dispatcher tasks), which silently disconnected whoever had already
+ * subscribed. subsystem5_test.c calls this again after start-up. Now only
+ * the first successful call does the work. */
+rc_result_t rc_event_init(void)
+{
+    static bool done;
+    rc_result_t res;
+
+    if (done) {
+        return RC_OK;
+    }
+    res = event_init_once();
+    if (res == RC_OK) {
+        done = true;
+    }
+    return res;
 }

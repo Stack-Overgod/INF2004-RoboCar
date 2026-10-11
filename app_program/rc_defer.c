@@ -51,7 +51,7 @@ static void defer_task(INT stacd, void *exinf)
     }
 }
 
-rc_result_t rc_defer_init(void)
+static rc_result_t defer_init_once(void)
 {
     T_CFLG cflg;
     T_CTSK ctsk;
@@ -86,6 +86,26 @@ rc_result_t rc_defer_init(void)
     (void)tk_sta_tsk(defer_tskid, 0);
 
     return RC_OK;
+}
+
+/* Safe to call more than once. A second call used to wipe
+ * every registration made so far (and, for rc_event, start a second set of
+ * dispatcher tasks), which silently disconnected whoever had already
+ * subscribed. subsystem5_test.c calls this again after start-up. Now only
+ * the first successful call does the work. */
+rc_result_t rc_defer_init(void)
+{
+    static bool done;
+    rc_result_t res;
+
+    if (done) {
+        return RC_OK;
+    }
+    res = defer_init_once();
+    if (res == RC_OK) {
+        done = true;
+    }
+    return res;
 }
 
 int32_t rc_defer_register(rc_defer_drain_t drain, void *ctx)

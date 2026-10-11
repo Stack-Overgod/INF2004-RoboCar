@@ -147,7 +147,7 @@ static void gpio_bank0_handler(UINT intno)
  *  Public API
  * ------------------------------------------------------------------ */
 
-rc_result_t rc_gpioirq_init(void)
+static rc_result_t gpioirq_init_once(void)
 {
     T_DINT dint;
     ER     er;
@@ -180,6 +180,26 @@ rc_result_t rc_gpioirq_init(void)
     EnableInt(INTNO_IO_BANK0, INTPRI_IO_BANK0);
 
     return RC_OK;
+}
+
+/* Safe to call more than once. A second call used to wipe
+ * every registration made so far (and, for rc_event, start a second set of
+ * dispatcher tasks), which silently disconnected whoever had already
+ * subscribed. subsystem5_test.c calls this again after start-up. Now only
+ * the first successful call does the work. */
+rc_result_t rc_gpioirq_init(void)
+{
+    static bool done;
+    rc_result_t res;
+
+    if (done) {
+        return RC_OK;
+    }
+    res = gpioirq_init_once();
+    if (res == RC_OK) {
+        done = true;
+    }
+    return res;
 }
 
 rc_result_t rc_gpioirq_attach(uint32_t pin,
