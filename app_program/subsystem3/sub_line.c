@@ -25,8 +25,7 @@ static int16_t  base_permille = 350;
 static uint32_t lost_count;
 /* consecutive samples with both sensors on the line (junction candidate) */
 static uint32_t both_count;
-/* most recent position reading, kept so we know which way to arc if the line
- * vanishes */
+/* most recent position reading, kept so we know which way to arc if the line vanishes */
 static int16_t  last_position;
 
 #define STEER_KP        (2)
