@@ -112,6 +112,9 @@ uncommitted changes listed under the table.
 | 2026-10-11 | S1-M01 | `a7bbe74`+local | Rexzer | PASS | `logs/2026-10-11_S1_mqtt_test_cold-boot.txt` (MQTT lines) | 408 `car/01/state` + `status` every ~2 s at the broker; car clock 106,340 ms over 106.1 s real |
 | 2026-10-11 | S1-M02 | `a7bbe74`+local | Rexzer | PASS | `logs/2026-10-11_S1_mqtt_test_cold-boot.txt` | `L`→`COMMAND_RX cmd=1`, `X`→`cmd=5`, `B`→`cmd=2` |
 | 2026-10-11 | S1-U01–U22, S1-I01–I12, S1-W01–W09 | `buddy1-fixes-with-other-buddies` (on `8954a06`) | Rexzer | **43/43 PASS** | `logs/2026-10-11_S1_pr-branch_buddy1-integration.txt` | PR branch: the changes below are now in the branch itself (no local test harness). Built in WSL with `make NET=lwip MQTT=1 TEST=1 -j8`. Other subsystems in the same run: S2 1/1, S3 1/1, S4 1/1, S5 10/10 |
+| 2026-10-11 | S1-U01–U29, S1-I01–I20, S1-W01–W10 | `buddy1-full-example` (`7715147`) | Rexzer | **59/59 PASS** | `logs/2026-10-11_S1_full-example_59of59.txt` | Built in WSL with `make NET=lwip MQTT=1 TEST=1 -j8`, 0 warnings. Worst-case state 207 / 223, status 126 bytes. Same run: S2 1/1, S3 1/1, S4 1/1, S5 10/10. Buddy 5's own scan (its test) reached the broker through Buddy 1 as `car/01/obstacle` + `car/01/avoid` |
+| 2026-10-11 | S1-M01 | `buddy1-full-example` (`7715147`) | Rexzer | PASS | `logs/2026-10-11_S1_full-example_59of59.txt` (MQTT lines) | 574 `car/01/state` + 72 `car/01/status` at the broker; `seq` 81→632 with no gaps (79–80 went to S1-I12's capture sink, as that test does). One state every 260 ms: the kernel tick is 10 ms (`CNF_TIMER_PERIOD`), so `tk_dly_tsk(250)` lasts 260 — within FR10a's ±10 % |
+| 2026-10-11 | S1-M03 | `buddy1-full-example` (`7715147`) | Rexzer | PASS | `logs/2026-10-11_S1_full-example_59of59.txt` | PC sent `L`, `X`, `Q` → `car/01/ack` `{"rx":"L","cmd":1}`, `{"rx":"X","cmd":5}`, `{"rx":"Q","cmd":0}`; `cmds` 5 → 8 |
 
 **Local changes these runs depend on** (not on main yet — need the owners / team):
 
