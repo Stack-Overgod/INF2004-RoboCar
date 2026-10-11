@@ -30,14 +30,20 @@
 #include "sub_scan.h"
 
 /*
- * 1 while app_main.c is still the template's: nothing else brings up the
- * shared core (defer list, event bus, GPIO IRQ) or subsystem 5's drivers,
- * so this test does it.  Set to 0 once Step S's app_main.c is merged:
- * that file initialises all of these itself, and a second init would
- * create duplicate kernel objects.
+ * 0 now that the shared core and subsystem 5's drivers are brought up by
+ * the system itself: app_main.c runs rc_defer/rc_event/rc_gpioirq in
+ * Phase 0, and subsystem5_init() runs drv_servo_init / drv_ultrasonic_init
+ * / sub_scan_init in Phase 1.  Re-initialising them here would create
+ * duplicate kernel objects and double-register the ECHO IRQ, so the init
+ * checks (S5-U01/U02/U05/U08) are dropped when this is 0; usermain()'s
+ * CHECK() reports any init failure instead.
+ *
+ * Set back to 1 ONLY to run this test on a bare template app_main.c that
+ * does not call subsystem5_init() -- then the test brings everything up
+ * itself.  On this repo's app_main.c (which does call it), keep it 0.
  */
 #ifndef S5_TEST_STANDALONE
-#define S5_TEST_STANDALONE	1
+#define S5_TEST_STANDALONE	0
 #endif
 
 /*
