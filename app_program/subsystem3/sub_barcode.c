@@ -7,8 +7,8 @@
 #include "../rc_config.h"
 #include "../rc_event.h"
 
-/* How many bar/space widths make up one character (see the block comment
- * above). Used as the size of the sliding "pattern" we try to classify. */
+/* How many bar/space widths make up one character
+ * Used as the size of the sliding "pattern" we try to classify. */
 #define ELEMENTS        (9U)
 /* How many widths we keep buffered at once.*/
 #define WINDOW          (10U)
@@ -47,8 +47,7 @@ static uint32_t n_widths;
 static bool     armed;
 /* most recently decoded character, for telemetry/logging */
 static char     last_symbol;
-/* a "function pointer" — the caller-supplied function to invoke on a successful
- * decode */
+/* a "function pointer" — the caller-supplied function to invoke on a successful decode */
 static sub_barcode_cb_t user_cb;
 /* opaque context pointer passed back to user_cb untouched, so the caller can
  * tell which car/instance called it */
@@ -116,8 +115,7 @@ static bool classify(uint16_t *pattern_out)
         }
     }
 
-    /* Exactly three of the nine elements are wide in every Code 39
-     * character. */
+    /* Exactly three of the nine elements are wide in every Code 39 character. */
     if (wide_count != 3U) {
         return false;
     }
@@ -265,8 +263,7 @@ rc_result_t sub_barcode_arm(bool on)
     return drv_ir_barcode_enable(on);
 }
 
-/* Registers a function to call every time a character is successfully
- * decoded. */
+/* Registers a function to call every time a character is successfully decoded. */
 rc_result_t sub_barcode_on_decode(sub_barcode_cb_t cb, void *ctx)
 {
     user_cb  = cb;
