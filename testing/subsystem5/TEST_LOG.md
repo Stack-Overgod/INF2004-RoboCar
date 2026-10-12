@@ -26,6 +26,13 @@ Define a test here before running it. Test IDs never change.
 | S5-U10 | Servo physically visits each scan angle | FR7b | manual | 1. Flash the TEST=1 image. 2. Watch the servo horn during S5-U09. | Stops at 30, 60, 90, 120, 150°; with an object closer than the obstacle threshold, a 6° fine sweep around it follows |
 | S5-U11 | Range accuracy straight ahead | FR6, FR7c | manual | 1. Wire the HC-SR04. 2. Put a flat box at 100, 300 and 1000 mm on a tape. 3. Reset and read `[INFO] S5 range straight ahead`. | Each reading within the FR7c range tolerance; record the actual error |
 | S5-U12 | GP15 is really outputting PWM: PWM block out of reset, pin routed to PWM, slice counter running | FR7b | auto | `subsystem5_test.c` | `[TEST] S5-U12 PASS` |
+| S5-N01 | `sub_nav` stays IDLE (ignores other tests' fake events) until `sub_nav_start()` | §6.5 | auto | `subsystem5_test.c` | `[TEST] S5-N01 PASS` |
+| S5-N02 | `sub_nav_start()` goes IDLE → FOLLOWING (line, barcode, forward watch on) | §6.5, FR6 | auto | `subsystem5_test.c` | `[TEST] S5-N02 PASS` |
+| S5-N03 | A 200 mm watch reading while FOLLOWING enters AVOIDING and starts a scan | FR6, FR7a | auto | `subsystem5_test.c` (fake `RC_EVT_ULTRA_RESULT`) | `[TEST] S5-N03 PASS`, servo sweeps |
+| S5-N04 | The scan's plan is acted on: nav leaves AVOIDING within 5 s | FR8a | auto | `subsystem5_test.c` | `[TEST] S5-N04 PASS`, then `[INFO] S5 nav after plan: …` (STOPPED until Buddy 2's `sub_motion` is wired) |
+| S5-N05 | `sub_nav_stop()` goes FOLLOWING → STOPPED with no scan left running | FR10b | auto | `subsystem5_test.c` | `[TEST] S5-N05 PASS` |
+| S5-N06 | A close reading while STOPPED does not restart avoidance | §6.5 | auto | `subsystem5_test.c` | `[TEST] S5-N06 PASS` |
+| S5-N07 | Real obstacle path on a bare board | FR6–FR8a | manual | 1. Normal build (`make SMP=0 WIFI=none`), HC-SR04 wired. 2. Put a hand 200 mm in front. | Console: `[nav] obstacle at … mm`, `FOLLOWING -> AVOIDING`, servo sweeps, then `[nav] bypass …` + `refused by sub_motion` (or `no safe gap`), ending `AVOIDING -> STOPPED` (until S2 is wired) |
 
 *Method:* **auto** = `TEST_CHECK` in code, result printed on the console;
 **manual** = a person observes the result (LED, scope, meter, phone app…).
