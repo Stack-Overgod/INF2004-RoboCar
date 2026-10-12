@@ -28,6 +28,7 @@
 #include "drv_servo.h"
 #include "drv_ultrasonic.h"
 #include "sub_scan.h"
+#include "../sub_nav.h"
 
 /*
  * 0 now that the shared core and subsystem 5's drivers are brought up by
@@ -111,6 +112,17 @@ static bool wait_scan(INT ms)
 	}
 	S5_BARRIER();
 	return scan_done;
+}
+
+/* Sleep in 10 ms steps until sub_nav's state is (is == true) or is no
+ * longer (is == false) `s`, or `ms` runs out. */
+static bool wait_nav(rc_nav_state_t s, bool is, INT ms)
+{
+	while (((sub_nav_state() == s) != is) && (ms > 0)) {
+		(void)tk_dly_tsk(10);
+		ms -= 10;
+	}
+	return (sub_nav_state() == s) == is;
 }
 
 static const char *plan_name(rc_nav_cmd_t c)
@@ -295,6 +307,72 @@ EXPORT void subsystem5_test(void)
 	}
 
 	(void)sub_scan_on_complete(NULL, NULL);
+	(void)drv_servo_set_angle(90);
+
+	/* ---- S5-N01..N06: sub_nav skeleton, obstacle path -------------
+	 * usermain() ran sub_nav_init() but, in a TEST=1 build, NOT
+	 * sub_nav_start(), so nav is still IDLE here.  Works on a bare board:
+	 * with Buddy 2's sub_motion not wired yet, a bypass is refused and
+	 * nav goes to STOPPED, which is a valid end of the obstacle path. */
+
+	/* S5-N01: nav ignores events before the run starts (S1's tests
+	 * published fake IMPACT and STOP events earlier in this run). */
+	TEST_CHECK("S5-N01", sub_nav_state() == RC_NAV_IDLE,
+		   "sub_nav is IDLE before sub_nav_start()");
+
+	/* S5-N02: start turns on FOLLOWING (line, barcode, watch). */
+	TEST_CHECK("S5-N02",
+		   (sub_nav_start() == RC_OK)
+		   && (sub_nav_state() == RC_NAV_FOLLOWING),
+		   "sub_nav_start(): IDLE -> FOLLOWING");
+
+	/* S5-N03: a close watch reading starts avoidance.  Faked, so it
+	 * passes with or without a sensor. */
+	{
+		rc_event_t e = { 0 };
+
+		e.id              = RC_EVT_ULTRA_RESULT;
+		e.u.ultra.angle_deg = 90;
+		e.u.ultra.range_mm  = 200U;
+		e.u.ultra.valid     = true;
+		(void)rc_event_publish(&e);
+	}
+	TEST_CHECK("S5-N03", wait_nav(RC_NAV_AVOIDING, true, 200),
+		   "200 mm ahead while FOLLOWING -> AVOIDING within 200 ms");
+
+	/* S5-N04: the scan finishes and its plan is acted on: FOLLOWING
+	 * (nothing close), STOPPED (no gap, or bypass refused) or
+	 * RECOVERING (bypass driven, once sub_motion is wired). */
+	got = wait_nav(RC_NAV_AVOIDING, false, 5000);
+	TEST_CHECK("S5-N04", got,
+		   "scan plan handled: nav leaves AVOIDING within 5 s");
+	tm_printf((UB*)"[INFO] S5 nav after plan: %s\n",
+		  sub_nav_state_name(sub_nav_state()));
+
+	/* S5-N05: STOP from a running state (FR10b path, via the bus). */
+	(void)sub_nav_stop();
+	(void)wait_nav(RC_NAV_STOPPED, true, 200);
+	r1 = sub_nav_start();				/* back to FOLLOWING */
+	r2 = sub_nav_stop();
+	TEST_CHECK("S5-N05",
+		   (r1 == RC_OK) && (r2 == RC_OK)
+		   && wait_nav(RC_NAV_STOPPED, true, 200) && !sub_scan_busy(),
+		   "sub_nav_stop(): FOLLOWING -> STOPPED, no scan left running");
+
+	/* S5-N06: once STOPPED, a close reading is ignored. */
+	{
+		rc_event_t e = { 0 };
+
+		e.id              = RC_EVT_ULTRA_RESULT;
+		e.u.ultra.angle_deg = 90;
+		e.u.ultra.range_mm  = 200U;
+		e.u.ultra.valid     = true;
+		(void)rc_event_publish(&e);
+	}
+	(void)tk_dly_tsk(200);
+	TEST_CHECK("S5-N06", sub_nav_state() == RC_NAV_STOPPED,
+		   "a close reading while STOPPED does not restart avoidance");
+
 	(void)drv_servo_set_angle(90);
 
 	TEST_SUMMARY("subsystem5");

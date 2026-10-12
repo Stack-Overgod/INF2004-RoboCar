@@ -24,7 +24,7 @@ subsystem, ask its owner or open a pull request for them to review.
 | 2 | Motion control (PWM motor driver, encoder odometry, 50 Hz PID, queued move/turn API) | 2501302 | | `app_program/subsystem2/` | `testing/subsystem2/` |
 | 3 | IR line following & Code 39 barcode decoding (calibration, P-steer, junction detect, A/B/C/D nav commands) | 2500336 | | `app_program/subsystem3/` | `testing/subsystem3/` |
 | 4 | IMU terrain & motion monitoring (LSM303DLHC, pitch, hump FSM & peak height, impact detect, 8-state motion class) | 2503302 | | `app_program/subsystem4/` | `testing/subsystem4/` |
-| 5 | Ultrasonic scanning & obstacle avoidance (non-blocking HC-SR04, coarse 30°/fine 6° servo sweep, obstacle profile, avoidance plan, line recovery). Also integration owner for `sub_nav` + shared core. | 2500347 | | `app_program/subsystem5/` | `testing/subsystem5/` |
+| 5 | Ultrasonic scanning & obstacle avoidance (non-blocking HC-SR04, coarse 30°/fine 6° servo sweep, obstacle profile, avoidance plan, line recovery). Also integration owner for `sub_nav` (`app_program/sub_nav.*`) + shared core. | 2500347 | | `app_program/subsystem5/` | `testing/subsystem5/` |
 
 Shared files (`app_program/app_main.c`, `app_program/app.h`,
 `app_program/rc_config.h`, the shared core `rc_event/rc_defer/rc_gpioirq`,
@@ -144,12 +144,14 @@ API calls noted below (sub_nav/sub_line → sub_motion; sub_nav → sub_scan).
 | IF-05 | S5 → all | event (FAST) | `RC_EVT_ULTRA_RESULT` | range (mm) + valid, tagged with servo angle | team |
 | IF-06 | S5 → all | event (FAST) | `RC_EVT_OBSTACLE_PROFILE`, `RC_EVT_AVOIDANCE_PLAN` | bearing/width/closest/clearance; chosen action | team |
 | IF-07 | sub_nav/sub_line → S2 | direct API + callback | `sub_motion_drive/move/turn`, `MOTION_DONE` | queued move; completion callback | team |
-| IF-08 | sub_nav → S5 | direct API + callback | `sub_scan_start()`, `sub_scan_on_complete` | request coarse/fine scan; profile+plan on done | team |
+| IF-08 | sub_nav → S5 | direct API + event (FAST) | `sub_scan_start()`, `sub_scan_abort()`; result as `RC_EVT_AVOIDANCE_PLAN` | request coarse/fine scan; plan comes back as an event (`sub_scan_on_complete` stays free for tests) | team |
 | IF-09 | sub_nav → S5 | direct API | `sub_scan_set_watch(on, trigger_mm)` | enable forward watch during FOLLOWING | team |
 | IF-10 | S1 ← all | subsystem getters + subscribed events | — | telemetry snapshot of every subsystem's latest state | team |
-| IF-11 | S1 → sub_nav | event (SLOW) | `COMMAND_RX` | remote command (e.g. STOP), honoured from any state (FR10b) | team |
+| IF-11 | S1 → sub_nav | event (FAST for sub_nav) | `COMMAND_RX` | remote command (e.g. STOP), honoured from any state (FR10b); FAST so a STOP never queues behind telemetry | team |
 | IF-12 | S1 → MQTT service | message buffer, `TMO_POL` | `s1_mbf_tx` (in `subsystem1.h`) | outbound JSON drained by `mqtt_utk.c` every 50 ms. **Instructor-approval item** | team + instructor |
 | IF-13 | MQTT service → S1 | message buffer, `TMO_POL` | `s1_mbf_rx` (in `subsystem1.h`) | inbound `car/01/cmd` payload | team + instructor |
+| IF-14 | sub_nav → S3 | direct API | `sub_line_enable()`, `sub_line_begin_search()`, `sub_barcode_arm()` | line steering on in FOLLOWING/RECOVERING, off while avoiding; barcode armed during FOLLOWING | team |
+| IF-15 | S3 → sub_nav | event (FAST) | `RC_EVT_LINE_REACQUIRED` | line found after a bypass: RECOVERING → FOLLOWING (FR9) | team |
 
 Each interface is tested by at least one integration test
 (`testing/integration/TEST_LOG.md`).

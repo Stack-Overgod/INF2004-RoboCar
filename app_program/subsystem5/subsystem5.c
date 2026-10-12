@@ -20,9 +20,9 @@
  *
  *	What this subsystem does NOT start here: the forward watch and full
  *	coarse/fine scans.  Per report §6.5 those are driven by sub_nav
- *	(sub_nav_set/sub_scan_set_watch while FOLLOWING, sub_scan_start() on a
- *	close reading).  sub_nav is the Step-S integration piece and does not
- *	exist on this branch yet, so S5 comes up idle: the Scan task is
+ *	(app_program/sub_nav.c: sub_scan_set_watch() while FOLLOWING,
+ *	sub_scan_start() on a close reading), which usermain() starts after
+ *	every subsystem is up.  So S5 comes up idle: the Scan task is
  *	created and parked, drivers are ready, and nothing pings until sub_nav
  *	(or the TEST=1 self-test) asks.  This also keeps a TEST=1 build clean
  *	-- no background pings competing with subsystem5_test()'s own pings.
@@ -56,7 +56,6 @@ EXPORT ER subsystem5_start(void)
 	/* Nothing to start here.  sub_scan_init() already created and
 	 * started the Scan task (it parks in S_IDLE waiting on its event
 	 * flag).  The forward watch and avoidance scans are turned on by
-	 * sub_nav during FOLLOWING (report §6.5); until sub_nav exists,
-	 * leaving S5 idle is the faithful boot-time behaviour. */
+	 * sub_nav during FOLLOWING (report §6.5), not at boot. */
 	return E_OK;
 }
