@@ -30,7 +30,12 @@
 #define HUMP_MAX_MS             (5000U)  /* Abort if climb takes > 5 s      */
 #define MIN_HUMP_TRAVEL_MM      (30U)    /* Reject if car rolled < 30 mm    */
 
-#define IMPACT_MG               (2200)   /* 2.2g threshold for collision    */
+#ifdef RC_IMPACT_MG
+#define IMPACT_MG               (RC_IMPACT_MG)
+#else
+#define IMPACT_MG               (1800)   /* 1.8g threshold within +/-2g FS  */
+#endif
+
 #define ACCEL_LINEAR_MG         (250)    /* Linear push threshold on X      */
 #define TURN_SPEED_DIFF_MM_S    (150)    /* Wheel speed diff for turning    */
 
@@ -51,6 +56,7 @@ static int16_t               hump_peak_pitch;
 static uint32_t              dist_at_hump_start;
 static uint16_t              max_peak_height_mm;
 static rc_motion_class_t     current_motion_class;
+static bool                  is_subscribed = false;
 
 static sub_terrain_hump_cb_t hump_cb;
 static void                 *hump_cb_ctx;
@@ -153,7 +159,8 @@ static void on_sample(const rc_event_t *evt, void *ctx)
 
     int16_t  ax = evt->u.imu.acc_x;
     int16_t  ay = evt->u.imu.acc_y;
-    int16_t  pitch = drv_imu_pitch_ddeg();
+    /* Compute pitch in deci-degrees directly from sample acc_x */
+    int16_t  pitch = (int16_t)(((int32_t)ax * 573) / 1000);
     uint32_t now_ms = rc_time_ms();
 
     /* --- Hump State Machine --- */
@@ -283,9 +290,17 @@ rc_result_t sub_terrain_init(void)
     hump_cb = NULL;
     hump_cb_ctx = NULL;
 
-    /* Subscribe on FAST lane so the vehicle controller can brake promptly */
-    return rc_event_subscribe(RC_EVT_IMU_SAMPLE, RC_LANE_FAST,
-                              on_sample, NULL);
+    /* Subscribe once on FAST lane so vehicle controller can react promptly */
+    if (!is_subscribed) {
+        rc_result_t res = rc_event_subscribe(RC_EVT_IMU_SAMPLE, RC_LANE_FAST,
+                                             on_sample, NULL);
+        if (res != RC_OK) {
+            return res;
+        }
+        is_subscribed = true;
+    }
+
+    return RC_OK;
 }
 
 void sub_terrain_reset(void)
