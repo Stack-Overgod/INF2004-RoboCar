@@ -125,6 +125,45 @@ static bool wait_nav(rc_nav_state_t s, bool is, INT ms)
 	return (sub_nav_state() == s) == is;
 }
 
+/* FR9: counts sub_nav's RC_EVT_RECOVERY_FAILED (S5-N11, S5-N12). */
+static volatile uint32_t recov_failed;
+
+static void on_recov_failed(const rc_event_t *evt, void *ctx)
+{
+	(void)evt;
+	(void)ctx;
+	recov_failed++;
+}
+
+/* Publish what Buddy 3's sub_barcode would on a decode. */
+static void fake_barcode(char symbol, rc_nav_cmd_t cmd)
+{
+	rc_event_t e = { 0 };
+
+	e.id                 = RC_EVT_BARCODE_DECODED;
+	e.u.barcode.symbol   = symbol;
+	e.u.barcode.command  = cmd;
+	e.u.barcode.reversed = false;
+	(void)rc_event_publish(&e);
+}
+
+/* True if nav is busy with the command (EXECUTING_CMD) or has already
+ * stopped because sub_motion refused or aborted the move. Either means
+ * the command was taken, with or without Buddy 2's motion wired. */
+static bool nav_took_command(void)
+{
+	rc_nav_state_t s = sub_nav_state();
+
+	return (s == RC_NAV_EXECUTING_CMD) || (s == RC_NAV_STOPPED);
+}
+
+/* Back to STOPPED between nav tests. */
+static void nav_reset(void)
+{
+	(void)sub_nav_stop();
+	(void)wait_nav(RC_NAV_STOPPED, true, 300);
+}
+
 static const char *plan_name(rc_nav_cmd_t c)
 {
 	switch (c) {
@@ -372,6 +411,83 @@ EXPORT void subsystem5_test(void)
 	(void)tk_dly_tsk(200);
 	TEST_CHECK("S5-N06", sub_nav_state() == RC_NAV_STOPPED,
 		   "a close reading while STOPPED does not restart avoidance");
+
+	/* ---- S5-N08..N13: barcode, remote commands, state timeouts -----
+	 * All events are faked, so these pass on a bare board.  ONCE BUDDY
+	 * 2'S MOTION IS WIRED THE WHEELS TURN during N09, N11 and N13: run
+	 * the test image with the car on a stand. */
+	(void)rc_event_subscribe(RC_EVT_RECOVERY_FAILED, RC_LANE_FAST,
+				 on_recov_failed, NULL);
+
+	/* S5-N08: a Code 39 start character while FOLLOWING opens
+	 * READING_BARCODE (report §6.5). */
+	r1 = sub_nav_start();
+	fake_barcode('*', RC_CMD_NONE);
+	TEST_CHECK("S5-N08",
+		   (r1 == RC_OK) && wait_nav(RC_NAV_READING_BARCODE, true, 200),
+		   "start character while FOLLOWING -> READING_BARCODE");
+
+	/* S5-N09: the data character 'A' is executed as a left turn (FR3):
+	 * EXECUTING_CMD, or STOPPED if sub_motion refuses the move. */
+	fake_barcode('A', RC_CMD_TURN_LEFT);
+	got = wait_nav(RC_NAV_READING_BARCODE, false, 200) && nav_took_command();
+	TEST_CHECK("S5-N09", got,
+		   "barcode 'A' while READING_BARCODE -> EXECUTING_CMD (or STOPPED if refused)");
+	tm_printf((UB*)"[INFO] S5 nav after barcode A: %s\n",
+		  sub_nav_state_name(sub_nav_state()));
+	nav_reset();
+
+	/* S5-N10: a start character with no data character times out back
+	 * to FOLLOWING (G10 decode timeout, 2 s). */
+	r1 = sub_nav_start();
+	fake_barcode('*', RC_CMD_NONE);
+	got = wait_nav(RC_NAV_READING_BARCODE, true, 200);
+	TEST_CHECK("S5-N10",
+		   (r1 == RC_OK) && got
+		   && wait_nav(RC_NAV_FOLLOWING, true, 2600),
+		   "READING_BARCODE with no data -> FOLLOWING within 2.6 s");
+	nav_reset();
+
+	/* S5-N11: FR9 - RECOVERING with no line found gives up after 3 s:
+	 * STOPPED plus one RC_EVT_RECOVERY_FAILED.  Needs both line sensors
+	 * OFF the line (lift the car or hold it over white). */
+	before = recov_failed;
+	r1 = sub_nav_test_force(RC_NAV_RECOVERING);
+	got = (r1 == RC_OK) && wait_nav(RC_NAV_STOPPED, true, 3500);
+	S5_BARRIER();
+	TEST_CHECK("S5-N11", got && (recov_failed == before + 1U),
+		   "RECOVERING, line not found -> STOPPED + RECOVERY_FAILED in 3 s");
+
+	/* S5-N12: finding the line cancels the FR9 timer: FOLLOWING, and
+	 * still FOLLOWING (no RECOVERY_FAILED) after the 3 s have passed. */
+	before = recov_failed;
+	r1 = sub_nav_test_force(RC_NAV_RECOVERING);
+	{
+		rc_event_t e = { 0 };
+
+		e.id = RC_EVT_LINE_REACQUIRED;
+		(void)rc_event_publish(&e);
+	}
+	got = (r1 == RC_OK) && wait_nav(RC_NAV_FOLLOWING, true, 200);
+	(void)tk_dly_tsk(3500);
+	S5_BARRIER();
+	TEST_CHECK("S5-N12",
+		   got && (sub_nav_state() == RC_NAV_FOLLOWING)
+		   && (recov_failed == before),
+		   "LINE_REACQUIRED in RECOVERING -> FOLLOWING, timer cancelled");
+	nav_reset();
+
+	/* S5-N13: a remote turn is executed while following (FR10b), and
+	 * ignored once STOPPED: only STOP is honoured from every state. */
+	r1 = sub_nav_start();
+	(void)sub_nav_inject_command(RC_CMD_TURN_RIGHT, 0);
+	got = (r1 == RC_OK) && wait_nav(RC_NAV_FOLLOWING, false, 200)
+	      && nav_took_command();
+	nav_reset();
+	(void)sub_nav_inject_command(RC_CMD_TURN_LEFT, 0);
+	(void)tk_dly_tsk(200);
+	TEST_CHECK("S5-N13", got && (sub_nav_state() == RC_NAV_STOPPED),
+		   "remote turn runs from FOLLOWING, is ignored when STOPPED");
 
 	(void)drv_servo_set_angle(90);
 
