@@ -33,7 +33,15 @@ Define a test here before running it. Test IDs never change.
 | S5-N05 | `sub_nav_stop()` goes FOLLOWING → STOPPED with no scan left running | FR10b | auto | `subsystem5_test.c` | `[TEST] S5-N05 PASS` |
 | S5-N06 | A close reading while STOPPED does not restart avoidance | §6.5 | auto | `subsystem5_test.c` | `[TEST] S5-N06 PASS` |
 | S5-N07 | Real obstacle path on a bare board | FR6–FR8a | manual | 1. Normal build (`make SMP=0 WIFI=none`), HC-SR04 wired. 2. Put a hand 200 mm in front. | Console: `[nav] obstacle at … mm`, `FOLLOWING -> AVOIDING`, servo sweeps, then `[nav] bypass …` + `refused by sub_motion` (or `no safe gap`), ending `AVOIDING -> STOPPED` (until S2 is wired) |
+| S5-N08 | A Code 39 start character `*` while FOLLOWING enters READING_BARCODE | §6.5, FR3 | auto | `subsystem5_test.c` (fake `RC_EVT_BARCODE_DECODED`) | `[TEST] S5-N08 PASS` |
+| S5-N09 | Data character `A` while READING_BARCODE is executed as a left turn | FR3 | auto | `subsystem5_test.c` | `[TEST] S5-N09 PASS`, then `[INFO] S5 nav after barcode A: …` (STOPPED until S2 is wired, EXECUTING_CMD after) |
+| S5-N10 | A start character with no data times out back to FOLLOWING (2 s) | G10 | auto | `subsystem5_test.c` | `[TEST] S5-N10 PASS`, console `[nav] barcode not decoded, carrying on` |
+| S5-N11 | RECOVERING with no line found → STOPPED and one `RC_EVT_RECOVERY_FAILED` within 3 s | FR9, FR12 | auto | `subsystem5_test.c` (`sub_nav_test_force`). **Both line sensors off the line** (car lifted or over white) | `[TEST] S5-N11 PASS`, console `[nav] line not found in 3000 ms` |
+| S5-N12 | `LINE_REACQUIRED` in RECOVERING → FOLLOWING, and the 3 s timer is cancelled | FR9 | auto | `subsystem5_test.c`. Nothing within 300 mm of the sensor | `[TEST] S5-N12 PASS` |
+| S5-N13 | A remote turn runs from FOLLOWING and is ignored once STOPPED | FR10b | auto | `subsystem5_test.c` (`sub_nav_inject_command`) | `[TEST] S5-N13 PASS` |
 
+Once Buddy 2's motion is wired, S5-N04, N09, N11 and N13 really drive the
+wheels: run the TEST=1 image with the car on a stand.
 *Method:* **auto** = `TEST_CHECK` in code, result printed on the console;
 **manual** = a person observes the result (LED, scope, meter, phone app…).
 

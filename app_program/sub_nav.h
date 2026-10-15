@@ -8,12 +8,13 @@
  *  dispatcher, or inside a sub_motion completion callback, which runs on
  *  that same dispatcher - so the state is only ever changed by one task.
  *
- *  SKELETON. Implemented now: IDLE -> FOLLOWING, the obstacle path
- *  (watch ping -> AVOIDING -> scan -> plan -> bypass -> RECOVERING ->
- *  FOLLOWING), and STOPPED (remote STOP, IMPACT, aborted move, no safe
- *  route). Stubbed until the other buddies' code is wired:
- *  READING_BARCODE, EXECUTING_CMD and the FR9 recovery timeout. See the
- *  TODOs in sub_nav.c.
+ *  Implemented: IDLE -> FOLLOWING; READING_BARCODE (on a Code 39 start
+ *  character, with a decode timeout back to FOLLOWING, G10);
+ *  EXECUTING_CMD (barcode A/B/C/D and remote turn commands as queued
+ *  sub_motion moves, FR3/FR10b); the obstacle path (watch ping ->
+ *  AVOIDING -> scan -> plan -> bypass -> RECOVERING -> FOLLOWING); the
+ *  FR9 3 s recovery timeout; STOPPED (remote STOP, IMPACT, aborted move,
+ *  failed recovery, no safe route). Not built: reverse-and-reattempt (G5).
  */
 #ifndef SUB_NAV_H
 #define SUB_NAV_H
@@ -23,16 +24,17 @@
 typedef enum {
     RC_NAV_IDLE = 0,            /* start-up; every event is ignored      */
     RC_NAV_FOLLOWING,           /* line follow + forward watch           */
-    RC_NAV_READING_BARCODE,     /* stub                                  */
-    RC_NAV_EXECUTING_CMD,       /* stub                                  */
+    RC_NAV_READING_BARCODE,     /* start char seen, waiting for the data */
+    RC_NAV_EXECUTING_CMD,       /* a barcode / remote turn is running    */
     RC_NAV_AVOIDING,            /* scanning, then driving the bypass     */
     RC_NAV_RECOVERING,          /* bypass done, searching for the line   */
     RC_NAV_STOPPED              /* motors braked; sub_nav_start() leaves */
 } rc_nav_state_t;
 
-/* Subscribe to the events below. Call once from usermain(), after every
- * subsystemN_init() (the handlers call sub_motion, sub_line, sub_barcode
- * and sub_scan). Leaves the state machine in IDLE. */
+/* Create the state timer and subscribe to the events below. Call once
+ * from usermain(), after every subsystemN_init() (the handlers call
+ * sub_motion, sub_line, sub_barcode and sub_scan). Leaves the state
+ * machine in IDLE. */
 rc_result_t sub_nav_init(void);
 
 /* Begin the run: IDLE or STOPPED -> FOLLOWING. Call from usermain() once
@@ -50,5 +52,13 @@ const char    *sub_nav_state_name(rc_nav_state_t s);
 /* Inject a command as if it had arrived over Buddy 1's link: publishes
  * RC_EVT_COMMAND_RX. `arg` is reserved; pass 0. Safe from any task. */
 rc_result_t sub_nav_inject_command(rc_nav_cmd_t cmd, int32_t arg);
+
+#if APP_TEST
+/* TEST BUILD ONLY. Jump straight into state `s` (running its entry
+ * actions and timer) so a self-test can reach RECOVERING or
+ * READING_BARCODE without a real bypass or barcode. Like sub_nav_start(),
+ * only allowed from IDLE or STOPPED, when no handler is acting. */
+rc_result_t sub_nav_test_force(rc_nav_state_t s);
+#endif
 
 #endif /* SUB_NAV_H */
