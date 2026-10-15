@@ -26,6 +26,7 @@
 #include "drv_ir.h"
 #include "sub_line.h"
 #include "sub_barcode.h"
+#include "../subsystem4/drv_imu.h"	/* shared Sense thread also polls the IMU */
 
 /*
  * Sense thread priority. RC_PRI_SENSE (7) is the framework's slot for the
@@ -175,6 +176,8 @@ static void sense_thread (INT stacd, void * p_exinf)
 {
 	/* NOTE: (void) marks parameters the kernel's task entry type needs
 	 * but this thread does not use. */
+	uint32_t tick = 0U;
+
 	(void)stacd;
 	(void)p_exinf;
 
@@ -182,6 +185,17 @@ static void sense_thread (INT stacd, void * p_exinf)
 	{
 		tk_dly_tsk(RC_PERIOD_LINE_MS);
 		drv_ir_sample_line();
+
+		/* Report §3 / TEAM.md §4: this is the one shared Sense thread.
+		 * Every (RC_PERIOD_IMU_MS / RC_PERIOD_LINE_MS)-th tick, i.e.
+		 * every 10 ms, it also samples Buddy 4's IMU (NFR3a).
+		 * drv_imu_sample() returns at once until the IMU is up and
+		 * calibrated, so a missing IMU costs nothing here. */
+		tick++;
+		if ((tick % (uint32_t)(RC_PERIOD_IMU_MS / RC_PERIOD_LINE_MS)) == 0U)
+		{
+			drv_imu_sample();
+		}
 	}
 }
 
