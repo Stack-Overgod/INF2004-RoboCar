@@ -30,11 +30,7 @@
 #define HUMP_MAX_MS             (5000U)  /* Abort if climb takes > 5 s      */
 #define MIN_HUMP_TRAVEL_MM      (30U)    /* Reject if car rolled < 30 mm    */
 
-#ifdef RC_IMPACT_MG
-#define IMPACT_MG               (RC_IMPACT_MG)
-#else
-#define IMPACT_MG               (1800)   /* 1.8g threshold within +/-2g FS  */
-#endif
+#define IMPACT_MG               (RC_IMPACT_MG)   /* FR13, rc_config.h */
 
 #define ACCEL_LINEAR_MG         (250)    /* Linear push threshold on X      */
 #define TURN_SPEED_DIFF_MM_S    (150)    /* Wheel speed diff for turning    */
@@ -61,13 +57,16 @@ static bool                  is_subscribed = false;
 static sub_terrain_hump_cb_t hump_cb;
 static void                 *hump_cb_ctx;
 
-/* Helper: Average forward distance from both wheel encoders */
+/* Helper: average distance both wheels have rolled since boot, mm.
+ * Built from the raw edge counts, which only ever go up.
+ * drv_encoder_distance_mm() is NOT used: sub_motion resets that baseline
+ * at the start of every move, which would break a hump that spans one. */
 static uint32_t get_distance_mm(void)
 {
-    uint32_t dist_l = drv_encoder_distance_mm(RC_SIDE_LEFT);
-    uint32_t dist_r = drv_encoder_distance_mm(RC_SIDE_RIGHT);
+    uint64_t ticks = ((uint64_t)drv_encoder_count(RC_SIDE_LEFT)
+                      + (uint64_t)drv_encoder_count(RC_SIDE_RIGHT)) / 2U;
 
-    return (dist_l + dist_r) / 2U;
+    return (uint32_t)((ticks * (uint64_t)RC_ENC_UM_PER_TICK) / 1000U);
 }
 
 /* ------------------------------------------------------------------ *
@@ -76,7 +75,7 @@ static uint32_t get_distance_mm(void)
 
 /*
  * Converts peak pitch in deci-degrees (0.1 deg) into vertical rise in mm
- * using the car's known physical wheelbase (RC_WHEEL_BASE_MM).
+ * using the car's front-to-rear axle distance (RC_AXLE_DIST_MM, FR5).
  *
  * Formula: rise = wheelbase * sin(pitch)
  * Small-angle approximation: sin(theta) ≈ theta (in radians).
@@ -91,8 +90,8 @@ static uint16_t pitch_to_height_mm(int16_t peak_ddeg)
     /* Convert tenths of a degree to milliradians */
     int32_t peak_mrad = ((int32_t)peak_ddeg * 1745) / 1000;
 
-    /* Calculate rise: (wheelbase_mm * mrad) / 1000 */
-    int32_t rise_mm = ((int32_t)RC_WHEEL_BASE_MM * peak_mrad) / 1000;
+    /* FR5: rise = L * sin(pitch), L = front-to-rear axle distance */
+    int32_t rise_mm = ((int32_t)RC_AXLE_DIST_MM * peak_mrad) / 1000;
     if (rise_mm < 0) {
         rise_mm = 0;
     }
@@ -101,14 +100,15 @@ static uint16_t pitch_to_height_mm(int16_t peak_ddeg)
 }
 
 /* ------------------------------------------------------------------ *
- *  6-State Motion Classifier
+ *  8-State Motion Classifier (FR14)
  * ------------------------------------------------------------------ */
 
 static rc_motion_class_t classify(int16_t ax, int16_t ay)
 {
     /* Priority 1: High-g Impact / Shock */
-    if ((ax > IMPACT_MG) || (ax < -IMPACT_MG) ||
-        (ay > IMPACT_MG) || (ay < -IMPACT_MG)) {
+    /* FR13: max(|ax|, |ay|) >= RC_IMPACT_MG */
+    if ((ax >= IMPACT_MG) || (ax <= -IMPACT_MG) ||
+        (ay >= IMPACT_MG) || (ay <= -IMPACT_MG)) {
         return RC_MOTION_IMPACT;
     }
 
@@ -213,7 +213,9 @@ static void on_sample(const rc_event_t *evt, void *ctx)
                  * Discard false positives if wheels didn't roll forward.
                  * Also allows desk simulation if encoders are inactive (0).
                  */
-                bool encoders_active = (current_dist > 0U);
+                bool encoders_active = (drv_encoder_speed_mm_s(RC_SIDE_LEFT) != 0) ||
+                       (drv_encoder_speed_mm_s(RC_SIDE_RIGHT) != 0) ||
+                       (dist_travelled > 0U);
 
                 if (!encoders_active ||
                     (dist_travelled >= MIN_HUMP_TRAVEL_MM)) {
@@ -291,11 +293,12 @@ rc_result_t sub_terrain_init(void)
     hump_cb_ctx = NULL;
 
     /* Subscribe once on FAST lane so vehicle controller can react promptly */
+    /* rc_event_subscribe() returns a handle >= 0 on success (lane << 16 |
+     * slot), not RC_OK, and a negative value on failure. */
     if (!is_subscribed) {
-        rc_result_t res = rc_event_subscribe(RC_EVT_IMU_SAMPLE, RC_LANE_FAST,
-                                             on_sample, NULL);
-        if (res != RC_OK) {
-            return res;
+        if (rc_event_subscribe(RC_EVT_IMU_SAMPLE, RC_LANE_FAST,
+                               on_sample, NULL) < 0) {
+            return RC_ERR_NOSPACE;
         }
         is_subscribed = true;
     }

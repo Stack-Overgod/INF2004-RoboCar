@@ -89,6 +89,23 @@ static int16_t last_ay;
 /* most recent bias-corrected accel Z reading (mg) */
 static int16_t last_az;
 
+/* True once drv_imu_init() and drv_imu_calibrate() have both succeeded.
+ * drv_imu_sample() does nothing until then, so the Sense thread (already
+ * running when subsystem4_start() calibrates) never shares the I2C bus
+ * with the calibration loop, and never polls a missing chip. */
+static volatile bool imu_ready;
+
+#if APP_TEST
+/* subsystem4_test() feeds sub_terrain fake samples; real ones arriving in
+ * between would break its hump sequence. See drv_imu_test_hold(). */
+static volatile bool test_hold;
+
+void drv_imu_test_hold(bool hold)
+{
+    test_hold = hold;
+}
+#endif
+
 /* ------------------------------------------------------------------ *
  *  I2C helpers
  *
@@ -283,6 +300,15 @@ void drv_imu_sample(void)
     int16_t    my = 0;
     int16_t    mz = 0;
 
+    if (!imu_ready) {
+        return;     /* not initialised / not calibrated / not fitted */
+    }
+#if APP_TEST
+    if (test_hold) {
+        return;     /* a self-test is feeding fake samples */
+    }
+#endif
+
     if (drv_imu_read_accel(&ax, &ay, &az) != RC_OK) {
         return;
     }
@@ -361,7 +387,15 @@ rc_result_t drv_imu_calibrate(uint16_t n)
      * the sign of pitch stays meaningful. */
     bias_z = (int16_t)((sz / (int32_t)got) - 1000);
 
+    imu_ready = true;       /* drv_imu_sample() may run from now on */
     return RC_OK;
+}
+
+/* FR15: false means IMU_UNAVAILABLE - init or calibration failed, so no
+ * IMU_SAMPLE events (and no hump / impact detection) this run. */
+bool drv_imu_available(void)
+{
+    return imu_ready;
 }
 
 /* Turns the last accelerometer X reading into a tilt angle, without any

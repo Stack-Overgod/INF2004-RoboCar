@@ -145,6 +145,21 @@
                                  / (10UL * (unsigned long)RC_ENC_TICKS_PER_REV))
 
 /* ------------------------------------------------------------------ *
+ *  IMU and terrain (Buddy 4)
+ * ------------------------------------------------------------------ */
+
+/* FR5: front-to-rear axle distance L in h = L x sin(pitch): drive-wheel
+ * axle to the caster's contact point. NOT RC_WHEEL_BASE_MM, which is the
+ * left-right wheel spacing used for turns. PLACEHOLDER - measure. */
+#define RC_AXLE_DIST_MM         (80U)
+
+/* FR13: impact when max(|ax|, |ay|) >= this, mg. Freeze after G11. */
+#define RC_IMPACT_MG            (1500)
+
+/* drv_imu_calibrate() sample count at boot; 5 ms each, so ~0.3 s. */
+#define RC_IMU_CAL_SAMPLES      (64U)
+
+/* ------------------------------------------------------------------ *
  *  Ultrasonic
  * ------------------------------------------------------------------ */
 
