@@ -113,7 +113,7 @@ console (3) and WiFi (4) sit above all application tasks.
 | Defer (bottom halves) | shared core (`rc_defer`) | `RC_PRI_DEFER` = 4 | any | ISR-posted flag |
 | FAST dispatcher | shared core (`rc_event`) | `RC_PRI_DISPATCH_FAST` = 5 | any | event flag on publish |
 | Motion | S2 (Buddy 2) | `RC_PRI_MOTION` = 6 | — | periodic 20 ms (50 Hz) |
-| Sense (line + IMU) | S3 + S4 | `RC_PRI_SENSE` = 7 | — | periodic 5 ms / 10 ms |
+| Sense (line + IMU) | shared (`rc_sense.c`, Buddy 5 integration); polls S3's `drv_ir` + S4's `drv_imu` | `RC_PRI_SENSE` = 7 | — | periodic 5 ms (line) / every 2nd tick = 10 ms (IMU) |
 | Scan | S5 (Buddy 5) | `RC_PRI_SENSE` = 7 | any | event flag; 60 ms/step |
 | (nav — reserved slot) | S5 (`sub_nav`) | `RC_PRI_NAV` = 8 | — | no task today; handlers run in FAST dispatcher |
 | SLOW dispatcher | shared core (`rc_event`) | `RC_PRI_DISPATCH_SLOW` = 9 | any | event flag on publish |
@@ -165,7 +165,7 @@ Limits in `config/config.h`. Counts below are the planned design (report
 
 | Object | Limit | S1 | S2 | S3 | S4 | S5 | shared core |
 |---|---|---|---|---|---|---|---|
-| Task | 32 | 1 (Telemetry) | 1 (Motion) | — (Sense shared) | — (Sense shared) | 2 (Scan, Blink) | 3 (Defer, FAST, SLOW) + 1 Sense |
+| Task | 32 | 1 (Telemetry) | 1 (Motion) | — (Sense in `rc_sense.c`) | — (Sense in `rc_sense.c`) | 2 (Scan, Blink) | 3 (Defer, FAST, SLOW) + 1 Sense (`rc_sense.c`) |
 | Semaphore | 16 | | | | | | |
 | Event flag | 16 | | | | | 1 (scan) | 2 (FAST/SLOW lanes) |
 | Mailbox | 12 | | | | | | |
