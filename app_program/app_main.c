@@ -58,6 +58,7 @@
 #include "rc_event.h"		/* shared layer: the event bus */
 #include "rc_gpioirq.h"		/* shared layer: one GPIO interrupt, many pins */
 #include "sub_nav.h"		/* shared layer: mission state machine (report §6.5) */
+#include "rc_sense.h"		/* shared layer: the one Sense task (report §3) */
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -145,6 +146,13 @@ EXPORT INT usermain(void)
 	CHECK(subsystem3_start(), "subsystem3_start");
 	CHECK(subsystem4_start(), "subsystem4_start");
 	CHECK(subsystem5_start(), "subsystem5_start");
+
+	/* Phase 2b: the shared Sense task polls the IR line pair (S3, 5 ms)
+	   and the IMU (S4, 10 ms).  After every subsystemN_start(), so S4's
+	   boot calibration has finished before the first IMU sample. */
+	if (rc_sense_start() != RC_OK) {
+		tm_printf((UB*)"ERROR rc_sense_start\n");
+	}
 
 	tm_printf((UB*)"all subsystems started\n\n");
 
