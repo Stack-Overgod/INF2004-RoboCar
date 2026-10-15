@@ -152,6 +152,8 @@ API calls noted below (sub_nav/sub_line → sub_motion; sub_nav → sub_scan).
 | IF-13 | MQTT service → S1 | message buffer, `TMO_POL` | `s1_mbf_rx` (in `subsystem1.h`) | inbound `car/01/cmd` payload | team + instructor |
 | IF-14 | sub_nav → S3 | direct API | `sub_line_enable()`, `sub_line_begin_search()`, `sub_barcode_arm()` | line steering on in FOLLOWING/RECOVERING, off while avoiding; barcode armed during FOLLOWING | team |
 | IF-15 | S3 → sub_nav | event (FAST) | `RC_EVT_LINE_REACQUIRED` | line found after a bypass: RECOVERING → FOLLOWING (FR9) | team |
+| IF-16 | S3 → sub_nav | event (FAST) | `RC_EVT_BARCODE_DECODED` | `'*'` while FOLLOWING → READING_BARCODE; then `command` A/B/C/D → EXECUTING_CMD (FR3). sub_nav relies on `symbol` and `command` as filled by `sub_barcode.c` | team |
+| IF-17 | sub_nav → all | event (FAST) | `RC_EVT_RECOVERY_FAILED` | line not found within 3 s after a bypass; nav is STOPPED (FR9, FR12). For telemetry | team |
 
 Each interface is tested by at least one integration test
 (`testing/integration/TEST_LOG.md`).
@@ -172,7 +174,7 @@ Limits in `config/config.h`. Counts below are the planned design (report
 | Fixed memory pool | 12 | | | | | | |
 | Variable memory pool | 12 | | | | | | |
 | Cyclic handler | 12 | | | | | | |
-| Alarm handler | 12 | | | | | | |
+| Alarm handler | 12 | | | | | | 1 (sub_nav state timer) |
 | TIMER alarm (HW) | 4 | | | | | 2 (ultrasonic) | |
 
 (The kernel's USB and WiFi service tasks also use a few of these.)

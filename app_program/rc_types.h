@@ -97,6 +97,10 @@ typedef enum {
     RC_EVT_COMMAND_RX,          /* a command arrived over the link       */
     RC_EVT_LINK_STATE,
 
+    /* buddy 5, navigation (sub_nav). Appended so no existing id moves. */
+    RC_EVT_NAV_TIMEOUT,         /* sub_nav's own state timer; tick.seq   */
+    RC_EVT_RECOVERY_FAILED,     /* FR9: line not found after a bypass    */
+
     RC_EVT_COUNT                /* keep last */
 } rc_evt_id_t;
 
