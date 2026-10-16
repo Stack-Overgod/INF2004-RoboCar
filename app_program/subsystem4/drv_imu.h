@@ -73,6 +73,17 @@ void drv_imu_sample(void);
  */
 rc_result_t drv_imu_calibrate(uint16_t n);
 
+/* FR15: true once init + calibration succeeded and samples are flowing;
+ * false means telemetry should report IMU_UNAVAILABLE. */
+bool drv_imu_available(void);
+
+#if APP_TEST
+/* TEST BUILD ONLY: hold = true makes drv_imu_sample() publish nothing, so
+ * a self-test can feed sub_terrain fake samples without real ones mixed
+ * in. Always release it (false) at the end of the test. */
+void drv_imu_test_hold(bool hold);
+#endif
+
 /* Pitch in tenths of a degree, from the gravity vector. Positive is nose
  * up. Only meaningful when the car is not accelerating hard.
  * ("Pitch" = how much the car is tilted nose-up/nose-down, like the front

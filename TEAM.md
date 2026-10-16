@@ -1,11 +1,14 @@
 # Team and subsystems
 
-The tables are pre-filled with the **example** in `app_program/` (marked
-*example*). Replace those rows with your own as you replace the example code.
+Filled from the Week 6 Design Review (`Week_6_Design_Review_IS07.docx`):
+§0 team table, §2 pin table, §3 task table/priority rationale, §4 interfaces
+(event bus) and §6.5 mission state machine. GitHub usernames are left blank
+for each owner to fill. This is a **shared file** — change it by team
+agreement / PR review.
 
-Fill this in at the start of the project and keep it up to date. It is the
-single place that says **who owns what**, so that five people can work in
-one firmware image without clashing over pins, priorities, or kernel objects.
+It is the single place that says **who owns what**, so that five people can
+work in one firmware image without clashing over pins, priorities, or kernel
+objects.
 
 A **subsystem** is one student's part of the product, with its own folder.
 It may contain several tasks and own several peripherals (see section 3).
@@ -17,177 +20,161 @@ subsystem, ask its owner or open a pull request for them to review.
 
 | # | Subsystem (what it does) | Student ID | GitHub username | Code | Tests |
 |---|---|---|---|---|---|
-| 1 | *example:* LED heartbeat on GP19 | | | `app_program/subsystem1/` | `testing/subsystem1/` |
-| 2 | *example:* Producer: makes a sample every 300 ms | | | `app_program/subsystem2/` | `testing/subsystem2/` |
-| 3 | *example:* Consumer: collects samples into statistics | | | `app_program/subsystem3/` | `testing/subsystem3/` |
-| 4 | *example:* Monitor: prints reports, pauses the LED | | | `app_program/subsystem4/` | `testing/subsystem4/` |
-| 5 | | | | `app_program/subsystem5/` | `testing/subsystem5/` |
+| 1 | WiFi comms, command & telemetry (JSON, 4 Hz publish, console/UDP/MQTT sinks, command subscription, link-state heartbeat & reconnect) | 2503331 | | `app_program/subsystem1/` | `testing/subsystem1/` |
+| 2 | Motion control (PWM motor driver, encoder odometry, 50 Hz PID, queued move/turn API) | 2501302 | | `app_program/subsystem2/` | `testing/subsystem2/` |
+| 3 | IR line following & Code 39 barcode decoding (calibration, P-steer, junction detect, A/B/C/D nav commands) | 2500336 | | `app_program/subsystem3/` | `testing/subsystem3/` |
+| 4 | IMU terrain & motion monitoring (LSM303DLHC, pitch, hump FSM & peak height, impact detect, 8-state motion class) | 2503302 | | `app_program/subsystem4/` | `testing/subsystem4/` |
+| 5 | Ultrasonic scanning & obstacle avoidance (non-blocking HC-SR04, coarse 30°/fine 6° servo sweep, obstacle profile, avoidance plan, line recovery). Also integration owner for `sub_nav` (`app_program/sub_nav.*`) + shared core. | 2500347 | | `app_program/subsystem5/` | `testing/subsystem5/` |
 
-Shared files (`app_program/app_main.c`, `app_program/app.h`, this file)
-are changed only by agreement of the team. The exception is claiming an empty
-row in this file (a pin, a peripheral, an interface ID), which anyone may do
-(section 2).
+Shared files (`app_program/app_main.c`, `app_program/app.h`,
+`app_program/rc_config.h`, the shared core `rc_event/rc_defer/rc_gpioirq`,
+`sub_nav`, this file) are changed only by agreement of the team. The
+exception is claiming an empty row in this file (a pin, a peripheral, an
+interface ID), which anyone may do (section 2).
+
+Pin numbers and tuning constants have a single source of truth in
+`app_program/rc_config.h` (NFR10); this table mirrors it, it does not
+replace it.
 
 ## 2. Pins
 
-One owner per pin. Claim a pin here **before** you wire or code it.
-
-**Why:** two subsystems using the same pin is one of the most common and
-hardest-to-find mistakes in a team project. The code builds without any
-error, but the hardware misbehaves. Each subsystem can pass its own tests
-and then fail once they are combined, and two outputs driving the same pin
-against each other can damage it. Writing the claim down first means a clash
-is spotted when someone edits this table, not hours later on the bench.
-
-**No instructor check needed.** The team keeps this table itself. You do not
-need the instructor, or the rest of the team, to check or approve a claim:
-if the row is empty, fill it in and commit. If two people claim the same
-pin, they agree between themselves who moves. Only the *reserved* rows are
-fixed.
+One owner per pin. Source of truth: report §2 (TABLE 7) and `rc_config.h`.
 
 | Pin | Owner | Used for |
 |---|---|---|
-| GP23, GP24, GP25, GP29 | *reserved* | Pico W radio |
-| GP0 | | (taken whenever the team builds with `CRASH_REPORT=1`) |
-| GP1 | | (taken whenever the team builds with `CRASH_REPORT=1`) |
-| GP2 | | |
-| GP3 | | |
-| GP4 | | |
-| GP5 | | |
-| GP6 | | |
-| GP7 | | |
-| GP8 | | |
-| GP9 | | |
-| GP10 | | |
-| GP11 | | |
-| GP12 | | |
-| GP13 | | |
-| GP14 | | |
-| GP15 | | |
-| GP16 | | |
-| GP17 | | |
-| GP18 | | |
-| GP19 | *example:* S1 | external LED (LED + 330 Ω to GND) |
-| GP20 | | |
-| GP21 | | |
-| GP22 | | |
-| GP26 | | (ADC0 capable) |
-| GP27 | | (ADC1 capable) |
-| GP28 | | (ADC2 capable) |
+| GP23, GP24, GP25, GP29 | *reserved* | Pico W radio (CYW43439) |
+| GP0 | S2 (Buddy 2) | `ENC_L_A` left encoder A (Grove 1). Also UART0 TX — build must be `CONSOLE=usb_cdc` |
+| GP1 | S2 (Buddy 2) | `ENC_L_B` left encoder B (Grove 1). Also UART0 RX |
+| GP2 | S5 (Buddy 5) | `ULTRA_TRIG` HC-SR04 trigger (Grove 2), GPIO out + TIMER alarm 1 |
+| GP3 | S5 (Buddy 5) | `ULTRA_ECHO` HC-SR04 echo (Grove 2), both-edge IRQ + TIMER alarm 2. **5 V — through 1k/2k divider** |
+| GP4 | S4 (Buddy 4) | `I2C0_SDA` IMU (Grove 3), I2C0 @ 400 kHz |
+| GP5 | S4 (Buddy 4) | `I2C0_SCL` IMU (Grove 3) |
+| GP6 | S3 (Buddy 3) | `IR_LINE_R` right line sensor DO (Grove 5). Leave Grove-5 AO (GP26) unconnected |
+| GP7 | S2 (Buddy 2) | `ENC_R_A` right encoder A (Grove 7) |
+| GP8 | S2 (Buddy 2) | `MOTOR_R_A` M1A, PWM slice 4 ch A (Robo Pico MOTOR 1) |
+| GP9 | S2 (Buddy 2) | `MOTOR_R_B` M1B, PWM slice 4 ch B |
+| GP10 | S2 (Buddy 2) | `MOTOR_L_A` M2A, PWM slice 5 ch A (Robo Pico MOTOR 2) |
+| GP11 | S2 (Buddy 2) | `MOTOR_L_B` M2B, PWM slice 5 ch B |
+| GP12 | | free (servo port 1) |
+| GP13 | | free (servo port 2) |
+| GP14 | | free (servo port 3) |
+| GP15 | S5 (Buddy 5) | `SERVO_SCAN` scan servo (Robo Pico servo port 4), PWM slice 7 ch B, 50 Hz |
+| GP16 | S3 (Buddy 3) | `IR_LINE_L` left line sensor DO (Grove 4). `BOARD_LED_PIN` moved off this to GP19 |
+| GP17 | | free |
+| GP18 | | free |
+| GP19 | S5 (Buddy 5, integration) | `STATUS_LED` liveness LED (breakout header). Blink task |
+| GP20 | | free |
+| GP21 | | free |
+| GP22 | | free |
+| GP26 | S3 (Buddy 3) | `IR_BARCODE_A` barcode analogue AO (Grove 6), ADC0 — threshold auto-cal |
+| GP27 | S3 (Buddy 3) | `IR_BARCODE_D` barcode digital DO (Grove 6), both-edge IRQ |
+| GP28 | S2 (Buddy 2) | `ENC_R_B` right encoder B (Grove 7) |
 
 ## 3. Peripherals
 
-**Subsystems, tasks and peripherals are three different things:**
-
-| Term | What it is | Example |
-|---|---|---|
-| **Subsystem** | one student's part of the product, one folder | "environment sensing", "motor control", "user interface" |
-| **Task** | one thread of execution. A subsystem may have **as many tasks as it needs** | a sampling task and a filtering task, both in "environment sensing" |
-| **Peripheral** | one hardware block on the RP2040 | I2C0, UART1, the ADC |
-
-A driver is **not** a subsystem. It is code *inside* the subsystem that
-needs that hardware: the "environment sensing" subsystem contains the I2C
-sensor code, and owns I2C0. Write it as `drv_<name>.c` / `drv_<name>.h` in
-that subsystem's folder, never under `device/`, and call it only from the
-peripheral's owning task. The kernel's own drivers in `device/` (serial,
-I2C, ADC) may be used instead; switching one on in `config/config_device.h`
-changes shared configuration, so record it in the table below first.
-
-**The rule: each peripheral is driven by exactly one task, its *owning
-task*.** That task can be in any subsystem, and one subsystem may own
-several peripherals (one owning task each, or one task owning all of them).
-Every other task, in the same subsystem or another one, asks the owning task
-through a kernel object (section 5) and never touches that peripheral itself.
-
-*Why:* this port runs tasks on both cores at the same time. If two tasks
-drive the same I2C or UART block at once, their transfers get mixed up, and
-the drivers have no locking to stop it.
+Each peripheral is driven by exactly one task, its *owning task*. Source:
+report §2/§9 (TABLE 7, TABLE 8).
 
 | Peripheral | Owner subsystem | Owning task | Pins |
 |---|---|---|---|
-| UART1 | | | |
-| I2C0 | | | |
-| I2C1 | | | |
-| SPI0 | | | |
-| SPI1 | | | |
-| ADC | | | GP26–GP28 |
-| PWM slices (list) | | | |
+| I2C0 | S4 (Buddy 4) | Sense task | GP4/GP5 (re-pinned from GP8/GP9) |
+| ADC (ch0) | S3 (Buddy 3) | Sense task (barcode cal) | GP26 |
+| PWM slice 4 (motors R) | S2 (Buddy 2) | Motion task | GP8/GP9 |
+| PWM slice 5 (motors L) | S2 (Buddy 2) | Motion task | GP10/GP11 |
+| PWM slice 7 ch B (servo) | S5 (Buddy 5) | Scan task | GP15 |
+| TIMER alarms 1 & 2 | S5 (Buddy 5) | drv_ultrasonic (ISR) | — (HC-SR04 trig end + echo timeout) |
+| IO_BANK0 GPIO IRQ (shared) | *shared core* `rc_gpioirq` | demuxed to S2 encoders, S3 barcode, S5 echo | GP0/1/7/27/3 |
 | WiFi radio, TCP/IP, MQTT | *kernel* | `cyw43_utk_task` (built in) | GP23–25, GP29 |
+
+PWM slice 6 is used by the kernel physical-timer option when `USE_PTMR=1`;
+this build keeps `USE_PTMR=0`. The PWM block is taken out of reset on first
+use by `rc_pwm_init_pin()` (shared `rc_pwm.c`), used by both motors (S2) and
+the servo (S5).
 
 ### WiFi and MQTT are special
 
 The radio and the network stack belong to the kernel's built-in WiFi service
 task, `cyw43_utk_task` (`lib/libwifi/sysdepend/pico_rp2040/`). **No student
-task may call `cyw43_...`, lwIP or MQTT functions, not even from a
-"WiFi subsystem".** The calls are not safe from any other task, on either core.
-
-What students *can* do:
-
-- **Read the connection state** from any task, which is always safe:
-  ```c
-  #include "cyw43_utk.h"
-  T_CYW43_UTK_STATUS st;
-  cyw43_utk_get_status(&st);   /* st.ready, st.link_status, st.ip_addr, ... */
-  ```
-- **Send or receive data over the network** by adding code that *runs
-  inside the service task*. The MQTT client is in
-  `lib/liblwip/sysdepend/pico_rp2040/mqtt_utk.c`. It publishes a heartbeat
-  today. A "cloud / reporting" subsystem would add a kernel object
-  (e.g. a message buffer) that application tasks fill. The MQTT code then
-  reads it with `TMO_POL` (never blocking) and publishes it.
-  Because this changes shared library code, **agree it with the team and
-  the instructor first**, and record it as an interface in section 5.
-  It needs the `NET=lwip MQTT=1` build (README section 3).
+task may call `cyw43_...`, lwIP or MQTT functions.** Read connection state
+with `cyw43_utk_get_status()`; send/receive by having the MQTT service task
+(`lib/liblwip/sysdepend/pico_rp2040/mqtt_utk.c`) drain a student-owned
+message buffer with `TMO_POL`. That shared-library change (IF-12/IF-13 below)
+needs team **and instructor** agreement and the `NET=lwip MQTT=1` build.
 
 ## 4. Task priorities
 
-1 is the highest. 1–4 are used by the kernel (USB console 3, WiFi 4). Each subsystem gets its own band by default;
-change it only by team agreement. Write down every task you create.
+This project does **not** use per-subsystem priority bands. Priorities are a
+single shared scheme ordered by what must never wait on what (report §3,
+TABLE 8/9), defined once in `rc_config.h`. 1 is highest; the kernel's USB
+console (3) and WiFi (4) sit above all application tasks.
 
-| Subsystem | Priority band | Tasks (name – priority – core) |
-|---|---|---|
-| 1 | 12–13 | *example:* led_task – 12 – any |
-| 2 | 14–15 | *example:* producer_task – 14 – core 1 |
-| 3 | 16–17 | *example:* consumer_task – 16 – core 0 |
-| 4 | 18–19 | *example:* monitor_task – 18 – any |
-| 5 | 20–21 | |
+| Task | Owner subsystem | Priority (`rc_config.h`) | Core | Period / trigger |
+|---|---|---|---|---|
+| Defer (bottom halves) | shared core (`rc_defer`) | `RC_PRI_DEFER` = 4 | any | ISR-posted flag |
+| FAST dispatcher | shared core (`rc_event`) | `RC_PRI_DISPATCH_FAST` = 5 | any | event flag on publish |
+| Motion | S2 (Buddy 2) | `RC_PRI_MOTION` = 6 | — | periodic 20 ms (50 Hz) |
+| Sense (line + IMU) | shared (`rc_sense.c`, Buddy 5 integration); polls S3's `drv_ir` + S4's `drv_imu` | `RC_PRI_SENSE` = 7 | — | periodic 5 ms (line) / every 2nd tick = 10 ms (IMU) |
+| Scan | S5 (Buddy 5) | `RC_PRI_SENSE` = 7 | any | event flag; 60 ms/step |
+| (nav — reserved slot) | S5 (`sub_nav`) | `RC_PRI_NAV` = 8 | — | no task today; handlers run in FAST dispatcher |
+| SLOW dispatcher | shared core (`rc_event`) | `RC_PRI_DISPATCH_SLOW` = 9 | any | event flag on publish |
+| Telemetry | S1 (Buddy 1) | `RC_PRI_TELEMETRY` = 10 | — | periodic 250 ms + out-of-band |
+| Blink (liveness LED) | S5 (Buddy 5, integration) | 10 (lowest) | any | periodic 500 ms |
+| Initial task (`usermain`) | shared (`app_main.c`) | port default | — | boot, then `tk_slp_tsk(TMO_FEVR)` |
 
-Core: `TP_PRC1` = core 0, `TP_PRC2` = core 1, or "any".
+Rationale (report §3): Defer above all (finishes ISR work); FAST pre-empts
+periodic loops so a 5 ms steer never queues behind a 20 ms PID; Motion above
+Sense so PID is never delayed by an I2C read; Sense and Scan share 7 (both
+bounded periodic pollers that yield); SLOW + Telemetry are last to get the
+CPU (NFR6b).
 
 ## 5. Interfaces between subsystems
 
-Every arrow between two subsystems is listed here. The **provider** creates
-the kernel object and publishes its ID in its own `subsystemN.h`; the **user** only
-sends to it or waits on it. Agree on the data format before coding.
+Almost everything crosses boundaries through the **event bus**
+(`rc_event`): a producer fills an `rc_event_t` and publishes; the bus copies
+it onto a per-lane 64-entry ring and the lane's dispatcher calls subscribers
+(report §4). Subsystems otherwise never call each other, with the few direct
+API calls noted below (sub_nav/sub_line → sub_motion; sub_nav → sub_scan).
 
-| ID | From → To | Mechanism | Object ID name | Data / meaning | Agreed by |
+| ID | From → To | Mechanism | Object / event name | Data / meaning | Agreed by |
 |---|---|---|---|---|---|
-| IF-01 | S2 → S3 | mailbox (owned by S3) | `mbx_samples` | `SAMPLE_MSG` in `subsystem2.h` | *example* |
-| IF-02 | S3 → S2 | semaphore + fixed memory pool (owned by S2) | `sem_slots`, `mpf_samples` | receiver returns the block, then 1 slot | *example* |
-| IF-03 | S3 → S4 | message buffer + event flag (owned by S4) | `mbf_summary`, `flg_events` | text line ≤ `S4_SUMMARY_MAX` bytes, then `FLG_BATCH` | *example* |
-| IF-04 | S4 → S3 | shared data under a mutex (owned by S3) | `app_stats`, `mtx_stats` | `APP_STATS`, read only while locked | *example* |
-| IF-05 | S4 → S1 | task control | `tid_led` | `tk_sus_tsk` / `tk_rsm_tsk` / `tk_chg_pri` | *example* |
-| IF-06 | | | | | |
+| IF-01 | S2 → all | event (FAST) | `RC_EVT_ODOMETRY` | speed, encoder counts, distance; every 20 ms (NFR2) | team |
+| IF-02 | S3 → all | event (FAST) | `RC_EVT_LINE_SAMPLE` | line position / status; every 5 ms | team |
+| IF-03 | S3 → all | event (FAST) | `RC_EVT_BARCODE_DECODED` | decoded A/B/C/D nav command | team |
+| IF-04 | S4 → all | event (FAST) | `RC_EVT_IMU_SAMPLE`, `HUMP_BEGIN/END`, `RC_EVT_IMPACT` | pitch/accel; hump + impact safety events | team |
+| IF-05 | S5 → all | event (FAST) | `RC_EVT_ULTRA_RESULT` | range (mm) + valid, tagged with servo angle | team |
+| IF-06 | S5 → all | event (FAST) | `RC_EVT_OBSTACLE_PROFILE`, `RC_EVT_AVOIDANCE_PLAN` | bearing/width/closest/clearance; chosen action | team |
+| IF-07 | sub_nav/sub_line → S2 | direct API + callback | `sub_motion_drive/move/turn`, `MOTION_DONE` | queued move; completion callback | team |
+| IF-08 | sub_nav → S5 | direct API + event (FAST) | `sub_scan_start()`, `sub_scan_abort()`; result as `RC_EVT_AVOIDANCE_PLAN` | request coarse/fine scan; plan comes back as an event (`sub_scan_on_complete` stays free for tests) | team |
+| IF-09 | sub_nav → S5 | direct API | `sub_scan_set_watch(on, trigger_mm)` | enable forward watch during FOLLOWING | team |
+| IF-10 | S1 ← all | subsystem getters + subscribed events | — | telemetry snapshot of every subsystem's latest state | team |
+| IF-11 | S1 → sub_nav | event (FAST for sub_nav) | `COMMAND_RX` | remote command (e.g. STOP), honoured from any state (FR10b); FAST so a STOP never queues behind telemetry | team |
+| IF-12 | S1 → MQTT service | message buffer, `TMO_POL` | `s1_mbf_tx` (in `subsystem1.h`) | outbound JSON drained by `mqtt_utk.c` every 50 ms. **Instructor-approval item** | team + instructor |
+| IF-13 | MQTT service → S1 | message buffer, `TMO_POL` | `s1_mbf_rx` (in `subsystem1.h`) | inbound `car/01/cmd` payload | team + instructor |
+| IF-14 | sub_nav → S3 | direct API | `sub_line_enable()`, `sub_line_begin_search()`, `sub_barcode_arm()` | line steering on in FOLLOWING/RECOVERING, off while avoiding; barcode armed during FOLLOWING | team |
+| IF-15 | S3 → sub_nav | event (FAST) | `RC_EVT_LINE_REACQUIRED` | line found after a bypass: RECOVERING → FOLLOWING (FR9) | team |
+| IF-16 | S3 → sub_nav | event (FAST) | `RC_EVT_BARCODE_DECODED` | `'*'` while FOLLOWING → READING_BARCODE; then `command` A/B/C/D → EXECUTING_CMD (FR3). sub_nav relies on `symbol` and `command` as filled by `sub_barcode.c` | team |
+| IF-17 | sub_nav → all | event (FAST) | `RC_EVT_RECOVERY_FAILED` | line not found within 3 s after a bypass; nav is STOPPED (FR9, FR12). For telemetry | team |
 
 Each interface is tested by at least one integration test
 (`testing/integration/TEST_LOG.md`).
 
 ## 6. Kernel object budget
 
-Limits are set in `config/config.h`. If the team needs more, raise the
-limit there. The numbers below are the example's usage.
+Limits in `config/config.h`. Counts below are the planned design (report
+§3); fill exact numbers as each subsystem's objects are finalised.
 
-| Object | Limit | S1 | S2 | S3 | S4 | S5 |
-|---|---|---|---|---|---|---|
-| Task | 32 | 1 | 1 | 1 | 1 | |
-| Semaphore | 16 | | 1 | | | |
-| Event flag | 16 | | | | 1 | |
-| Mailbox | 12 | | | 1 | | |
-| Mutex | 12 | | | 1 | | |
-| Message buffer | 12 | | | | 1 | |
-| Fixed memory pool | 12 | | 1 | | | |
-| Variable memory pool | 12 | | | | | |
-| Cyclic handler | 12 | 1 | | | | |
-| Alarm handler | 12 | | | | 1 | |
+| Object | Limit | S1 | S2 | S3 | S4 | S5 | shared core |
+|---|---|---|---|---|---|---|---|
+| Task | 32 | 1 (Telemetry) | 1 (Motion) | — (Sense in `rc_sense.c`) | — (Sense in `rc_sense.c`) | 2 (Scan, Blink) | 3 (Defer, FAST, SLOW) + 1 Sense (`rc_sense.c`) |
+| Semaphore | 16 | | | | | | |
+| Event flag | 16 | | | | | 1 (scan) | 2 (FAST/SLOW lanes) |
+| Mailbox | 12 | | | | | | |
+| Mutex | 12 | | | | | | |
+| Message buffer | 12 | 2 (`s1_mbf_tx/rx`, MQTT build) | | | | | |
+| Fixed memory pool | 12 | | | | | | |
+| Variable memory pool | 12 | | | | | | |
+| Cyclic handler | 12 | | | | | | |
+| Alarm handler | 12 | | | | | | 1 (sub_nav state timer) |
+| TIMER alarm (HW) | 4 | | | | | 2 (ultrasonic) | |
 
 (The kernel's USB and WiFi service tasks also use a few of these.)

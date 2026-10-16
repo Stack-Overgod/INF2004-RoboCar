@@ -112,8 +112,10 @@
 
 /* Longest any caller waits for the motion mutex. motion_task holds it for
  * a few tens of microseconds per cycle, so this is only a safety net - a
- * dispatcher callback must never block for long (rc_event.h). */
-#define LOCK_TMO_MS             (20)
+ * dispatcher callback must never block for long (rc_event.h). Kept well
+ * inside the FAST dispatcher's 5 ms line-sample period; 2 rather than 1
+ * because the kernel tick is 1 ms, so a 1 ms timeout can expire at once. */
+#define LOCK_TMO_MS             (2)
 
 /* Move callbacks waiting to be delivered, and finished moves waiting to
  * be published. In practice at most two are ever in flight (the move that
@@ -473,6 +475,9 @@ static void finish_move(bool completed)
         done_q[done_n].completed    = completed;
         done_q[done_n].travelled_mm = travelled;
         done_n++;
+    } else {
+        /* Never silent: whoever queued this move will wait forever. */
+        fault_msg = "completion queue full - a MOTION_DONE was lost";
     }
     move_id_cur = 0U;
     publish_done();
@@ -490,7 +495,9 @@ static void cb_register(uint32_t id, sub_motion_done_cb_t cb, void *ctx)
     }
     if (i == CB_SLOTS) {
         /* Cannot happen in normal use - a slot is freed within one
-         * dispatcher pass. Reuse slot 0 rather than drop the newest. */
+         * dispatcher pass. Reuse slot 0 rather than drop the newest, but
+         * say so: slot 0's move will never get its callback. */
+        fault_msg = "all callback slots busy - slot 0 overwritten";
         i = 0U;
     }
     cb_slots[i].id  = id;
@@ -923,6 +930,11 @@ rc_result_t sub_motion_drive(int16_t base_permille, int16_t steer_permille)
         base_cmd  = base_permille;
         steer_cmd = steer_permille;
         mode      = MODE_CONTINUOUS;
+
+        /* Apply the duty now. sub_line steers every 5 ms; leaving it to
+         * motion_task would act on only one command in four (20 ms).
+         * Open loop needs no PID state, so this is safe under the lock. */
+        run_continuous();
     }
     motion_unlock();
     return res;

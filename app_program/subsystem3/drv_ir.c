@@ -22,13 +22,11 @@ static ID       adc_dd = -1;
 static drv_ir_edge_cb_t bar_cb;
 /* context pointer passed back to bar_cb untouched */
 static void            *bar_ctx;
-/* timestamp (microseconds) of the previous barcode edge, to compute the next
- * width */
+/* timestamp (microseconds) of the previous barcode edge, to compute the next width */
 static volatile uint32_t bar_last_us;
 /* Record Edge boolean */
 static volatile bool     bar_enabled;
-/* handle for the "bottom half" deferred-work registration, see
- * rc_defer_register() */
+/* handle for the "bottom half" deferred-work registration, see rc_defer_register() */
 static int32_t           defer_h = -1;
 
 #define BAR_RING_SZ     (32U)
@@ -37,8 +35,7 @@ static int32_t           defer_h = -1;
 typedef struct {
     /* how long (microseconds) the level held before this edge */
     uint32_t width_us;
-    /* the new level after this edge: true = just went high, false = just went
-     * low */
+    /* the new level after this edge: true = just went high, false = just went low */
     bool     level;
 } bar_edge_rec_t;
 
@@ -84,13 +81,12 @@ static void barcode_isr(uint32_t pin, bool level, uint32_t t_us, void *ctx)
     bar_head = next;
 
     /* Hand off to the barcode_drain function, which runs
-     * later in normal task context rather than inside this interrupt.
-     * A normal kernel call here could corrupt scheduler state. */
+     * later in normal task context rather than inside this interrupt.*/
     rc_defer_signal_i(defer_h);
 }
 
 /* ------------------------------------------------------------------ *
- *  Bottom half. Publishes one event per buffered edge, in order.
+ *  Publishes one event per buffered edge, in order.
  * ------------------------------------------------------------------ */
 
 /* Safer counterpart to barcode_isr() * above. Runs in normal task context */

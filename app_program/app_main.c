@@ -57,6 +57,8 @@
 #include "rc_defer.h"		/* shared layer: interrupt bottom halves */
 #include "rc_event.h"		/* shared layer: the event bus */
 #include "rc_gpioirq.h"		/* shared layer: one GPIO interrupt, many pins */
+#include "sub_nav.h"		/* shared layer: mission state machine (report §6.5) */
+#include "rc_sense.h"		/* shared layer: the one Sense task (report §3) */
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -131,6 +133,13 @@ EXPORT INT usermain(void)
 	CHECK(subsystem4_init(), "subsystem4_init");
 	CHECK(subsystem5_init(), "subsystem5_init");
 
+	/* Phase 1b: the mission state machine subscribes to everyone's
+	   events.  After every subsystemN_init(), because its handlers call
+	   sub_motion, sub_line, sub_barcode and sub_scan. */
+	if (sub_nav_init() != RC_OK) {
+		tm_printf((UB*)"ERROR sub_nav_init\n");
+	}
+
 	/* Phase 2: every subsystem starts its tasks */
 	CHECK(subsystem1_start(), "subsystem1_start");
 	CHECK(subsystem2_start(), "subsystem2_start");
@@ -138,7 +147,24 @@ EXPORT INT usermain(void)
 	CHECK(subsystem4_start(), "subsystem4_start");
 	CHECK(subsystem5_start(), "subsystem5_start");
 
+	/* Phase 2b: the shared Sense task polls the IR line pair (S3, 5 ms)
+	   and the IMU (S4, 10 ms).  After every subsystemN_start(), so S4's
+	   boot calibration has finished before the first IMU sample. */
+	if (rc_sense_start() != RC_OK) {
+		tm_printf((UB*)"ERROR rc_sense_start\n");
+	}
+
 	tm_printf((UB*)"all subsystems started\n\n");
+
+#if !APP_TEST
+	/* Phase 3: begin the run, IDLE -> FOLLOWING (report §6.5).  Not in a
+	   TEST=1 build: the forward watch would ping in the background and
+	   collide with the subsystem tests' own pings.  subsystem5_test()
+	   starts and stops nav itself (S5-N02..N05). */
+	if (sub_nav_start() != RC_OK) {
+		tm_printf((UB*)"ERROR sub_nav_start\n");
+	}
+#endif
 
 #if APP_TEST
 	/* Test build (make TEST=1): run every subsystem's tests in turn,
