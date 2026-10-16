@@ -2,6 +2,7 @@
  *  drv_imu.c
  */
 #include "../rc_prelude.h"
+#include <tm/tmonitor.h>
 #include "../../device/include/dev_i2c.h"
 #include "drv_imu.h"
 #include "../rc_config.h"
@@ -15,42 +16,36 @@
  * like a row in a tiny built-in spreadsheet. `#define` gives each slot
  * number a readable name so the code below never has bare hex constants
  * whose meaning you'd have to look up in a datasheet every time. */
-/* accelerometer: turns it on, sets sample rate */
-#define A_CTRL_REG1     (0x20U)
-/* accelerometer: sets measurement range/resolution */
-#define A_CTRL_REG4     (0x23U)
-/* accelerometer: first of 6 output registers (X low byte) */
-#define A_OUT_X_L       (0x28U)
+/* LSM303D register map. Unlike the older LSM303DLHC this is a SINGLE die
+ * with ONE I2C address (0x1D with SA0 high) for both accelerometer and
+ * magnetometer, a different register layout, and 16-bit right-justified
+ * accelerometer output (not the DLHC's 12-bit left-justified). */
+#define D_WHO_AM_I      (0x0FU)  /* identity register */
+#define D_WHO_ID        (0x49U)  /* value WHO_AM_I returns on an LSM303D */
 
-#define M_CRA_REG       (0x00U)  /* magnetometer: sample-rate config register */
-/* magnetometer: gain/sensitivity config register */
-#define M_CRB_REG       (0x01U)
-/* magnetometer: mode register (continuous vs sleep) */
-#define M_MR_REG        (0x02U)
-/* magnetometer: first of 6 output registers (X high byte) */
-#define M_OUT_X_H       (0x03U)
+#define A_CTRL1         (0x20U)  /* accel: ODR, BDU, axis enables */
+#define A_CTRL2         (0x21U)  /* accel: anti-alias BW, full scale */
+#define A_OUT_X_L       (0x28U)  /* accel: first of 6 output regs (X low) */
 
-/* Value written to A_CTRL_REG1 to configure the accelerometer:
- * 100 Hz sample rate, all three axes enabled, normal power mode. This is
- * a specific bit pattern defined by the LSM303DLHC datasheet, not an
- * arbitrary number - each bit in 0x57 turns on one of those features. */
-#define A_ODR_100HZ     (0x57U)
-/* Value written to A_CTRL_REG4: +/-2 g measurement range, high
- * resolution. At 2 g one LSB (least-significant bit, i.e. the smallest
- * change the sensor can report) is about 1 mg, which is the resolution
- * we want for hump detection - a wider range (e.g. +/-8g) would let the
- * car survive bigger shocks without clipping, but each step would then
- * represent more g's, so small tilts would be measured less precisely. */
-#define A_FS_2G_HR      (0x08U)
+#define M_CTRL5         (0x24U)  /* mag: resolution + ODR */
+#define M_CTRL6         (0x25U)  /* mag: full scale */
+#define M_CTRL7         (0x26U)  /* mag: conversion mode */
+#define M_OUT_X_L       (0x08U)  /* mag: first of 6 output regs (X low) */
 
-/* Magnetometer sample rate: 75 Hz. */
-#define M_ODR_75HZ      (0x18U)
-/* Magnetometer gain setting: how many raw counts correspond to how much
- * magnetic field strength. */
-#define M_GAIN_1_3      (0x20U)
-/* Magnetometer mode: continuous-conversion (always taking new readings),
- * as opposed to single-shot or sleep. */
-#define M_CONTINUOUS    (0x00U)
+/* A_CTRL1 = 0x6F: AODR=0110 (100 Hz), BDU=1 (block data update, so a burst
+ * read never mixes the old and new halves of a 16-bit sample), AZEN=AYEN=
+ * AXEN=1 (all three axes enabled). */
+#define A_CTRL1_VAL     (0x6FU)
+/* A_CTRL2 = 0x00: AFS=000 (+/-2 g full scale). At +/-2 g the LSM303D
+ * resolution is 0.061 mg/LSB - see drv_imu_read_accel for the scaling. */
+#define A_CTRL2_VAL     (0x00U)
+
+/* M_CTRL5 = 0x74: M_RES=11 (high resolution), M_ODR=101 (100 Hz). */
+#define M_CTRL5_VAL     (0x74U)
+/* M_CTRL6 = 0x20: MFS=01 (+/-4 gauss full scale). */
+#define M_CTRL6_VAL     (0x20U)
+/* M_CTRL7 = 0x00: MD=00 (continuous-conversion mode). */
+#define M_CTRL7_VAL     (0x00U)
 
 /* Auto-increment on a multi-byte read is the MSB of the sub-address on
  * the accelerometer die. The magnetometer auto-increments by default.
@@ -174,25 +169,43 @@ rc_result_t drv_imu_init(void)
         return RC_ERR_HARDWARE;
     }
 
-    /* Turn the accelerometer on: 100Hz sampling, then +/-2g range. If
-     * either write fails, the chip is probably not wired up correctly -
-     * report it now instead of getting confusing all-zero readings
-     * later. */
-    if (reg_write(RC_I2C_ADDR_ACCEL, A_CTRL_REG1, A_ODR_100HZ) != E_OK) {
+    /* Confirm the chip before configuring it. The LSM303D answers 0x49 on
+     * WHO_AM_I. A failed read means nothing is ACKing on the bus; a
+     * different value means the board is some other IMU and this register
+     * map does not apply - either way, log it and bail. */
+    {
+        UB id = 0U;
+        if (reg_read_burst(RC_I2C_ADDR_ACCEL, D_WHO_AM_I, &id, 1) != E_OK) {
+            tm_printf((UB *)"[S4] IMU: no ACK at 0x%02x (WHO_AM_I read failed)\n",
+                      (unsigned)RC_I2C_ADDR_ACCEL);
+            return RC_ERR_HARDWARE;
+        }
+        if (id != D_WHO_ID) {
+            tm_printf((UB *)"[S4] IMU: WHO_AM_I=0x%02x, expected 0x%02x "
+                      "(LSM303D) - wrong chip?\n",
+                      (unsigned)id, (unsigned)D_WHO_ID);
+            return RC_ERR_HARDWARE;
+        }
+        tm_printf((UB *)"[S4] IMU: LSM303D detected (WHO_AM_I=0x49)\n");
+    }
+
+    /* Accelerometer: full scale first (CTRL2), then ODR + enables (CTRL1).
+     * A failed write means the chip stopped responding - report it rather
+     * than return confusing all-zero readings later. */
+    if (reg_write(RC_I2C_ADDR_ACCEL, A_CTRL2, A_CTRL2_VAL) != E_OK) {
         return RC_ERR_HARDWARE;
     }
-    if (reg_write(RC_I2C_ADDR_ACCEL, A_CTRL_REG4, A_FS_2G_HR) != E_OK) {
+    if (reg_write(RC_I2C_ADDR_ACCEL, A_CTRL1, A_CTRL1_VAL) != E_OK) {
         return RC_ERR_HARDWARE;
     }
 
-    /* Magnetometer setup: rate, gain, then continuous mode. These are
-     * `(void)`-cast to explicitly discard the return value - i.e. "yes,
-     * I know this returns something, I'm deliberately not checking it"
-     * (the magnetometer isn't required for the core hump/pitch feature,
-     * so a failure here isn't treated as fatal the way accel setup is). */
-    (void)reg_write(RC_I2C_ADDR_MAG, M_CRA_REG, M_ODR_75HZ);
-    (void)reg_write(RC_I2C_ADDR_MAG, M_CRB_REG, M_GAIN_1_3);
-    (void)reg_write(RC_I2C_ADDR_MAG, M_MR_REG,  M_CONTINUOUS);
+    /* Magnetometer: resolution/ODR, full scale, then continuous mode. On
+     * the LSM303D these share the accelerometer's address. (void)-cast
+     * because the magnetometer is telemetry-only - a failure here must not
+     * take down the hump/pitch feature, which needs only the accel. */
+    (void)reg_write(RC_I2C_ADDR_MAG, M_CTRL5, M_CTRL5_VAL);
+    (void)reg_write(RC_I2C_ADDR_MAG, M_CTRL6, M_CTRL6_VAL);
+    (void)reg_write(RC_I2C_ADDR_MAG, M_CTRL7, M_CTRL7_VAL);
 
     return RC_OK;
 }
@@ -223,30 +236,17 @@ rc_result_t drv_imu_read_accel(int16_t *x, int16_t *y, int16_t *z)
         return RC_ERR_HARDWARE;
     }
 
-    /* Accelerometer is little endian and left justified: the 12 bit
-     * result sits in the top bits, so shift down by 4.
-     *
-     * Step by step for X (Y and Z are identical):
-     *   1. "Little endian" means the chip sends the LOW byte of the
-     *      16-bit number first (b[0]) and the HIGH byte second (b[1]) -
-     *      the opposite order you'd write the number on paper. So we
-     *      shift b[1] left by 8 bits (`<< 8`, i.e. move it into the
-     *      upper half of a 16-bit value) and combine it with b[0] using
-     *      bitwise OR (`|`, which merges two sets of bits together) to
-     *      rebuild the correct 16-bit value.
-     *   2. "Left justified" means the sensor's actual 12-bit measurement
-     *      was placed in the TOP 12 bits of that 16-bit value instead of
-     *      the bottom 12 - so before we can use it as a normal number we
-     *      shift everything right by 4 bits (`>> 4`) to slide it back
-     *      down into place. Skip this shift and every reading would be
-     *      16x too large.
-     *   3. The final `(int16_t)` casts (converts) the result back to a
-     *      signed 16-bit integer type, since tilt/acceleration can be
-     *      negative (e.g. nose-down vs nose-up).
-     */
-    *x = (int16_t)(((int16_t)((uint16_t)b[1] << 8) | b[0]) >> 4);
-    *y = (int16_t)(((int16_t)((uint16_t)b[3] << 8) | b[2]) >> 4);
-    *z = (int16_t)(((int16_t)((uint16_t)b[5] << 8) | b[4]) >> 4);
+    /* LSM303D accelerometer output is 16-bit, little-endian (low byte
+     * first) and RIGHT-justified - the whole 16-bit value is used, with
+     * NO >>4 shift (the >>4 was for the DLHC's 12-bit left-justified
+     * format). Rebuild each axis from its low+high byte, then scale to
+     * milli-g: at +/-2 g full scale the sensitivity is 0.061 mg/LSB, so
+     * mg = raw * 61 / 1000. The product is held in int32 because raw
+     * (+/-32767) * 61 overflows 16 bits. Downstream (pitch, RC_IMPACT_MG)
+     * expects mg with 1 g ~= 1000. */
+    *x = (int16_t)(((int32_t)(int16_t)((uint16_t)b[1] << 8 | b[0]) * 61) / 1000);
+    *y = (int16_t)(((int32_t)(int16_t)((uint16_t)b[3] << 8 | b[2]) * 61) / 1000);
+    *z = (int16_t)(((int32_t)(int16_t)((uint16_t)b[5] << 8 | b[4]) * 61) / 1000);
 
     return RC_OK;
 }
@@ -259,27 +259,17 @@ rc_result_t drv_imu_read_mag(int16_t *x, int16_t *y, int16_t *z)
     if ((x == NULL) || (y == NULL) || (z == NULL)) {
         return RC_ERR_PARAM;
     }
-    if (reg_read_burst(RC_I2C_ADDR_MAG, M_OUT_X_H, b, 6) != E_OK) {
+    if (reg_read_burst(RC_I2C_ADDR_MAG, M_OUT_X_L | AUTO_INC, b, 6) != E_OK) {
         return RC_ERR_HARDWARE;
     }
 
-    /* Magnetometer is BIG endian, and the axis order is X, Z, Y. Both of
-     * those catch people out.
-     *
-     * "Big endian" is the opposite byte order from the accelerometer
-     * above: this chip sends the HIGH byte first, so b[0] is shifted
-     * left by 8 and b[1] is the low byte - no `>> 4` shift this time,
-     * because (unlike the accelerometer) this chip's value already fills
-     * the full 16 bits, it isn't left-justified.
-     *
-     * The axis order is also NOT X,Y,Z like you'd expect - the chip's
-     * registers come out as X, then Z, then Y. Read them in the wrong
-     * order and the car's "sideways" and "up/down" magnetic readings get
-     * silently swapped, which would look like a bug in completely
-     * unrelated code. */
-    *x = (int16_t)(((uint16_t)b[0] << 8) | b[1]);
-    *z = (int16_t)(((uint16_t)b[2] << 8) | b[3]);
-    *y = (int16_t)(((uint16_t)b[4] << 8) | b[5]);
+    /* LSM303D magnetometer output is 16-bit, LITTLE-endian (low byte
+     * first), in natural X, Y, Z order - different from the DLHC, which
+     * was big-endian and X, Z, Y. Returned as raw counts: only telemetry
+     * reads the magnetometer, so no unit scaling is applied. */
+    *x = (int16_t)(((uint16_t)b[1] << 8) | b[0]);
+    *y = (int16_t)(((uint16_t)b[3] << 8) | b[2]);
+    *z = (int16_t)(((uint16_t)b[5] << 8) | b[4]);
 
     return RC_OK;
 }
