@@ -27,4 +27,14 @@
  * RC_OK. Returns RC_ERR_HARDWARE if the kernel refuses the task. */
 rc_result_t rc_sense_start(void);
 
+#if APP_TEST
+/* TEST BUILD ONLY: hold = true makes the Sense task skip its line and IMU
+ * samples (it keeps waking on schedule, it just publishes nothing), so a
+ * self-test can inject fake RC_EVT_LINE_SAMPLE / RC_EVT_IMU_SAMPLE events
+ * without the real ones overwriting them. Interrupts are not affected:
+ * the encoder, echo and barcode ISRs and their bottom halves keep running.
+ * Always release it (false) at the end of the test. */
+void rc_sense_test_hold(bool hold);
+#endif
+
 #endif /* RC_SENSE_H */

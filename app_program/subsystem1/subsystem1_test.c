@@ -53,6 +53,8 @@
 #include "sub_telemetry.h"
 #include "../rc_config.h"
 #include "../rc_event.h"
+#include "../rc_sense.h"
+#include "../subsystem2/sub_motion.h"
 #include "../test_report.h"
 
 #if TM_MQTT
@@ -919,6 +921,23 @@ static bool check_bus_running(void)
     return wait_hits(&probe_hits, 1U, 500);
 }
 
+/* On the integrated image the real Sense task (line + IMU samples) and
+ * sub_motion's control task (odometry) publish continuously, so a fake
+ * value injected below would be overwritten before the state line is read.
+ * Hold those publishers while a check injects, then hand them back. Only
+ * task-level publishing pauses: interrupts, the encoder counts and the
+ * control loop keep running. The short wait lets any real sample already
+ * on the bus be delivered before the fake goes in. */
+static void hold_real_sensors(bool hold)
+{
+    rc_sense_test_hold(hold);
+    sub_motion_test_hold_odometry(hold);
+    if (hold)
+    {
+        tk_dly_tsk(50);
+    }
+}
+
 /* Buddy 2 (odometry), Buddy 3 (line) and Buddy 4 (motion class) all feed
  * the per-tick state line, so publish all three and read one state back. */
 static void play_sensor_buddies(int32_t spd_l, int32_t spd_r,
@@ -1192,6 +1211,7 @@ static bool check_worst_case_state(void)
     size_t worst;
     bool ok;
 
+    hold_real_sensors(true);
     make_hump(&e, 65535U, 1U, 0);
     (void)rc_event_publish(&e);
     play_ultra(90, 65535U, true);
@@ -1199,6 +1219,7 @@ static bool check_worst_case_state(void)
                         true, true, RC_MOTION_IMPACT);
     if (!fresh_state())
     {
+        hold_real_sensors(false);
         return false;
     }
 
@@ -1221,6 +1242,7 @@ static bool check_worst_case_state(void)
     /* Put the sensors back to something sane for whatever runs next. */
     play_ultra(90, 0U, false);
     play_sensor_buddies(0, 0, 0U, 0U, false, false, RC_MOTION_STATIONARY);
+    hold_real_sensors(false);
     return ok;
 }
 
@@ -1244,10 +1266,12 @@ static bool check_survives_reinit(void)
     (void)rc_event_init();
 
     (void)sub_telemetry_set_sink(&cap_sink);
+    hold_real_sensors(true);
     make_simple(&e, RC_EVT_ODOMETRY);
     e.u.odometry.speed_l_mm_s = 77;
     (void)rc_event_publish(&e);
     events_ok = fresh_state() && snap_has("\"spd_l\":77,");
+    hold_real_sensors(false);
 
     (void)sub_telemetry_on_command(NULL, NULL);
     cmdrx_hits = 0U;
@@ -1549,6 +1573,7 @@ EXPORT void subsystem1_test(void)
     TEST_CHECK("S1-I01", check_bus_running(),
                "event bus running (event delivered)");
 
+    hold_real_sensors(true);
     play_sensor_buddies(123, -45, 1000U, 2000U, true, false,
                         RC_MOTION_CRUISING);
     {
@@ -1562,6 +1587,7 @@ EXPORT void subsystem1_test(void)
         TEST_CHECK("S1-I04", got && snap_has("\"cls\":2"),
                    "B4 motion class -> cls field");
     }
+    hold_real_sensors(false);
     TEST_CHECK("S1-I05", check_bus_barcode(),
                "B3 barcode -> barcode message + bc field");
     TEST_CHECK("S1-I06", check_bus_hump(),

@@ -21,6 +21,16 @@
 
 static ID sense_tskid;
 
+#if APP_TEST
+/* A self-test is injecting fake line/IMU samples. See rc_sense_test_hold(). */
+static volatile bool test_hold;
+
+void rc_sense_test_hold(bool hold)
+{
+    test_hold = hold;
+}
+#endif
+
 /*
  * Wakes every RC_PERIOD_LINE_MS. drv_ir_sample_line() publishes
  * RC_EVT_LINE_SAMPLE (sub_line on FAST, telemetry on SLOW). On every
@@ -38,9 +48,14 @@ static void sense_task(INT stacd, void *exinf)
 
     for (;;) {
         (void)tk_dly_tsk(RC_PERIOD_LINE_MS);
+        tick++;
+#if APP_TEST
+        if (test_hold) {
+            continue;       /* keep the cadence, publish nothing */
+        }
+#endif
         drv_ir_sample_line();
 
-        tick++;
         if ((tick % SENSE_IMU_EVERY) == 0U) {
             drv_imu_sample();
         }
