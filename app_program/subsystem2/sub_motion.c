@@ -28,6 +28,7 @@
 #include "../rc_prelude.h"
 #include <tm/tmonitor.h>
 #include "sub_motion.h"
+#include "../rc_period.h"
 #include "drv_motor.h"
 #include "drv_encoder.h"
 #include "../rc_config.h"
@@ -766,7 +767,7 @@ static void motion_task(INT stacd, void *exinf)
     (void)exinf;
 
     for (;;) {
-        tk_dly_tsk(RC_PERIOD_MOTION_MS);
+        (void)rc_period_wait();
 
         /* Odometry for telemetry and Buddy 4's terrain code, every cycle
          * whatever the mode. Signed speeds (the encoder's own direction),
@@ -869,6 +870,11 @@ rc_result_t sub_motion_init(void)
         return RC_ERR_HARDWARE;
     }
     (void)tk_sta_tsk(motion_tskid, 0);
+
+    /* Exact 20 ms period: tk_dly_tsk(20) would run every 30 ms. */
+    if (rc_period_start(motion_tskid, RC_PERIOD_MOTION_MS) != RC_OK) {
+        return RC_ERR_HARDWARE;
+    }
 
     return RC_OK;
 }

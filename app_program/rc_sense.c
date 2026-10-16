@@ -9,6 +9,7 @@
 #include "rc_prelude.h"
 #include "rc_config.h"
 #include "rc_sense.h"
+#include "rc_period.h"
 #include "subsystem3/drv_ir.h"
 #include "subsystem4/drv_imu.h"
 
@@ -20,6 +21,7 @@
 #endif
 
 static ID sense_tskid;
+static volatile uint32_t sense_overruns;   /* missed periods, for timing tests */
 
 /*
  * Wakes every RC_PERIOD_LINE_MS. drv_ir_sample_line() publishes
@@ -37,7 +39,7 @@ static void sense_task(INT stacd, void *exinf)
     (void)exinf;
 
     for (;;) {
-        (void)tk_dly_tsk(RC_PERIOD_LINE_MS);
+        sense_overruns += rc_period_wait();
         drv_ir_sample_line();
 
         tick++;
@@ -71,5 +73,13 @@ rc_result_t rc_sense_start(void)
         sense_tskid = 0;
         return RC_ERR_HARDWARE;
     }
+    if (rc_period_start(sense_tskid, RC_PERIOD_LINE_MS) != RC_OK) {
+        return RC_ERR_HARDWARE;
+    }
     return RC_OK;
+}
+
+uint32_t rc_sense_overruns(void)
+{
+    return sense_overruns;
 }

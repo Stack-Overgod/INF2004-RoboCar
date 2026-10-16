@@ -27,4 +27,7 @@
  * RC_OK. Returns RC_ERR_HARDWARE if the kernel refuses the task. */
 rc_result_t rc_sense_start(void);
 
+/* Periods the Sense task missed since boot (0 = always on time). */
+uint32_t rc_sense_overruns(void);
+
 #endif /* RC_SENSE_H */

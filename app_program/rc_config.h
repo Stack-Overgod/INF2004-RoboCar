@@ -97,13 +97,19 @@
  *  Timing
  * ------------------------------------------------------------------ */
 
-#define RC_TICK_PERIOD_MS       (1)     /* kernel tick, matches the port */
+#define RC_TICK_PERIOD_MS       (10)    /* kernel tick = CNF_TIMER_PERIOD */
 
 #define RC_PERIOD_MOTION_MS     (20)    /* PID update rate, 50 Hz */
-#define RC_PERIOD_LINE_MS       (5)     /* line sampling, 200 Hz */
+#define RC_PERIOD_LINE_MS       (10)    /* line sampling, 100 Hz */
 #define RC_PERIOD_IMU_MS        (10)    /* IMU sampling, 100 Hz */
 #define RC_PERIOD_SCAN_MS       (60)    /* one ultrasonic ping per step */
 #define RC_PERIOD_TELEM_MS      (250)   /* telemetry publish rate */
+
+#if ((RC_PERIOD_MOTION_MS % RC_TICK_PERIOD_MS) != 0) \
+ || ((RC_PERIOD_LINE_MS % RC_TICK_PERIOD_MS) != 0) \
+ || ((RC_PERIOD_IMU_MS % RC_TICK_PERIOD_MS) != 0)
+#error "every RC_PERIOD_* must be a whole number of kernel ticks"
+#endif
 
 /* ------------------------------------------------------------------ *
  *  Task priorities. Lower number wins in micro T-Kernel.
