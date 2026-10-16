@@ -185,6 +185,15 @@
 #define RC_EVENT_RING_SZ        (64U)   /* must be a power of two */
 #define RC_EVENT_MAX_SUBS       (32U)   /* total subscriptions per lane */
 
+/* Risk 1 (dispatcher WCET + ring drops) soak. When > 0 in a TEST=1 build,
+ * the test run ends with an N-second soak: it starts the control path and
+ * prints the event-bus report every 2 s while you apply worst-case load.
+ * 0 (default) disables it - a plain TEST=1 run prints one report after the
+ * subsystem tests and then sleeps. */
+#ifndef RC_RISK1_SOAK_SECS
+#define RC_RISK1_SOAK_SECS      0
+#endif
+
 /* ------------------------------------------------------------------ *
  *  Buddy 1 - communication, command and telemetry
  *

@@ -59,6 +59,7 @@
 #include "rc_gpioirq.h"		/* shared layer: one GPIO interrupt, many pins */
 #include "sub_nav.h"		/* shared layer: mission state machine (report §6.5) */
 #include "rc_sense.h"		/* shared layer: the one Sense task (report §3) */
+#include "rc_config.h"		/* shared layer: RC_RISK1_SOAK_SECS */
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -176,6 +177,41 @@ EXPORT INT usermain(void)
 	subsystem3_test();
 	subsystem4_test();
 	subsystem5_test();
+
+#if RC_RISK1_SOAK_SECS > 0
+	/* Risk 1 soak: run the control path under worst-case load and print
+	   the event-bus report every 2 s.  CAR ON A STAND - the wheels move.
+	   Apply load by hand: spin both wheels at full speed, swipe a barcode
+	   under the sensor every few seconds, and (NET=lwip MQTT=1 build) flood
+	   the cmd topic.  Set the duration in rc_config.h RC_RISK1_SOAK_SECS. */
+	{
+		INT s;
+		tm_printf((UB*)"[RISK1] soak start (%d s); car MUST be on a stand\n",
+			  (int)RC_RISK1_SOAK_SECS);
+		rc_event_probe_reset();
+		rc_gpioirq_probe_reset();
+		if (sub_nav_start() != RC_OK) {
+			tm_printf((UB*)"[RISK1] WARN: sub_nav_start failed\n");
+		}
+		for (s = 0; s < (INT)RC_RISK1_SOAK_SECS; s++) {
+			(void)tk_dly_tsk(1000);
+			if ((s & 1) != 0) {
+				rc_event_report();
+				tm_printf((UB*)"[RISK1] gpio_irq max=%u us over %u irqs\n",
+					  (unsigned)rc_gpioirq_max_us(),
+					  (unsigned)rc_gpioirq_irq_count());
+			}
+		}
+		tm_printf((UB*)"[RISK1] soak end\n");
+	}
+#endif
+
+	/* Final event-bus / IRQ snapshot from the test run (and soak, if any). */
+	rc_event_report();
+	tm_printf((UB*)"[RISK1] gpio_irq max=%u us over %u irqs\n",
+		  (unsigned)rc_gpioirq_max_us(),
+		  (unsigned)rc_gpioirq_irq_count());
+
 	tm_printf((UB*)"[TEST] === test run end ===\n");
 #endif
 

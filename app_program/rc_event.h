@@ -79,4 +79,18 @@ rc_result_t rc_event_publish_i(rc_event_t *evt);
  */
 uint32_t rc_event_dropped(rc_lane_t lane);
 
+/*
+ *  Maximum ring occupancy observed on a lane since init / probe reset.
+ *  Approaching RC_EVENT_RING_SZ-1 means the ring ran near full.
+ */
+uint32_t rc_event_high_water(rc_lane_t lane);
+
+#if APP_TEST
+/* Risk 1 instrumentation, TEST builds only. probe_reset zeroes the
+ * counters; report prints per-lane high-water + per-event WCET / latency /
+ * drops over the USB console. */
+void rc_event_probe_reset(void);
+void rc_event_report(void);
+#endif
+
 #endif /* RC_EVENT_H */
