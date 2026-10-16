@@ -119,20 +119,20 @@ void drv_imu_test_hold(bool hold)
  * for reading sensor data. */
 static ER reg_write(UW sadr, UB reg, UB val)
 {
-    T_I2C_EXEC exec;
-    UB         snd[2];
-    SZ         asz;
+    UB snd[2];
+    SZ asz;
 
     snd[0] = reg;
     snd[1] = val;
 
-    exec.sadr     = sadr;
-    exec.snd_size = 2;
-    exec.snd_data = snd;
-    exec.rcv_size = 0;
-    exec.rcv_data = NULL;
-
-    return tk_swri_dev(i2c_dd, TDN_I2C_EXEC, &exec, sizeof(exec), &asz);
+    /* A register write is a pure write with no read phase. The driver's
+     * EXEC command cannot express that - it rejects rcv_size == 0 with
+     * E_PAR, because EXEC is a combined write-then-read (repeated start).
+     * So use the plain WRITE path instead: the device "start" argument is
+     * the I2C slave address and the buffer carries [reg, val]. (The old
+     * EXEC form here always returned E_PAR; it only went unnoticed because
+     * no IMU ever ACKed on the DLHC's 0x19/0x1E in the first place.) */
+    return tk_swri_dev(i2c_dd, (W)sadr, snd, 2, &asz);
 }
 
 /* Reads `len` bytes in one go, starting at register `reg`, into buffer
