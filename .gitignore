@@ -29,3 +29,6 @@ config/wifi_secrets.h
 # Office lock files
 ~$*
 .kiro/
+
+# Local agent guide (not shared)
+CLAUDE.md
