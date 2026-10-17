@@ -2,20 +2,25 @@
  * sub_telemetry.c  --  Buddy 1 / subsystem 1
  *
  * Builds the car's telemetry messages and ships them through whatever sink
- * is installed (console by default, MQTT in a WiFi build). Also hands any
- * inbound command off to sub_nav.
+ * is installed (console by default, MQTT in a WiFi build), and passes
+ * driving commands from the dashboard on to the vehicle controller.
  *
- * Template migration, in short:
- *   - includes reach one folder up for the shared rc_* headers;
- *   - every field we report comes off the event bus and is cached here, so
- *     we don't reach into other buddies' folders -- the two exceptions are
- *     Buddy 2's read-backs drv_motor_get() (motor duty) and
- *     drv_encoder_count() (encoder clicks). There's no event for either,
- *     and both just read a value Buddy 2 already keeps;
- *   - init() only makes objects; start_task() starts the task (priority 12);
- *   - the task drains inbound commands each tick;
- *   - the tx counters are locked because two tasks touch them.
- * The framing, topics, 250 ms schedule and heartbeat are unchanged.
+ * How this file links to the other buddies:
+ *   - everything we report comes off the event bus. subs[] near the bottom
+ *     is the full list of events we listen to, one row each, grouped by
+ *     the buddy who publishes them. Nobody calls into this file to report
+ *     something; they publish and we pick it up;
+ *   - the two exceptions are Buddy 2's read-backs drv_motor_get() (motor
+ *     duty) and drv_encoder_count() (encoder clicks). There's no event for
+ *     either, and both just read a value Buddy 2 already keeps;
+ *   - what we hand back goes out on the bus too: RC_EVT_COMMAND_RX for each
+ *     command from the dashboard, RC_EVT_LINK_STATE whenever the network
+ *     link comes up or goes down;
+ *   - init() only subscribes and makes objects; start_task() starts the
+ *     task (priority 12). All callbacks are on the slow lane, so nothing
+ *     here can hold up the control path.
+ * subsystem1.h has the same contract as a table; docs/buddy1-telemetry/
+ * walks the other buddies through it.
  */
 #include "../rc_prelude.h"
 #include <tm/tmonitor.h>
@@ -26,17 +31,36 @@
 #include "../rc_config.h"
 #include "../rc_event.h"
 #include "../rc_time.h"
-#include "../subsystem2/drv_motor.h"    /* drv_motor_get(): last duty, Buddy 2 */
-#include "../subsystem2/drv_encoder.h"  /* drv_encoder_count(): clicks, Buddy 2 */
+#include "../subsystem2/drv_motor.h"    /* drv_motor_get(), Buddy 2 */
+#include "../subsystem2/drv_encoder.h"  /* drv_encoder_count(), Buddy 2 */
 
 /* Topic buffer holds "car/01/<leaf>"; payload buffer holds one JSON body.
- * Bump PAYLOAD_MAX first if a message ever looks cut off. */
+ * Bump PAYLOAD_MAX first if a message ever looks cut off, but it can't go
+ * past 226: the kernel's message limit (S1_MSG_MAX, 240) has to hold the
+ * topic "car/01/state" and its '\0' as well. */
 #define TOPIC_MAX       (48)
-#define PAYLOAD_MAX     (224)   /* worst-case state is 195; see S1-I10 */
+#define PAYLOAD_MAX     (224)   /* worst-case state is 207; see S1-I10 */
+#define ACK_MAX         (32)
 
 /* One prefix for every topic (rc_config.h), so the publish topics and the
  * command topic can't drift apart. */
 #define TOPIC_BASE      RC_TOPIC_BASE
+
+/* Status (the heartbeat) goes out every 8th state tick: 8 x 250 ms = 2 s,
+ * the period FR11a asks for. */
+#define HEARTBEAT_TICKS (8U)
+
+/* A buddy counts as "live" in the heartbeat if we've heard its stream this
+ * recently. Those streams run at 17-200 Hz, so a whole second of silence
+ * means it has stopped, not that it's between samples. */
+#define LIVE_WINDOW_MS  (1000U)
+
+/* The servo angle that points straight ahead. Buddy 5's sweep runs 30 to
+ * 150 degrees with 90 in the middle. Only readings this close to it count
+ * as "the range ahead" in the state message; the rest of a sweep is
+ * reported as a whole on car/01/obstacle. */
+#define AHEAD_DEG       (90)
+#define AHEAD_TOL_DEG   (5)
 
 /* The transport we're currently sending through. */
 static const sub_telemetry_sink_t *sink;
@@ -44,6 +68,8 @@ static const sub_telemetry_sink_t *sink;
 static uint32_t seq;            /* stamped into each state message */
 static uint32_t tx_count;       /* messages sent OK (in the heartbeat) */
 static uint32_t tx_fail;        /* messages that failed (in the heartbeat) */
+static uint32_t rx_cmds;        /* command characters received */
+static uint32_t retries;        /* times the link was found down and retried */
 
 static sub_telemetry_cmd_cb_t cmd_cb;
 static void *cmd_ctx;
@@ -61,35 +87,64 @@ static volatile bool     st_line_l;
 static volatile bool     st_line_r;
 static volatile int32_t  st_motion_cls;    /* latest RC_EVT_MOTION_CLASS */
 static volatile uint32_t st_peak_mm;        /* tallest hump seen so far */
+static volatile uint32_t st_range_mm;       /* straight ahead, 0 = no echo */
 static volatile char     st_last_bc;        /* most recent barcode symbol */
+
+/* The motion class last sent on car/01/motion (-1 = nothing yet). Only
+ * the telemetry task touches it. */
+static int32_t sent_cls = -1;
+
+/* When each buddy's stream was last heard, in ms since boot, 0 = never.
+ * Nothing can arrive at 0 ms (the kernel is still booting then), so 0 is
+ * free to mean "never". */
+typedef enum
+{
+    LIVE_B2_ODOMETRY = 0,       /* RC_EVT_ODOMETRY, 50 Hz */
+    LIVE_B3_LINE,               /* RC_EVT_LINE_SAMPLE, 200 Hz */
+    LIVE_B4_IMU,                /* RC_EVT_IMU_SAMPLE, 100 Hz */
+    LIVE_B5_ULTRA,              /* RC_EVT_ULTRA_RESULT, ~17 Hz while watching */
+    LIVE_COUNT
+} live_src_t;
+
+static volatile uint32_t live_ms[LIVE_COUNT];
+
+/* The network link, as last put on the bus. link_sent is false until the
+ * first announcement has gone out. */
+static rc_pl_link_t link_now;
+static bool         link_sent;
+
+#if APP_TEST
+static volatile bool link_fake_on;
+static rc_pl_link_t  link_fake;
+#endif
 
 /* --------------------------------------------------------------------
  * Counter lock (dual-core)
  *
- * send() runs on two tasks -- the telemetry task and the slow event
- * dispatcher (via on_notable) -- so a bare tx_count++ can drop a count
- * when both cores hit it at once. Same lock pattern as rc_event.c:
+ * Some counters are bumped from two tasks -- the telemetry task and the
+ * slow event dispatcher (via on_notable) -- so a bare count++ can drop a
+ * count when both cores hit it at once. Same lock pattern as rc_event.c:
  * a spinlock on SMP, interrupt masking on single core. NOT a mutex: the
  * dispatcher is never allowed to wait.
  * -------------------------------------------------------------------- */
 #if TK_SUPPORT_SMP
 #include <tk/smp.h>
-static T_SPLOCK tx_lock;
+static T_SPLOCK count_lock;
 /* NOTE: ISpinLock wants a UINT*, so sts must be UINT, not uint32_t. */
-#define TX_LOCK(sts)      ((void)ISpinLock(&tx_lock, &(sts)))
-#define TX_UNLOCK(sts)    ((void)ISpinUnlock(&tx_lock, (sts)))
+#define COUNT_LOCK(sts)      ((void)ISpinLock(&count_lock, &(sts)))
+#define COUNT_UNLOCK(sts)    ((void)ISpinUnlock(&count_lock, (sts)))
 #else
-#define TX_LOCK(sts)      DI(sts)
-#define TX_UNLOCK(sts)    EI(sts)
+#define COUNT_LOCK(sts)      DI(sts)
+#define COUNT_UNLOCK(sts)    EI(sts)
 #endif
 
-static void tx_inc(uint32_t *ctr)
+static void count_inc(uint32_t *ctr)
 {
     UINT sts;
 
-    TX_LOCK(sts);
+    COUNT_LOCK(sts);
     (*ctr)++;
-    TX_UNLOCK(sts);
+    COUNT_UNLOCK(sts);
 }
 
 /* --------------------------------------------------------------------
@@ -142,7 +197,7 @@ static rc_result_t send(const char *leaf, const char *payload)
 
     if ((sink == NULL) || !sink->is_up())
     {
-        tx_inc(&tx_fail);
+        count_inc(&tx_fail);
         return RC_ERR_STATE;
     }
 
@@ -151,32 +206,32 @@ static rc_result_t send(const char *leaf, const char *payload)
     res = sink->publish(topic, payload, (uint16_t)rc_strlen(payload));
     if (res == RC_OK)
     {
-        tx_inc(&tx_count);
+        count_inc(&tx_count);
     }
     else
     {
-        tx_inc(&tx_fail);
+        count_inc(&tx_fail);
     }
     return res;
 }
 
 /* The per-tick status line: speed, distance, encoder counts, motor duty,
- * line sensors, motion class, tallest hump, last barcode -- the telemetry
- * the project brief asks for. Every field is a cached value updated by the
- * event callbacks above, except encoder counts and motor duty, which
+ * line sensors, motion class, tallest hump, range ahead, last barcode --
+ * the telemetry FR10a asks for. Every field is a cached value updated by
+ * the event callbacks below, except encoder counts and motor duty, which
  * Buddy 2 reports live through drv_encoder_count() and drv_motor_get(). */
 static void publish_state(void)
 {
     char buf[PAYLOAD_MAX];
 
-    /* NOTE: with every number at its longest this is 195 characters, so
-     * PAYLOAD_MAX is 224. At 192 the encoder counts pushed it over and the
-     * JSON would have been cut off; subsystem1_test.c S1-I10 checks it. */
+    /* NOTE: with every number at its longest this is 207 characters, so
+     * PAYLOAD_MAX is 224. subsystem1_test.c S1-I10 checks it on the car,
+     * so add a field there too if you add one here. */
     (void)rc_snprintf(buf, sizeof(buf),
         "{\"seq\":%lu,\"t\":%lu,\"spd_l\":%ld,\"spd_r\":%ld,"
         "\"dist\":%lu,\"enc_l\":%lu,\"enc_r\":%lu,"
         "\"m_l\":%d,\"m_r\":%d,\"line\":\"%c%c\","
-        "\"cls\":%d,\"peak\":%u,\"bc\":\"%c\"}",
+        "\"cls\":%d,\"peak\":%u,\"rng\":%u,\"bc\":\"%c\"}",
         (unsigned long)seq,
         (unsigned long)rc_time_ms(),
         (long)st_speed_l,
@@ -190,43 +245,77 @@ static void publish_state(void)
         st_line_r ? '1' : '0',
         (int)st_motion_cls,
         (unsigned int)st_peak_mm,
+        (unsigned int)st_range_mm,
         (st_last_bc != '\0') ? st_last_bc : '-');
 
     seq++;
     (void)send("state", buf);
 }
 
-/* The slower "is the link healthy" line: uptime, send tallies, event-bus
- * drops, and which sink is active. A non-zero drop count is a real warning. */
+/* '1' if we've heard from this buddy in the last second, else '0'. */
+static char live_flag(live_src_t src, uint32_t now)
+{
+    uint32_t t = live_ms[src];
+
+    return ((t != 0U) && ((now - t) <= LIVE_WINDOW_MS)) ? '1' : '0';
+}
+
+/* The slower "is the link healthy" line (FR11a): uptime, send tallies,
+ * event-bus drops, active sink, the WiFi and broker state, commands
+ * received, link retries, and which buddies' streams are arriving. A
+ * non-zero drop count is a real warning. "live" is four flags in buddy
+ * order -- Buddy 2 odometry, 3 line, 4 IMU, 5 ultrasonic -- so "1011"
+ * means everyone but Buddy 3 is talking. A '0' for Buddy 4 is how an IMU
+ * that never came up shows (FR15), rather than a silent zero. */
 static void publish_heartbeat(void)
 {
     char buf[PAYLOAD_MAX];
+    uint32_t now = rc_time_ms();
 
     (void)rc_snprintf(buf, sizeof(buf),
         "{\"up\":%lu,\"tx\":%lu,\"fail\":%lu,"
-        "\"drop_fast\":%lu,\"drop_slow\":%lu,\"sink\":\"%s\"}",
-        (unsigned long)rc_time_ms(),
+        "\"drop_fast\":%lu,\"drop_slow\":%lu,\"sink\":\"%s\","
+        "\"wifi\":%d,\"mqtt\":%d,\"cmds\":%lu,\"retries\":%lu,"
+        "\"live\":\"%c%c%c%c\"}",
+        (unsigned long)now,
         (unsigned long)tx_count,
         (unsigned long)tx_fail,
         (unsigned long)rc_event_dropped(RC_LANE_FAST),
         (unsigned long)rc_event_dropped(RC_LANE_SLOW),
-        (sink != NULL) ? sink->name : "none");
+        (sink != NULL) ? sink->name : "none",
+        link_now.connected ? 1 : 0,
+        link_now.broker_up ? 1 : 0,
+        (unsigned long)rx_cmds,
+        (unsigned long)retries,
+        live_flag(LIVE_B2_ODOMETRY, now),
+        live_flag(LIVE_B3_LINE, now),
+        live_flag(LIVE_B4_IMU, now),
+        live_flag(LIVE_B5_ULTRA, now));
 
     (void)send("status", buf);
 }
 
 /* --------------------------------------------------------------------
  * Event callbacks. All on the slow lane, so telemetry never jumps ahead
- * of the control path. The cache-and-return ones stay short on purpose --
- * the event bus calls them directly.
+ * of the control path. They run on the dispatcher task, so they stay
+ * short: cache and return, or send one message and return.
  * -------------------------------------------------------------------- */
 
+static void mark_live(live_src_t src)
+{
+    uint32_t now = rc_time_ms();
+
+    live_ms[src] = (now != 0U) ? now : 1U;
+}
+
+/* Buddy 2: speed and distance, every 20 ms. */
 static void on_odometry(const rc_event_t *evt, void *ctx)
 {
     uint32_t l = evt->u.odometry.dist_l_mm;
     uint32_t r = evt->u.odometry.dist_r_mm;
 
     (void)ctx;
+    mark_live(LIVE_B2_ODOMETRY);
     st_speed_l = evt->u.odometry.speed_l_mm_s;
     st_speed_r = evt->u.odometry.speed_r_mm_s;
 
@@ -235,24 +324,50 @@ static void on_odometry(const rc_event_t *evt, void *ctx)
     st_dist_mm = (l / 2U) + (r / 2U) + (l & r & 1U);
 }
 
+/* Buddy 3: the two line sensors, every 5 ms. */
 static void on_line(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
+    mark_live(LIVE_B3_LINE);
     st_line_l = evt->u.line.on_line_l;
     st_line_r = evt->u.line.on_line_r;
 }
 
-/* Terrain reports the motion class on its own event; cache it for the
- * per-tick line, the same way odometry and the line sensors are cached. */
+/* Buddy 4: we only use the IMU stream to know it's alive (see "live" in
+ * the heartbeat). Buddy 4 turns it into everything else. */
+static void on_imu(const rc_event_t *evt, void *ctx)
+{
+    (void)evt;
+    (void)ctx;
+    mark_live(LIVE_B4_IMU);
+}
+
+/* Buddy 4: the motion class, sent only when it changes. Cache it for the
+ * per-tick line; the task streams the change on car/01/motion (see
+ * stream_motion_class, which explains why it isn't sent from here). */
 static void on_motion_class(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
     st_motion_cls = (int32_t)evt->u.motion_class.cls;
 }
 
-/* Barcode / hump / obstacle / impact: send straight away rather than wait
- * for the next tick. Two of them also feed the per-tick line, so cache the
- * fields it shows on the way past. */
+/* Buddy 5: one ultrasonic reading. Keep it only if the servo was pointing
+ * straight ahead; an echo timeout reads as 0 ("nothing in range"). */
+static void on_ultra(const rc_event_t *evt, void *ctx)
+{
+    int32_t off = (int32_t)evt->u.ultra.angle_deg - AHEAD_DEG;
+
+    (void)ctx;
+    mark_live(LIVE_B5_ULTRA);
+    if ((off >= -AHEAD_TOL_DEG) && (off <= AHEAD_TOL_DEG))
+    {
+        st_range_mm = evt->u.ultra.valid ? evt->u.ultra.range_mm : 0U;
+    }
+}
+
+/* Everything that gets its own message the moment it happens: barcode,
+ * hump, impact, obstacle, avoidance plan, line lost/found, move done.
+ * Two of them also feed the per-tick line, so cache those on the way. */
 static void on_notable(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
@@ -268,6 +383,10 @@ static void on_notable(const rc_event_t *evt, void *ctx)
             st_peak_mm = evt->u.hump.peak_mm;
         }
     }
+    else
+    {
+        /* nothing to cache for the rest */
+    }
 
     (void)sub_telemetry_publish_event(evt);
 }
@@ -276,6 +395,11 @@ static void on_notable(const rc_event_t *evt, void *ctx)
 rc_result_t sub_telemetry_publish_event(const rc_event_t *evt)
 {
     char buf[PAYLOAD_MAX];
+
+    if (evt == NULL)
+    {
+        return RC_ERR_PARAM;
+    }
 
     switch (evt->id)
     {
@@ -307,13 +431,98 @@ rc_result_t sub_telemetry_publish_event(const rc_event_t *evt)
                 (unsigned int)evt->u.profile.clearance_right_mm);
             return send("obstacle", buf);
 
+        case RC_EVT_AVOIDANCE_PLAN:
+            (void)rc_snprintf(buf, sizeof(buf),
+                "{\"act\":%d,\"lat_mm\":%u,\"fwd_mm\":%u}",
+                (int)evt->u.plan.action,
+                (unsigned int)evt->u.plan.lateral_mm,
+                (unsigned int)evt->u.plan.forward_mm);
+            return send("avoid", buf);
+
         case RC_EVT_IMPACT:
             return send("impact", "{\"impact\":1}");
+
+        case RC_EVT_MOTION_CLASS:
+            (void)rc_snprintf(buf, sizeof(buf), "{\"cls\":%d}",
+                              (int)evt->u.motion_class.cls);
+            return send("motion", buf);
+
+        case RC_EVT_LINE_LOST:
+            return send("line", "{\"lost\":1}");
+
+        case RC_EVT_LINE_REACQUIRED:
+            return send("line", "{\"lost\":0}");
+
+        case RC_EVT_MOTION_DONE:
+            (void)rc_snprintf(buf, sizeof(buf),
+                "{\"id\":%lu,\"ok\":%d,\"mm\":%lu}",
+                (unsigned long)evt->u.motion_done.move_id,
+                evt->u.motion_done.completed ? 1 : 0,
+                (unsigned long)evt->u.motion_done.travelled_mm);
+            return send("move", buf);
 
         default:
             return RC_ERR_PARAM;
     }
 }
+
+/* --------------------------------------------------------------------
+ * The link (design section 6.5)
+ * -------------------------------------------------------------------- */
+
+static void link_read(rc_pl_link_t *out)
+{
+#if APP_TEST
+    if (link_fake_on)
+    {
+        *out = link_fake;
+        return;
+    }
+#endif
+    sub_telemetry_mqtt_link(&out->connected, &out->broker_up);
+}
+
+/* Once a tick: if WiFi or the broker came up or went down since the last
+ * look, say so on the bus with RC_EVT_LINK_STATE. The first tick always
+ * announces, so anyone who subscribed in their _init() learns the starting
+ * state. If the bus is full we keep the old state and try next tick. */
+static void track_link(void)
+{
+    rc_pl_link_t now;
+    rc_event_t evt;
+
+    link_read(&now);
+    if (link_sent && (now.connected == link_now.connected) &&
+        (now.broker_up == link_now.broker_up))
+    {
+        return;
+    }
+
+    evt.id = RC_EVT_LINK_STATE;
+    evt.u.link = now;
+    if (rc_event_publish(&evt) == RC_OK)
+    {
+        link_now = now;
+        link_sent = true;
+    }
+}
+
+void sub_telemetry_get_link(rc_pl_link_t *out)
+{
+    if (out != NULL)
+    {
+        *out = link_now;
+    }
+}
+
+#if APP_TEST
+void sub_telemetry_test_fake_link(bool on, bool connected, bool broker_up)
+{
+    link_fake.connected = connected;
+    link_fake.broker_up = broker_up;
+    link_fake_on = on;
+}
+#endif
 
 /* --------------------------------------------------------------------
  * The task.
@@ -339,6 +548,7 @@ static bool telemetry_link_ok(void)
         return false;
     }
 
+    count_inc(&retries);
     (void)sink->close();
     tk_dly_tsk((INT)backoff);
     (void)sink->open();
@@ -350,6 +560,31 @@ static bool telemetry_link_ok(void)
     }
 
     return sink->is_up();
+}
+
+/* FR14: every change of motion class gets its own message. Buddy 4 only
+ * publishes on a change, but a class that flickers could still change
+ * dozens of times a second, and the kernel sends at most 20 MQTT messages
+ * a second -- the queue would fill and state messages would start
+ * failing. So the callback only caches the class and this sends it, at
+ * most once a tick. A class that comes and goes inside one tick isn't
+ * streamed; IMPACT, the one that matters, has its own topic anyway. */
+static void stream_motion_class(void)
+{
+    rc_event_t evt;
+    int32_t cls = st_motion_cls;
+
+    if (cls == sent_cls)
+    {
+        return;
+    }
+
+    evt.id = RC_EVT_MOTION_CLASS;
+    evt.u.motion_class.cls = (rc_motion_class_t)cls;
+    if (sub_telemetry_publish_event(&evt) == RC_OK)
+    {
+        sent_cls = cls;
+    }
 }
 
 static void telemetry_task(INT stacd, void *exinf)
@@ -366,12 +601,12 @@ static void telemetry_task(INT stacd, void *exinf)
 
     for (;;)
     {
-        tk_dly_tsk(RC_PERIOD_TELEM_MS);
+        /* Sleep one period. In an MQTT build this also takes any command
+         * the moment the kernel hands it over, so a remote STOP isn't left
+         * waiting for the end of the tick. */
+        sub_telemetry_mqtt_wait(RC_PERIOD_TELEM_MS);
 
-#if TM_MQTT
-        /* Pick up any commands the kernel forwarded and hand them to nav. */
-        sub_telemetry_mqtt_poll();
-#endif
+        track_link();
 
         /* Skip this tick if the link is down -- no point hammering a dead
          * sink; send() would just count another failure. */
@@ -381,9 +616,10 @@ static void telemetry_task(INT stacd, void *exinf)
         }
 
         publish_state();
+        stream_motion_class();
 
         ticks++;
-        if ((ticks % 8U) == 0U)         /* heartbeat every ~2 s */
+        if ((ticks % HEARTBEAT_TICKS) == 0U)
         {
             publish_heartbeat();
         }
@@ -394,31 +630,73 @@ static void telemetry_task(INT stacd, void *exinf)
  * Start-up (two passes: init then start).
  * -------------------------------------------------------------------- */
 
-/* Pass one: subscribe to the events we report on and, in a WiFi build,
- * make the message buffers and switch the sink to MQTT. No task yet. */
+/* Everything Buddy 1 listens to, grouped by who publishes it. This table
+ * IS the link to the other buddies: if your event is in here, Buddy 1
+ * reports it; you don't call anything. All on the slow lane. */
+typedef struct
+{
+    rc_evt_id_t   id;
+    rc_event_cb_t cb;
+} telem_sub_t;
+
+static const telem_sub_t subs[] =
+{
+    /* Buddy 2, motion */
+    { RC_EVT_ODOMETRY,          on_odometry     },  /* state: spd, dist   */
+    { RC_EVT_MOTION_DONE,       on_notable      },  /* car/01/move        */
+
+    /* Buddy 3, line and barcode */
+    { RC_EVT_LINE_SAMPLE,       on_line         },  /* state: line        */
+    { RC_EVT_LINE_LOST,         on_notable      },  /* car/01/line        */
+    { RC_EVT_LINE_REACQUIRED,   on_notable      },  /* car/01/line        */
+    { RC_EVT_BARCODE_DECODED,   on_notable      },  /* car/01/barcode, bc */
+
+    /* Buddy 4, IMU and terrain */
+    { RC_EVT_IMU_SAMPLE,        on_imu          },  /* status: live       */
+    { RC_EVT_MOTION_CLASS,      on_motion_class },  /* cls, car/01/motion */
+    { RC_EVT_HUMP_END,          on_notable      },  /* car/01/hump, peak  */
+    { RC_EVT_IMPACT,            on_notable      },  /* car/01/impact      */
+
+    /* Buddy 5, scanning and avoidance */
+    { RC_EVT_ULTRA_RESULT,      on_ultra        },  /* state: rng         */
+    { RC_EVT_OBSTACLE_PROFILE,  on_notable      },  /* car/01/obstacle    */
+    { RC_EVT_AVOIDANCE_PLAN,    on_notable      }   /* car/01/avoid       */
+};
+
+/* Pass one: subscribe to everything in subs[] and, in a WiFi build, make
+ * the message buffers and switch the sink to MQTT. No task yet. A failed
+ * subscription is reported (subsystem1_init turns it into an error that
+ * usermain prints) but the rest still go ahead. */
 rc_result_t sub_telemetry_init(void)
 {
+    rc_result_t res = RC_OK;
+    uint32_t i;
+
     sink = &console_sink;
 
-    (void)rc_event_subscribe(RC_EVT_ODOMETRY, RC_LANE_SLOW, on_odometry, NULL);
-    (void)rc_event_subscribe(RC_EVT_LINE_SAMPLE, RC_LANE_SLOW, on_line, NULL);
-    (void)rc_event_subscribe(RC_EVT_MOTION_CLASS, RC_LANE_SLOW,
-                             on_motion_class, NULL);
-    (void)rc_event_subscribe(RC_EVT_BARCODE_DECODED, RC_LANE_SLOW,
-                             on_notable, NULL);
-    (void)rc_event_subscribe(RC_EVT_HUMP_END, RC_LANE_SLOW, on_notable, NULL);
-    (void)rc_event_subscribe(RC_EVT_OBSTACLE_PROFILE, RC_LANE_SLOW,
-                             on_notable, NULL);
-    (void)rc_event_subscribe(RC_EVT_IMPACT, RC_LANE_SLOW, on_notable, NULL);
+    for (i = 0U; i < (sizeof(subs) / sizeof(subs[0])); i++)
+    {
+        if (rc_event_subscribe(subs[i].id, RC_LANE_SLOW, subs[i].cb, NULL)
+            < 0)
+        {
+            tm_printf((UB *)"telemetry: can't subscribe to event %d\n",
+                      (int)subs[i].id);
+            res = RC_ERR_NOSPACE;
+        }
+    }
 
 #if TM_MQTT
     if (sub_telemetry_mqtt_init() == RC_OK)
     {
         sink = sub_telemetry_mqtt_sink();
     }
+    else
+    {
+        tm_printf((UB *)"telemetry: no MQTT buffers, using the console\n");
+    }
 #endif
 
-    return RC_OK;
+    return res;
 }
 
 /* Pass two: start the telemetry task in subsystem 1's priority band
@@ -451,6 +729,10 @@ rc_result_t sub_telemetry_set_sink(const sub_telemetry_sink_t *new_sink)
     return sink->open();
 }
 
+/* --------------------------------------------------------------------
+ * Commands.
+ * -------------------------------------------------------------------- */
+
 rc_result_t sub_telemetry_on_command(sub_telemetry_cmd_cb_t cb, void *ctx)
 {
     cmd_cb = cb;
@@ -475,21 +757,51 @@ rc_nav_cmd_t sub_telemetry_parse_cmd(char c)
     }
 }
 
-/* Called once a command has been decoded. Prefer the registered callback;
- * otherwise drop it on the event bus for sub_nav to pick up on the fast
- * lane. Either way we don't touch nav state from here. */
+/* A character from car/01/cmd. Pass a real command on first, so a STOP
+ * isn't held up by the ack, then tell the dashboard what we made of it on
+ * car/01/ack: {"rx":"L","cmd":1}, or "cmd":0 if it was ignored. A quote,
+ * a backslash or a control byte would break the JSON, so those show as
+ * '?'. */
+rc_nav_cmd_t sub_telemetry_receive_command(char c)
+{
+    char buf[ACK_MAX];
+    char shown = c;
+    rc_nav_cmd_t cmd = sub_telemetry_parse_cmd(c);
+
+    count_inc(&rx_cmds);
+    if (cmd != RC_CMD_NONE)
+    {
+        (void)sub_telemetry_deliver_command(cmd, 0);
+    }
+
+    if ((shown <= ' ') || (shown > '~') || (shown == '"') || (shown == '\\'))
+    {
+        shown = '?';
+    }
+    (void)rc_snprintf(buf, sizeof(buf), "{\"rx\":\"%c\",\"cmd\":%d}",
+                      shown, (int)cmd);
+    (void)send("ack", buf);
+
+    return cmd;
+}
+
+/* Called once a command has been decoded. It always goes on the bus as
+ * RC_EVT_COMMAND_RX, which the vehicle controller subscribes to on the
+ * fast lane; the callback, if someone registered one, gets it as well.
+ * Either way we don't touch navigation's state from here. */
 rc_result_t sub_telemetry_deliver_command(rc_nav_cmd_t cmd, int32_t arg)
 {
     rc_event_t evt;
-
-    if (cmd_cb != NULL)
-    {
-        cmd_cb(cmd, arg, cmd_ctx);
-        return RC_OK;
-    }
+    rc_result_t res;
 
     evt.id = RC_EVT_COMMAND_RX;
     evt.u.command.command = cmd;
     evt.u.command.arg = arg;
-    return rc_event_publish(&evt);
+    res = rc_event_publish(&evt);
+
+    if (cmd_cb != NULL)
+    {
+        cmd_cb(cmd, arg, cmd_ctx);
+    }
+    return res;
 }

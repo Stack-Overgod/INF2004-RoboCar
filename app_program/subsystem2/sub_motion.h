@@ -131,4 +131,13 @@ bool sub_motion_busy(void);
  * such as the motion bench's step response - it changes nothing. */
 int32_t sub_motion_target_mm_s(rc_side_t side);
 
+#if APP_TEST
+/* TEST BUILD ONLY: hold = true stops the control task publishing
+ * RC_EVT_ODOMETRY, so a self-test can inject fake odometry without the
+ * real one overwriting it. The control loop itself (speed measurement,
+ * PID, stall/timeout safety) keeps running, and the encoder ISRs keep
+ * counting, so no ticks are lost. Always release it (false) afterwards. */
+void sub_motion_test_hold_odometry(bool hold);
+#endif
+
 #endif /* SUB_MOTION_H */

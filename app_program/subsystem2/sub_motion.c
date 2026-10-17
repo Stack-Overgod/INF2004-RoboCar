@@ -123,6 +123,16 @@
 #define CB_SLOTS                (8U)
 #define DONE_QUEUE              (8U)
 
+#if APP_TEST
+/* A self-test is injecting fake odometry. See sub_motion_test_hold_odometry(). */
+static volatile bool odo_test_hold;
+
+void sub_motion_test_hold_odometry(bool hold)
+{
+    odo_test_hold = hold;
+}
+#endif
+
 /* ------------------------------------------------------------------ *
  *  Types
  * ------------------------------------------------------------------ */
@@ -778,7 +788,12 @@ static void motion_task(INT stacd, void *exinf)
         evt.u.odometry.speed_r_mm_s = sp_r;
         evt.u.odometry.dist_l_mm    = drv_encoder_distance_mm(RC_SIDE_LEFT);
         evt.u.odometry.dist_r_mm    = drv_encoder_distance_mm(RC_SIDE_RIGHT);
-        (void)rc_event_publish(&evt);
+#if APP_TEST
+        if (!odo_test_hold)
+#endif
+        {
+            (void)rc_event_publish(&evt);
+        }
 
         if (!motion_lock()) {
             continue;
