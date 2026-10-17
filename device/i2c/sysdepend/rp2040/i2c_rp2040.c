@@ -80,6 +80,21 @@ LOCAL T_SPLOCK ll_lock[DEV_I2C_UNITNM];
 
 #define I2C_INT_ERROR	(I2C_INT_TX_ABRT|I2C_INT_TX_OVER|I2C_INT_RX_OVER|I2C_INT_RX_UNDER)
 
+#if APP_TEST
+/*
+ * TEST BUILD ONLY: transaction timing, in microseconds (TIMERAWL, 1 MHz).
+ * Each wait is split into "hw" (wait start -> the ISR wakes the task: the
+ * bus and the controller) and "wake" (ISR -> the task runs again: the
+ * scheduler and any higher-priority work). A test may zero the array.
+ *   [0] transactions      [1] slowest transaction    [2] waits in it
+ *   [3] slowest hw part   [4] slowest wake part      [5] transactions > 2 ms
+ *   [6] failed transactions
+ */
+EXPORT volatile UW	dev_i2c_diag[7];
+LOCAL volatile UW	diag_isr_us;
+#define DIAG_NOW()	in_w(TIMER_TIMERAWL)
+#endif
+
 /*-------------------------------------------------------
  * Interrupt handler
  */
@@ -162,10 +177,23 @@ LOCAL void i2c_inthdr( UINT intno )
 	ClearInt(intno);		// Clear interrupt
 
 	if(wup) {
+#if APP_TEST
+		diag_isr_us = DIAG_NOW();
+#endif
 		out_w(I2C_INTR_MASK(unit), 0);
-		(void)tk_set_flg(p_cb->done_flgid, 1);
 	}
 	I2C_UNLOCK(unit, intsts);
+
+	/*
+	 * Wake the waiting task only after the lock is released. I2C_LOCK
+	 * disables interrupts, and a service call made with interrupts
+	 * disabled never requests a dispatch (END_CRITICAL_SECTION checks the
+	 * caller's PRIMASK), so the woken task would sit ready until the next
+	 * system tick: up to 10 ms per transaction phase.
+	 */
+	if(wup) {
+		(void)tk_set_flg(p_cb->done_flgid, 1);
+	}
 }
 /*----------------------------------------------------------------------
  * Execution of communication
@@ -176,6 +204,10 @@ LOCAL ER i2c_trans(INT unit, T_I2C_LLDCB *p_cb)
 	UINT	imask;
 	UINT	flgptn;
 	ER	err;
+#if APP_TEST
+	UW	t_start = DIAG_NOW();
+	UW	t_wait, t_back, waits = 0;
+#endif
 
 	p_cb->ioerr = err = E_OK;
 
@@ -208,9 +240,25 @@ LOCAL ER i2c_trans(INT unit, T_I2C_LLDCB *p_cb)
 			break;
 		}
 
+#if APP_TEST
+		t_wait = DIAG_NOW();
+#endif
 		err = tk_wai_flg(p_cb->done_flgid, 1,
 				 TWF_ORW | TWF_BITCLR, &flgptn,
 				 ll_devdat[unit].timout);
+#if APP_TEST
+		t_back = DIAG_NOW();
+		waits++;
+		if ( err >= E_OK ) {
+			/* The ISR can run before t_wait (TX_EMPTY fires as soon as
+			   it is unmasked): then the bus part is 0. */
+			UW isr  = ((W)(diag_isr_us - t_wait) < 0) ? t_wait : diag_isr_us;
+			UW hw   = isr - t_wait;
+			UW wake = t_back - isr;
+			if ( hw   > dev_i2c_diag[3] ) dev_i2c_diag[3] = hw;
+			if ( wake > dev_i2c_diag[4] ) dev_i2c_diag[4] = wake;
+		}
+#endif
 		if ( err < E_OK ) {
 			I2C_LOCK(unit, imask);
 			out_w(I2C_INTR_MASK(unit), 0);
@@ -222,6 +270,18 @@ LOCAL ER i2c_trans(INT unit, T_I2C_LLDCB *p_cb)
 	}
 	out_w(I2C_ENABLE(unit), 0);				// Disable I2C
 
+#if APP_TEST
+	{
+		UW total = DIAG_NOW() - t_start;
+		dev_i2c_diag[0]++;
+		if ( total > dev_i2c_diag[1] ) {
+			dev_i2c_diag[1] = total;
+			dev_i2c_diag[2] = waits;
+		}
+		if ( total > 2000 ) dev_i2c_diag[5]++;
+		if ( err < E_OK )   dev_i2c_diag[6]++;
+	}
+#endif
 	return err;
 }
 

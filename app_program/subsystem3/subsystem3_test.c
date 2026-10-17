@@ -63,6 +63,11 @@
 /* Delays passed to tk_dly_tsk(), in milliseconds. */
 #define POLL_MS        (10)   /* test 1 sensor poll period */
 #define RATE_WINDOW_MS (1000) /* sample-rate measurement window */
+
+/* I2C transaction timing kept by the RP2040 I2C driver in TEST builds
+ * (device/i2c/sysdepend/rp2040/i2c_rp2040.c), printed with S3-U05. */
+#define I2C_DIAG_N     (7U)
+extern volatile UW dev_i2c_diag[I2C_DIAG_N];
 #define SETTLE_MS      (100)  /* lets both event dispatchers drain */
 #define CHAR_GAP_MS    (10)   /* pause between synthetic characters */
 #define LIVE_POLL_MS   (20)   /* test 2 part 2 poll period */
@@ -512,6 +517,12 @@ static uint32_t measure_sample_rate (void)
 		uint32_t ticks0 = rc_sense_ticks();
 		uint32_t over0  = rc_sense_overruns();
 		uint32_t drop0  = rc_event_dropped(RC_LANE_SLOW);
+		uint32_t i;
+
+		for (i = 0U; i < I2C_DIAG_N; i++)
+		{
+			dev_i2c_diag[i] = 0U;
+		}
 
 		sample_count = 0U;
 		b_counting   = true;
@@ -529,6 +540,15 @@ static uint32_t measure_sample_rate (void)
 				  rc_event_dropped(RC_LANE_SLOW) - drop0);
 		tm_printf((UB *)"[S3] longest Sense step so far: line %lu us, "
 				  "IMU %lu us\n", line_us, imu_us);
+		tm_printf((UB *)"[S3] I2C in that window: %lu transactions, "
+				  "slowest %lu us (%lu waits), %lu over 2 ms, "
+				  "%lu failed\n",
+				  (uint32_t)dev_i2c_diag[0], (uint32_t)dev_i2c_diag[1],
+				  (uint32_t)dev_i2c_diag[2], (uint32_t)dev_i2c_diag[5],
+				  (uint32_t)dev_i2c_diag[6]);
+		tm_printf((UB *)"[S3] I2C slowest wait parts: bus %lu us, "
+				  "wake-up %lu us\n",
+				  (uint32_t)dev_i2c_diag[3], (uint32_t)dev_i2c_diag[4]);
 	}
 
 	return samples;
