@@ -27,6 +27,8 @@
  * RC_OK. Returns RC_ERR_HARDWARE if the kernel refuses the task. */
 rc_result_t rc_sense_start(void);
 
+/* Periods the Sense task missed since boot (0 = always on time). */
+uint32_t rc_sense_overruns(void);
 #if APP_TEST
 /* TEST BUILD ONLY: hold = true makes the Sense task skip its line and IMU
  * samples (it keeps waking on schedule, it just publishes nothing), so a
