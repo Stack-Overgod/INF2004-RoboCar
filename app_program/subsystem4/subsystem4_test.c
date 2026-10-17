@@ -46,7 +46,8 @@ static void publish_imu(int16_t ax, int16_t ay, int16_t az)
 
 EXPORT void subsystem4_test(void)
 {
-	int16_t dummy_x = 0, dummy_y = 0, dummy_z = 0;
+	int16_t  dummy_x = 0, dummy_y = 0, dummy_z = 0;
+	uint32_t wcet_us = 0U;
 
 	TEST_INIT();
 
@@ -65,7 +66,7 @@ EXPORT void subsystem4_test(void)
 		drv_imu_calibrate(0U) == RC_ERR_PARAM,
 		"drv_imu_calibrate rejects 0 sample count");
 
-	/* S4-U03: Terrain subsystem initialization and reset state.  A second
+	/* S4-U03: Terrain subsystem initialization and reset state. A second
 	 * sub_terrain_init() (usermain already ran it) must succeed without
 	 * subscribing again. */
 	TEST_CHECK("S4-U03",
@@ -75,7 +76,7 @@ EXPORT void subsystem4_test(void)
 		"sub_terrain_init resets state to stationary and 0mm peak");
 
 	/* S4-U04: Impact detection on high-G spike (>= RC_IMPACT_MG).
-	 * From here to U07 only fake samples reach sub_terrain. */
+	 * From here to U09 only fake samples reach sub_terrain. */
 	drv_imu_test_hold(true);
 	(void)tk_dly_tsk(S4_SETTLE_MS);	/* let a real sample in flight drain */
 	sub_terrain_reset();
@@ -111,6 +112,29 @@ EXPORT void subsystem4_test(void)
 		cb_last_peak_mm == sub_terrain_max_peak_mm() &&
 		sub_terrain_motion_class() == RC_MOTION_STATIONARY,
 		"leveling out records non-zero hump peak_mm and fires callback");
+
+	/* S4-U08: Flat-ground acceleration surge + cruise + braking rejection (Risk G6) */
+	sub_terrain_reset();
+	cb_last_peak_mm = 0U;
+	cb_call_count   = 0U;
+	publish_imu(120, 0, 1000);  /* brief forward start-up surge */
+	(void)tk_dly_tsk(320);      /* flat cruising > HUMP_FLAT_ABORT_MS (300ms) */
+	publish_imu(0, 0, 1000);    /* flat cruise sample cancels false climb */
+	publish_imu(-90, 0, 1000);  /* subsequent braking dip */
+	publish_imu(0, 0, 1000);    /* stop */
+	TEST_CHECK("S4-U08",
+		cb_call_count == 0U &&
+		sub_terrain_max_peak_mm() == 0U &&
+		sub_terrain_motion_class() == RC_MOTION_STATIONARY,
+		"flat-ground start/cruise/brake rejected as false hump");
+
+	/* S4-U09: Verify FAST dispatcher callback WCET fits 5 ms control budget */
+	wcet_us = sub_terrain_wcet_us();
+	tm_printf((UB*)"[INFO] S4 on_sample WCET = %u us (budget: 5000 us)\n",
+		  (unsigned int)wcet_us);
+	TEST_CHECK("S4-U09",
+		wcet_us < 200U,
+		"sub_terrain FAST callback WCET < 200 us (fits 5ms period)");
 
 	(void)sub_terrain_on_hump(NULL, NULL);
 	sub_terrain_reset();

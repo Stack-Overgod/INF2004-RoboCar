@@ -89,9 +89,12 @@
 #define RC_PIN_I2C0_SDA         (4U)
 #define RC_PIN_I2C0_SCL         (5U)
 
-/* LSM303DLHC has two separate I2C addresses, one per die. */
-#define RC_I2C_ADDR_ACCEL       (0x19U)
-#define RC_I2C_ADDR_MAG         (0x1EU)
+/* This board carries an LSM303D (confirmed by an I2C bus scan: it ACKs at
+ * 0x1D). The LSM303D is a SINGLE die with ONE address (0x1D, SA0 high) for
+ * both the accelerometer and the magnetometer - unlike the older
+ * LSM303DLHC, which used 0x19 (accel) and 0x1E (mag). */
+#define RC_I2C_ADDR_ACCEL       (0x1DU)
+#define RC_I2C_ADDR_MAG         (0x1DU)
 
 /* ------------------------------------------------------------------ *
  *  Timing
