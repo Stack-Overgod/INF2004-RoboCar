@@ -8,8 +8,7 @@
 #include "../rc_config.h"
 #include "../rc_event.h"
 
-/* LSM303DLHC registers. The accelerometer and magnetometer are separate
- * dice with separate address spaces; do not mix them up.
+/* Sensor registers.
  *
  * "Register" here just means a numbered memory slot inside the sensor
  * chip that you can write a setting into or read a measurement out of -

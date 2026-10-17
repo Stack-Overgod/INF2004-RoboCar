@@ -2,7 +2,7 @@
  *  sub_terrain.h  -  Buddy 4
  *
  *  Hump detection, peak measurement, motion classification and impact
- *  detection, all from the LSM303DLHC accelerometer.
+ *  detection, all from the LSM303D accelerometer.
  *
  *  Read the warning at the top of drv_imu.h first. There is no
  *  gyroscope, which rules out the textbook approach to most of this.

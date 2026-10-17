@@ -2,7 +2,7 @@
  *  sub_terrain.c
  *
  *  Buddy 4: Terrain and motion event classification.
- *  Uses the LSM303DLHC accelerometer to detect speed humps, estimate peak
+ *  Uses the LSM303D accelerometer to detect speed humps, estimate peak
  *  height via chassis geometry cross-checked with wheel odometry, and flag
  *  impacts/shocks without relying on a non-existent gyroscope.
  */

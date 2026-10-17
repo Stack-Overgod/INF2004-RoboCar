@@ -116,7 +116,7 @@
 /* Longest any caller waits for the motion mutex. motion_task holds it for
  * a few tens of microseconds per cycle, so this is only a safety net - a
  * dispatcher callback must never block for long (rc_event.h). Kept well
- * inside the FAST dispatcher's 5 ms line-sample period; 2 rather than 1
+ * inside the FAST dispatcher's 10 ms line-sample period; 2 rather than 1
  * because the kernel tick is 1 ms, so a 1 ms timeout can expire at once. */
 #define LOCK_TMO_MS             (2)
 
@@ -954,8 +954,8 @@ rc_result_t sub_motion_drive(int16_t base_permille, int16_t steer_permille)
         steer_cmd = steer_permille;
         mode      = MODE_CONTINUOUS;
 
-        /* Apply the duty now. sub_line steers every 5 ms; leaving it to
-         * motion_task would act on only one command in four (20 ms).
+        /* Apply the duty now. sub_line steers every 10 ms; leaving it to
+         * motion_task would act on only one command in two (20 ms).
          * Open loop needs no PID state, so this is safe under the lock. */
         run_continuous();
     }

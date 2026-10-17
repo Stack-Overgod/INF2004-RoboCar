@@ -324,7 +324,7 @@ static void on_odometry(const rc_event_t *evt, void *ctx)
     st_dist_mm = (l / 2U) + (r / 2U) + (l & r & 1U);
 }
 
-/* Buddy 3: the two line sensors, every 5 ms. */
+/* Buddy 3: the two line sensors, every 10 ms. */
 static void on_line(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;

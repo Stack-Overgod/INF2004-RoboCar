@@ -156,7 +156,7 @@ EXPORT INT usermain(void)
 	CHECK(subsystem4_start(), "subsystem4_start");
 	CHECK(subsystem5_start(), "subsystem5_start");
 
-	/* Phase 2b: the shared Sense task polls the IR line pair (S3, 5 ms)
+	/* Phase 2b: the shared Sense task polls the IR line pair (S3, 10 ms)
 	   and the IMU (S4, 10 ms).  After every subsystemN_start(), so S4's
 	   boot calibration has finished before the first IMU sample. */
 	if (rc_sense_start() != RC_OK) {

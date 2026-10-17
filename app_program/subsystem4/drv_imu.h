@@ -1,11 +1,11 @@
 /*
  *  drv_imu.h  -  Buddy 4 hardware layer
  *
- *  GY-511 / LSM303DLHC over I2C.
+ *  LSM303D over I2C (address 0x1D, WHO_AM_I 0x49).
  *
  *  Read this before writing any Buddy 4 code: THIS PART HAS NO
  *  GYROSCOPE. It is a 3-axis accelerometer and a 3-axis magnetometer on
- *  two separate dice with two separate I2C addresses. That changes three
+ *  one die behind a single I2C address. That changes three
  *  of the tasks in the project brief:
  *
  *    - Tilt must come from the gravity vector in the accelerometer, not
