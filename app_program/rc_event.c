@@ -44,6 +44,13 @@ static T_SPLOCK ring_lock;
 #define RING_MASK         (RC_EVENT_RING_SZ - 1U)
 #define FLG_WORK          (1U << 0)
 
+/* Keep this many ring slots unavailable to high-rate "stream" events, so a
+ * burst of samples can never crowd out a one-off control event
+ * (MOTION_DONE, LINE_*, BARCODE_*, IMPACT, HUMP_*, COMMAND_RX, NAV_TIMEOUT,
+ * ULTRA_RESULT). A dropped sample is replaced by its successor one period
+ * later; a dropped one-off can wedge a state machine (Risk 1 / G10). */
+#define RING_RESERVE      (16U)
+
 /* ------------------------------------------------------------------ *
  *  Per-lane state
  * ------------------------------------------------------------------ */
@@ -60,6 +67,12 @@ typedef struct {
     volatile uint32_t head;         /* written by publishers  */
     volatile uint32_t tail;         /* written by dispatcher  */
     uint32_t       dropped;
+    uint32_t       high_water;      /* max ring occupancy seen */
+#if APP_TEST
+    uint32_t       drop_by_id[RC_EVT_COUNT];
+    uint32_t       max_wcet_us[RC_EVT_COUNT];  /* slowest single callback */
+    uint32_t       max_lat_us[RC_EVT_COUNT];   /* worst publish->dispatch */
+#endif
     ID             flgid;
     ID             tskid;
     subscription_t subs[RC_EVENT_MAX_SUBS];
@@ -78,12 +91,31 @@ static volatile uint8_t lane_mask[RC_EVT_COUNT];
  *  Ring primitives. Caller holds the lock.
  * ------------------------------------------------------------------ */
 
+/* High-rate events that are safe to drop under pressure: the next sample
+ * supersedes the one lost. Everything else is a one-off and is protected
+ * by RING_RESERVE. */
+static bool is_stream_evt(rc_evt_id_t id)
+{
+    return (id == RC_EVT_LINE_SAMPLE) || (id == RC_EVT_IMU_SAMPLE)
+        || (id == RC_EVT_ODOMETRY)    || (id == RC_EVT_ENCODER_EDGE)
+        || (id == RC_EVT_MOTION_CLASS);
+}
+
 static bool ring_push(lane_t *ln, const rc_event_t *evt)
 {
     uint32_t next = (ln->head + 1U) & RING_MASK;
+    uint32_t used = (ln->head - ln->tail) & RING_MASK;
 
     if (next == ln->tail) {
         return false;               /* full, refuse rather than overwrite */
+    }
+    /* A stream event may not consume the reserved slots. */
+    if (is_stream_evt(evt->id)
+        && (used >= (RC_EVENT_RING_SZ - 1U - RING_RESERVE))) {
+        return false;
+    }
+    if ((used + 1U) > ln->high_water) {
+        ln->high_water = used + 1U;
     }
     ln->ring[ln->head] = *evt;
     ln->head = next;
@@ -127,6 +159,9 @@ static rc_result_t publish_common(rc_event_t *evt)
         if ((mask & (1U << i)) != 0U) {
             if (!ring_push(&lanes[i], evt)) {
                 lanes[i].dropped++;
+#if APP_TEST
+                lanes[i].drop_by_id[evt->id]++;
+#endif
                 res = RC_ERR_NOSPACE;
             }
         }
@@ -245,6 +280,98 @@ uint32_t rc_event_dropped(rc_lane_t lane)
     return lanes[lane].dropped;
 }
 
+uint32_t rc_event_high_water(rc_lane_t lane)
+{
+    if (lane >= RC_LANE_COUNT) {
+        return 0U;
+    }
+    return lanes[lane].high_water;
+}
+
+#if APP_TEST
+static const char *evt_name(rc_evt_id_t id)
+{
+    switch (id) {
+    case RC_EVT_TICK:             return "TICK";
+    case RC_EVT_ENCODER_EDGE:     return "ENCODER_EDGE";
+    case RC_EVT_ODOMETRY:         return "ODOMETRY";
+    case RC_EVT_MOTION_DONE:      return "MOTION_DONE";
+    case RC_EVT_LINE_SAMPLE:      return "LINE_SAMPLE";
+    case RC_EVT_LINE_LOST:        return "LINE_LOST";
+    case RC_EVT_LINE_REACQUIRED:  return "LINE_REACQUIRED";
+    case RC_EVT_BARCODE_EDGE:     return "BARCODE_EDGE";
+    case RC_EVT_BARCODE_DECODED:  return "BARCODE_DECODED";
+    case RC_EVT_IMU_SAMPLE:       return "IMU_SAMPLE";
+    case RC_EVT_HUMP_BEGIN:       return "HUMP_BEGIN";
+    case RC_EVT_HUMP_END:         return "HUMP_END";
+    case RC_EVT_MOTION_CLASS:     return "MOTION_CLASS";
+    case RC_EVT_IMPACT:           return "IMPACT";
+    case RC_EVT_ULTRA_RESULT:     return "ULTRA_RESULT";
+    case RC_EVT_SCAN_COMPLETE:    return "SCAN_COMPLETE";
+    case RC_EVT_OBSTACLE_PROFILE: return "OBSTACLE_PROFILE";
+    case RC_EVT_AVOIDANCE_PLAN:   return "AVOIDANCE_PLAN";
+    case RC_EVT_COMMAND_RX:       return "COMMAND_RX";
+    case RC_EVT_LINK_STATE:       return "LINK_STATE";
+    case RC_EVT_NAV_TIMEOUT:      return "NAV_TIMEOUT";
+    case RC_EVT_RECOVERY_FAILED:  return "RECOVERY_FAILED";
+    default:                      return "?";
+    }
+}
+
+static const char *lane_name(uint32_t lane)
+{
+    return (lane == (uint32_t)RC_LANE_FAST) ? "FAST" : "SLOW";
+}
+
+void rc_event_probe_reset(void)
+{
+    uint32_t i;
+    uint32_t j;
+
+    for (i = 0U; i < (uint32_t)RC_LANE_COUNT; i++) {
+        lanes[i].dropped    = 0U;
+        lanes[i].high_water = 0U;
+        for (j = 0U; j < (uint32_t)RC_EVT_COUNT; j++) {
+            lanes[i].drop_by_id[j]  = 0U;
+            lanes[i].max_wcet_us[j] = 0U;
+            lanes[i].max_lat_us[j]  = 0U;
+        }
+    }
+}
+
+void rc_event_report(void)
+{
+    uint32_t lane;
+    uint32_t id;
+
+    tm_printf((UB *)"[RISK1] --- event bus report ---\n");
+    for (lane = 0U; lane < (uint32_t)RC_LANE_COUNT; lane++) {
+        uint32_t wcet_sum = 0U;
+
+        tm_printf((UB *)"[RISK1] lane %s: high_water=%u/%u dropped=%u\n",
+                  lane_name(lane),
+                  (unsigned)lanes[lane].high_water,
+                  (unsigned)(RC_EVENT_RING_SZ - 1U),
+                  (unsigned)lanes[lane].dropped);
+        for (id = 1U; id < (uint32_t)RC_EVT_COUNT; id++) {
+            uint32_t w = lanes[lane].max_wcet_us[id];
+            uint32_t l = lanes[lane].max_lat_us[id];
+            uint32_t d = lanes[lane].drop_by_id[id];
+
+            if ((w == 0U) && (l == 0U) && (d == 0U)) {
+                continue;
+            }
+            wcet_sum += w;
+            tm_printf((UB *)"[RISK1]   %s wcet=%u us lat=%u us drop=%u\n",
+                      evt_name((rc_evt_id_t)id),
+                      (unsigned)w, (unsigned)l, (unsigned)d);
+        }
+        tm_printf((UB *)"[RISK1] lane %s sum(max wcet)=%u us (budget: 1 period)\n",
+                  lane_name(lane), (unsigned)wcet_sum);
+    }
+}
+#endif /* APP_TEST */
+
 /* ------------------------------------------------------------------ *
  *  Dispatcher
  * ------------------------------------------------------------------ */
@@ -265,9 +392,28 @@ static void dispatch_lane(lane_t *ln)
             break;
         }
 
+#if APP_TEST
+        {
+            uint32_t lat = rc_time_since(evt.t_us);
+            if (lat > ln->max_lat_us[evt.id]) {
+                ln->max_lat_us[evt.id] = lat;
+            }
+        }
+#endif
         for (i = 0U; i < RC_EVENT_MAX_SUBS; i++) {
             if (ln->subs[i].in_use && (ln->subs[i].id == evt.id)) {
+#if APP_TEST
+                uint32_t t0 = rc_time_us();
+#endif
                 ln->subs[i].cb(&evt, ln->subs[i].ctx);
+#if APP_TEST
+                {
+                    uint32_t dt = rc_time_since(t0);
+                    if (dt > ln->max_wcet_us[evt.id]) {
+                        ln->max_wcet_us[evt.id] = dt;
+                    }
+                }
+#endif
             }
         }
     }
@@ -310,9 +456,17 @@ static rc_result_t event_init_once(void)
 
     for (i = 0U; i < (uint32_t)RC_LANE_COUNT; i++) {
         uint32_t j;
-        lanes[i].head    = 0U;
-        lanes[i].tail    = 0U;
-        lanes[i].dropped = 0U;
+        lanes[i].head       = 0U;
+        lanes[i].tail       = 0U;
+        lanes[i].dropped    = 0U;
+        lanes[i].high_water = 0U;
+#if APP_TEST
+        for (j = 0U; j < (uint32_t)RC_EVT_COUNT; j++) {
+            lanes[i].drop_by_id[j]  = 0U;
+            lanes[i].max_wcet_us[j] = 0U;
+            lanes[i].max_lat_us[j]  = 0U;
+        }
+#endif
         for (j = 0U; j < RC_EVENT_MAX_SUBS; j++) {
             lanes[i].subs[j].in_use = false;
             lanes[i].subs[j].cb     = NULL;

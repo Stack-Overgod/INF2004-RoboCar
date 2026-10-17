@@ -14,11 +14,22 @@
  * lead-in, not a centred car. */
 #define JUNCTION_THRESHOLD  (6U)
 
+/* FR9 / FR12: how long the follower searches after declaring the line
+ * LOST before it gives up, brakes and reports a failed recovery. 3 s is
+ * FR9's value (placeholder - Buddy 5 to confirm). Counted in line
+ * samples, one every RC_PERIOD_LINE_MS. Does not apply in SEARCHING: there
+ * sub_nav owns the timeout (RECOVERING, after a bypass). */
+#define LOST_SEARCH_MS      (3000U)
+#define LOST_GIVE_UP        (LOST_THRESHOLD + \
+                             (LOST_SEARCH_MS / RC_PERIOD_LINE_MS))
+
 /* `static` at file scope means "only visible inside this .c file" */
 /* current line-follow mode, see sub_line.h enum */
 static rc_line_state_t state = RC_LINE_TRACKING;
 /* is steering actually allowed right now? (see sub_line_enable) */
 static bool     enabled;
+/* true once a LOST search timed out: no output until re-enabled */
+static bool     gave_up;
 /* forward speed while tracking, in permille (parts per 1000 of full speed) */
 static int16_t  base_permille = 350;
 /* consecutive samples with neither sensor on the line */
@@ -39,6 +50,29 @@ static void steer_from_position(int16_t position)
     (void)sub_motion_drive(base_permille, steer);
 }
 
+/* Publish an event that carries no payload. */
+static void publish_id(rc_evt_id_t id)
+{
+    rc_event_t out = { 0 };
+
+    out.id = id;
+    (void)rc_event_publish(&out);
+}
+
+/* A sensor sees the line again (1/0, 0/1 or 1/1). Report §6.5: "any
+ * sensor seeing the line -> LINE_REACQUIRED", after a real loss (LOST) as
+ * well as after a deliberate search (SEARCHING), and before the junction
+ * check, because re-entering the line at an angle often reads 1/1. */
+static void line_seen(void)
+{
+    lost_count = 0U;
+
+    if ((state == RC_LINE_LOST) || (state == RC_LINE_SEARCHING)) {
+        state = RC_LINE_TRACKING;
+        publish_id(RC_EVT_LINE_REACQUIRED);
+    }
+}
+
 /* ------------------------------------------------------------------ *
  *  Sample callback. Dispatcher task context, fast lane.
  * ------------------------------------------------------------------ */
@@ -46,40 +80,30 @@ static void steer_from_position(int16_t position)
 static void on_sample(const rc_event_t *evt, void *ctx)
 {
     const rc_pl_line_t *s = &evt->u.line;
-    rc_event_t          out;
 
     (void)ctx;
 
-    if (!enabled) {
+    if (!enabled || gave_up) {
         return;
     }
 
     if (s->on_line_l && s->on_line_r) {
         /* Both sensors see black at once; we require
          * JUNCTION_THRESHOLD consecutive ones first (debouncing). */
+        line_seen();
         both_count++;
-        lost_count = 0U;
 
         if (both_count >= JUNCTION_THRESHOLD) {
             state = RC_LINE_JUNCTION;
         }
-        /* Drive straight through. A junction is where the barcode
-         * usually starts, so sub_barcode arms itself off this state. */
+        /* Drive straight through. */
         (void)sub_motion_drive(base_permille, 0);
 
     } else if (s->on_line_l || s->on_line_r) {
         /* Exactly one sensor sees black: normal tracking case. */
+        line_seen();
         both_count = 0U;
-        lost_count = 0U;
-
-        if (state != RC_LINE_TRACKING) {
-            if (state == RC_LINE_SEARCHING) {
-                /* We were deliberately off-line and just found it again */
-                out.id = RC_EVT_LINE_REACQUIRED;
-                (void)rc_event_publish(&out);
-            }
-            state = RC_LINE_TRACKING;
-        }
+        state      = RC_LINE_TRACKING;     /* also leaves JUNCTION */
         last_position = s->position;
         steer_from_position(s->position);
 
@@ -89,17 +113,24 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         lost_count++;
 
         if (state == RC_LINE_SEARCHING) {
-            /* Deliberately off-line. Keep whatever sub_scan commanded,
-             * do not steer and do not declare it lost. */
+            /* Deliberately off-line. Keep whatever sub_nav commanded,
+             * do not steer and do not declare it lost; sub_nav times
+             * this search out itself (FR9). */
             return;
         }
 
-        if (lost_count >= LOST_THRESHOLD) {
+        if (lost_count >= LOST_GIVE_UP) {
+            /* FR9 / FR12: searched for LOST_SEARCH_MS without finding
+             * the line. Brake and report it; stay silent until
+             * sub_line_enable() or sub_line_begin_search() is called. */
+            gave_up = true;
+            (void)sub_motion_stop(true);
+            publish_id(RC_EVT_RECOVERY_FAILED);
+        } else if (lost_count >= LOST_THRESHOLD) {
             /* Officially lost now. */
             if (state != RC_LINE_LOST) {
                 state = RC_LINE_LOST;
-                out.id = RC_EVT_LINE_LOST;
-                (void)rc_event_publish(&out);
+                publish_id(RC_EVT_LINE_LOST);
             }
             /* Arc toward the side the line was last seen on. */
             (void)sub_motion_drive(base_permille / 2,
@@ -123,13 +154,16 @@ rc_result_t sub_line_init(void)
     }
     state   = RC_LINE_TRACKING;
     enabled = false;
+    gave_up = false;
     return RC_OK;
 }
 
-/* Turns steering on/off. */
+/* Turns steering on/off. Also clears a timed-out search, so enabling
+ * again starts afresh. */
 rc_result_t sub_line_enable(bool on)
 {
     enabled    = on;
+    gave_up    = false;
     lost_count = 0U;
     both_count = 0U;
     return RC_OK;
@@ -140,6 +174,7 @@ rc_result_t sub_line_enable(bool on)
 rc_result_t sub_line_begin_search(void)
 {
     state      = RC_LINE_SEARCHING;
+    gave_up    = false;
     lost_count = 0U;
     return RC_OK;
 }

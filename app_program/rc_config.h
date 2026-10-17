@@ -89,9 +89,12 @@
 #define RC_PIN_I2C0_SDA         (4U)
 #define RC_PIN_I2C0_SCL         (5U)
 
-/* LSM303DLHC has two separate I2C addresses, one per die. */
-#define RC_I2C_ADDR_ACCEL       (0x19U)
-#define RC_I2C_ADDR_MAG         (0x1EU)
+/* This board carries an LSM303D (confirmed by an I2C bus scan: it ACKs at
+ * 0x1D). The LSM303D is a SINGLE die with ONE address (0x1D, SA0 high) for
+ * both the accelerometer and the magnetometer - unlike the older
+ * LSM303DLHC, which used 0x19 (accel) and 0x1E (mag). */
+#define RC_I2C_ADDR_ACCEL       (0x1DU)
+#define RC_I2C_ADDR_MAG         (0x1DU)
 
 /* ------------------------------------------------------------------ *
  *  Timing
@@ -190,6 +193,15 @@
 
 #define RC_EVENT_RING_SZ        (64U)   /* must be a power of two */
 #define RC_EVENT_MAX_SUBS       (32U)   /* total subscriptions per lane */
+
+/* Risk 1 (dispatcher WCET + ring drops) soak. When > 0 in a TEST=1 build,
+ * the test run ends with an N-second soak: it starts the control path and
+ * prints the event-bus report every 2 s while you apply worst-case load.
+ * 0 (default) disables it - a plain TEST=1 run prints one report after the
+ * subsystem tests and then sleeps. */
+#ifndef RC_RISK1_SOAK_SECS
+#define RC_RISK1_SOAK_SECS      0
+#endif
 
 /* ------------------------------------------------------------------ *
  *  Buddy 1 - communication, command and telemetry

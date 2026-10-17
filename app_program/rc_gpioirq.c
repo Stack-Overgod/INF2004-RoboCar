@@ -44,6 +44,14 @@ static pin_entry_t pins[PIN_MAX];
  * handler can skip registers nobody is using. */
 static volatile uint8_t reg_used[4];
 
+#if APP_TEST
+/* Risk 1 / NFR5: worst-case IO_BANK0 handler duration (target <= 10 us)
+ * and how many times it ran. Measured in software to 1 us resolution; for
+ * a tighter figure toggle a scope pin instead. */
+static volatile uint32_t irq_max_us;
+static volatile uint32_t irq_total;
+#endif
+
 /* ------------------------------------------------------------------ *
  *  Helpers
  * ------------------------------------------------------------------ */
@@ -140,8 +148,23 @@ static void gpio_bank0_handler(UINT intno)
         }
     }
 
+#if APP_TEST
+    {
+        uint32_t dur = rc_time_since(t_us);
+        if (dur > irq_max_us) {
+            irq_max_us = dur;
+        }
+        irq_total++;
+    }
+#endif
     EndOfInt(INTNO_IO_BANK0);
 }
+
+#if APP_TEST
+uint32_t rc_gpioirq_max_us(void)    { return irq_max_us; }
+uint32_t rc_gpioirq_irq_count(void) { return irq_total; }
+void rc_gpioirq_probe_reset(void)   { irq_max_us = 0U; irq_total = 0U; }
+#endif
 
 /* ------------------------------------------------------------------ *
  *  Public API

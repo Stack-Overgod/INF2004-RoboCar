@@ -42,6 +42,10 @@ uint16_t sub_terrain_max_peak_mm(void);
  * hump / impact - see rc_motion_class_t in rc_types.h for the full list. */
 rc_motion_class_t sub_terrain_motion_class(void);
 
+/* Worst-case execution time (WCET) observed for on_sample() on the FAST
+ * event dispatcher lane, in microseconds (must fit well within 5000 us). */
+uint32_t sub_terrain_wcet_us(void);
+
 /* Clears hump-tracking and motion-class state back to defaults, e.g. at
  * the start of a fresh run. */
 void sub_terrain_reset(void);

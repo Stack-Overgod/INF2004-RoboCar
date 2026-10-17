@@ -1,6 +1,6 @@
 # Subsystem 1 — test log
 
-**Subsystem:** WiFi communication, command and telemetry (Buddy 1)  ·  **Student ID:** <student ID>  ·  **Code:** `app_program/subsystem1/`
+**Subsystem:** WiFi communication, command and telemetry (Buddy 1)  ·  **Student ID:** 2503331  ·  **Code:** `app_program/subsystem1/`
 
 See `testing/README.md` for how to run tests and record results.
 
@@ -18,12 +18,15 @@ serial port, and look for `[TEST] subsystem1 SUMMARY`.
 The S1-I tests need the event bus running (`rc_event_init()` before
 `subsystem1_init()`). The other buddies' code does **not** need to be finished:
 where Buddy 1 depends on someone, the test publishes that buddy's event itself.
+That makes the S1-I tests the contract the other buddies link to (the table in
+`subsystem1.h`, explained in `docs/buddy1-telemetry/buddy1-telemetry.md`).
 
 ## Test cases
 
 Define a test here before running it. Test IDs never change.
 
-**Brief task** = the Buddy 1 task in the Project Write-up that the test proves.
+**Brief task** = the Buddy 1 task in the Project Write-up that the test proves;
+**FR** = the requirement in the Week 6 design review.
 
 | ID | What is tested | Brief task / interface | Method | Expected result |
 |---|---|---|---|---|
@@ -45,7 +48,14 @@ Define a test here before running it. Test IDs never change.
 | S1-U16 | Heartbeat every ~2 s with active sink, tx/fail and drop counters | Heartbeat/status | auto | `[TEST] S1-U16 PASS` |
 | S1-U17 | Every topic is under `car/01/` | Topics | auto | `[TEST] S1-U17 PASS` |
 | S1-U21 | Message timestamps `t` keep real time (within 5 %) | Telemetry publishing | auto | `[TEST] S1-U21 PASS` |
-| S1-U22 | State message carries every telemetry item in the brief (speed, encoder counts, line, state, barcode, hump, distance) | Message structures | auto | `[TEST] S1-U22 PASS` |
+| S1-U22 | State message carries every telemetry item in FR10a (speed, encoder counts, line, state, barcode, hump, scan range, distance) | Message structures / FR10a | auto | `[TEST] S1-U22 PASS` |
+| S1-U23 | Line lost / found messages: exact topic + JSON | Message structures | auto | `[TEST] S1-U23 PASS` |
+| S1-U24 | Move-done message: exact topic + JSON | Message structures | auto | `[TEST] S1-U24 PASS` |
+| S1-U25 | Avoidance-plan message: exact topic + JSON | Message structures | auto | `[TEST] S1-U25 PASS` |
+| S1-U26 | Motion-class message: exact topic + JSON | Message structures / FR14 | auto | `[TEST] S1-U26 PASS` |
+| S1-U27 | A command character is passed on and echoed on `car/01/ack`; a non-command is echoed with `cmd 0` and not passed on; a quote can't break the JSON | Command subscription | auto | `[TEST] S1-U27 PASS` |
+| S1-U28 | Heartbeat also carries WiFi/broker state, commands received, retries and the `live` flags | Heartbeat/status / FR11a | auto | `[TEST] S1-U28 PASS` |
+| S1-U29 | The link Buddy 1 announces matches what the network side reports | Link state | auto | `[TEST] S1-U29 PASS` |
 | S1-I01 | Event bus is running (a published event is delivered) | Shared layer | auto | `[TEST] S1-I01 PASS` |
 | S1-I02 | Buddy 2 odometry event -> speed + distance in state | Telemetry publishing / B2 | auto | `[TEST] S1-I02 PASS` |
 | S1-I03 | Buddy 3 line sample -> `line` field | Telemetry publishing / B3 | auto | `[TEST] S1-I03 PASS` |
@@ -58,6 +68,14 @@ Define a test here before running it. Test IDs never change.
 | S1-I10 | Worst-case inputs: state fits its buffer and one MQTT message; no distance overflow | Message structures | auto | `[TEST] S1-I10 PASS` |
 | S1-I11 | No event-bus drops on either lane | Heartbeat/status | auto | `[TEST] S1-I11 PASS` |
 | S1-I12 | A second `rc_event_init()` doesn't cut Buddy 1 off the bus | Shared layer | auto | `[TEST] S1-I12 PASS` |
+| S1-I13 | Buddy 2 move done -> `car/01/move` | Telemetry publishing / B2 | auto | `[TEST] S1-I13 PASS` |
+| S1-I14 | Buddy 3 line lost, then found -> two `car/01/line` messages | Telemetry publishing / B3 | auto | `[TEST] S1-I14 PASS` |
+| S1-I15 | Buddy 5 avoidance plan -> `car/01/avoid` | Telemetry publishing / B5 | auto | `[TEST] S1-I15 PASS` |
+| S1-I16 | Buddy 5 range at 90° -> `rng` in state; a side reading doesn't change it; an echo timeout reads 0 | Telemetry publishing / B5 / FR10a | auto | `[TEST] S1-I16 PASS` |
+| S1-I17 | Buddy 4 motion-class change -> exactly one `car/01/motion`; the same class again sends nothing | Telemetry publishing / B4 / FR14 | auto | `[TEST] S1-I17 PASS` |
+| S1-I18 | Buddies 2-5 streaming -> `"live":"1111"` in the next heartbeat | Heartbeat/status / FR15 | auto | `[TEST] S1-I18 PASS` |
+| S1-I19 | A link change -> one `RC_EVT_LINK_STATE` with the new state; no repeat while nothing changes | Link state (design §6.5) | auto | `[TEST] S1-I19 PASS` |
+| S1-I20 | A command reaches the bus even when a callback is registered, and the callback gets it too | Command subscription / FR10b | auto | `[TEST] S1-I20 PASS` |
 | S1-U18 | Dead link: stop sending, fail fast, keep retrying | Connection recovery | auto | `[TEST] S1-U18 PASS` |
 | S1-U19 | Link back: telemetry resumes on its own | Connection recovery | auto | `[TEST] S1-U19 PASS` |
 | S1-U20 | `set_sink(NULL)` falls back to the console | Connection recovery | auto | `[TEST] S1-U20 PASS` |
@@ -70,8 +88,10 @@ Define a test here before running it. Test IDs never change.
 | S1-W07 | Inbound `R` from the kernel buffer -> turn right | Command subscription | auto (MQTT=1) | `[TEST] S1-W07 PASS` |
 | S1-W08 | Inbound garbage is ignored | Command subscription | auto (MQTT=1) | `[TEST] S1-W08 PASS` |
 | S1-W09 | Command round trip car -> WiFi -> broker -> WiFi -> car | MQTT + command subscription | auto (MQTT=1) | `[TEST] S1-W09 PASS` |
+| S1-W10 | With WiFi and the broker up, Buddy 1 has announced the link as up on both counts | Link state / WiFi connectivity | auto (MQTT=1) | `[TEST] S1-W10 PASS` |
 | S1-M01 | Telemetry demonstration: a PC subscribed to `car/01/#` receives `state` every ~250 ms and `status` every ~2 s | Telemetry demonstration | manual (PC MQTT client) | state + status arrive continuously |
 | S1-M02 | Dashboard commands: a PC publishes `L`/`X`/`B` to `car/01/cmd` | Command subscription | manual (PC MQTT client) | console shows `COMMAND_RX cmd=1/5/2` |
+| S1-M03 | Dashboard sees each command acknowledged: a PC publishes `L`, `X`, `Q` to `car/01/cmd` | Command subscription / FR10b | manual (PC MQTT client) | `car/01/ack` gets `{"rx":"L","cmd":1}`, `{"rx":"X","cmd":5}`, `{"rx":"Q","cmd":0}`; `status` `cmds` goes up by 3 |
 
 *Method:* **auto** = `TEST_CHECK` in `subsystem1_test.c`, result printed on the console;
 **manual** = observed from outside (here a PC MQTT client on `broker.hivemq.com`).
@@ -92,6 +112,9 @@ uncommitted changes listed under the table.
 | 2026-10-11 | S1-M01 | `a7bbe74`+local | Rexzer | PASS | `logs/2026-10-11_S1_mqtt_test_cold-boot.txt` (MQTT lines) | 408 `car/01/state` + `status` every ~2 s at the broker; car clock 106,340 ms over 106.1 s real |
 | 2026-10-11 | S1-M02 | `a7bbe74`+local | Rexzer | PASS | `logs/2026-10-11_S1_mqtt_test_cold-boot.txt` | `L`→`COMMAND_RX cmd=1`, `X`→`cmd=5`, `B`→`cmd=2` |
 | 2026-10-11 | S1-U01–U22, S1-I01–I12, S1-W01–W09 | `buddy1-fixes-with-other-buddies` (on `8954a06`) | Rexzer | **43/43 PASS** | `logs/2026-10-11_S1_pr-branch_buddy1-integration.txt` | PR branch: the changes below are now in the branch itself (no local test harness). Built in WSL with `make NET=lwip MQTT=1 TEST=1 -j8`. Other subsystems in the same run: S2 1/1, S3 1/1, S4 1/1, S5 10/10 |
+| 2026-10-11 | S1-U01–U29, S1-I01–I20, S1-W01–W10 | `buddy1-full-example` (`7715147`) | Rexzer | **59/59 PASS** | `logs/2026-10-11_S1_full-example_59of59.txt` | Built in WSL with `make NET=lwip MQTT=1 TEST=1 -j8`, 0 warnings. Worst-case state 207 / 223, status 126 bytes. Same run: S2 1/1, S3 1/1, S4 1/1, S5 10/10. Buddy 5's own scan (its test) reached the broker through Buddy 1 as `car/01/obstacle` + `car/01/avoid` |
+| 2026-10-11 | S1-M01 | `buddy1-full-example` (`7715147`) | Rexzer | PASS | `logs/2026-10-11_S1_full-example_59of59.txt` (MQTT lines) | 574 `car/01/state` + 72 `car/01/status` at the broker; `seq` 81→632 with no gaps (79–80 went to S1-I12's capture sink, as that test does). One state every 260 ms: the kernel tick is 10 ms (`CNF_TIMER_PERIOD`), so `tk_dly_tsk(250)` lasts 260 — within FR10a's ±10 % |
+| 2026-10-11 | S1-M03 | `buddy1-full-example` (`7715147`) | Rexzer | PASS | `logs/2026-10-11_S1_full-example_59of59.txt` | PC sent `L`, `X`, `Q` → `car/01/ack` `{"rx":"L","cmd":1}`, `{"rx":"X","cmd":5}`, `{"rx":"Q","cmd":0}`; `cmds` 5 → 8 |
 
 **Local changes these runs depend on** (not on main yet — need the owners / team):
 

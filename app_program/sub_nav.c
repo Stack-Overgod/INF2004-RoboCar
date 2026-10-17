@@ -498,6 +498,25 @@ static void on_command_rx(const rc_event_t *evt, void *ctx)
     execute(cmd, "remote");
 }
 
+/* FR9 / FR12: sub_line gave up after a sustained line loss during normal
+ * following (its own 3 s search timeout + brake, Buddy 3's sub_line) and
+ * published RECOVERY_FAILED. Bring nav to STOPPED so the mission state
+ * matches the stopped car, with line following, the barcode decoder and
+ * the forward watch all turned off (enter(STOPPED) does that). We also
+ * publish RECOVERY_FAILED ourselves from the bypass-recovery timeout
+ * below; receiving our own event while already STOPPED is a harmless
+ * no-op, which is why this guards on the current state. */
+static void on_recovery_failed(const rc_event_t *evt, void *ctx)
+{
+    (void)evt;
+    (void)ctx;
+
+    if ((state != RC_NAV_IDLE) && (state != RC_NAV_STOPPED)) {
+        tm_printf((UB *)"[nav] recovery failed -> STOPPED\n");
+        enter(RC_NAV_STOPPED);
+    }
+}
+
 /* Our own state timer fired (tmo_handler). */
 static void on_timeout(const rc_event_t *evt, void *ctx)
 {
@@ -562,7 +581,9 @@ rc_result_t sub_nav_init(void)
         || (rc_event_subscribe(RC_EVT_COMMAND_RX, RC_LANE_FAST,
                                on_command_rx, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_NAV_TIMEOUT, RC_LANE_FAST,
-                               on_timeout, NULL) < 0)) {
+                               on_timeout, NULL) < 0)
+        || (rc_event_subscribe(RC_EVT_RECOVERY_FAILED, RC_LANE_FAST,
+                               on_recovery_failed, NULL) < 0)) {
         return RC_ERR_NOSPACE;
     }
 
