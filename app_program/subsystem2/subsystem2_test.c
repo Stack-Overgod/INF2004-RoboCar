@@ -46,7 +46,9 @@
 
 /* 1 = build a turn-calibration image instead: subsystem2_test() only does
  * the floor turns in s2_turn_cal() and never returns (later tests do not
- * run).  Keep 0 in the repo. */
+ * run).  2 = same, but s2_drive_cal(): straight open-loop drive on the
+ * floor, to see whether the wheel speed holds under load.  Keep 0 in the
+ * repo. */
 #ifndef S2_TURN_CAL
 #define S2_TURN_CAL		0
 #endif
@@ -236,6 +238,27 @@ static void s2_turn_cal(void)
 	}
 	tm_printf((UB*)"[CAL] finished\n");
 }
+
+/* CAR ON THE FLOOR, clear path ~2 m.  After the countdown: straight at
+ * 350 permille for 4 s, then 600 for 2 s, then brake.  Telemetry shows
+ * whether spd_l / spd_r hold while m_l / m_r stay constant. */
+static void s2_drive_cal(void)
+{
+	INT	i;
+
+	for (i = S2_TURN_CAL_WAIT_S; i > 0; i--) {
+		tm_printf((UB*)"[CAL] drive starts in %d s\n", (INT)i);
+		(void)tk_dly_tsk(1000);
+	}
+	tm_printf((UB*)"[CAL] drive 350\n");
+	(void)sub_motion_drive(350, 0);
+	(void)tk_dly_tsk(4000);
+	tm_printf((UB*)"[CAL] drive 600\n");
+	(void)sub_motion_drive(600, 0);
+	(void)tk_dly_tsk(2000);
+	s2_stop_settle();
+	tm_printf((UB*)"[CAL] finished\n");
+}
 #endif /* S2_TURN_CAL */
 
 #endif /* S2_TEST_MOTORS */
@@ -252,7 +275,11 @@ EXPORT void subsystem2_test(void)
 	(void)test_fail_;
 	(void)h_odo;
 	(void)odo;
-	s2_turn_cal();
+	if (S2_TURN_CAL == 2) {
+		s2_drive_cal();
+	} else {
+		s2_turn_cal();
+	}
 	for (;;) {
 		(void)tk_dly_tsk(1000);
 	}
