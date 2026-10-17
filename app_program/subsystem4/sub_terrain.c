@@ -27,6 +27,7 @@
 #define PITCH_ENTER_DDEG        (40)     /* 4.0 deg nose-up to enter hump   */
 #define PITCH_EXIT_DDEG         (20)     /* 2.0 deg deadband to exit hump   */
 #define HUMP_MIN_MS             (150U)   /* Discard noise spikes < 150 ms   */
+#define HUMP_FLAT_ABORT_MS      (300U)   /* Cancel climb if flat > 300 ms   */
 #define HUMP_MAX_MS             (5000U)  /* Abort if climb takes > 5 s      */
 #define MIN_HUMP_TRAVEL_MM      (30U)    /* Reject if car rolled < 30 mm    */
 
@@ -52,6 +53,7 @@ static int16_t               hump_peak_pitch;
 static uint32_t              dist_at_hump_start;
 static uint16_t              max_peak_height_mm;
 static rc_motion_class_t     current_motion_class;
+static uint32_t              max_wcet_us;
 static bool                  is_subscribed = false;
 
 static sub_terrain_hump_cb_t hump_cb;
@@ -77,7 +79,9 @@ static uint32_t get_distance_mm(void)
  * Converts peak pitch in deci-degrees (0.1 deg) into vertical rise in mm
  * using the car's front-to-rear axle distance (RC_AXLE_DIST_MM, FR5).
  *
- * Formula: rise = wheelbase * sin(pitch)
+ * Assumed Hump Geometry (FR5):
+ * Symmetric non-plateaued ramp profile where ramp length L_ramp ≈ L.
+ * Formula: rise = L * sin(pitch)
  * Small-angle approximation: sin(theta) ≈ theta (in radians).
  * Conversion factor: 1 ddeg = pi / 1800 rad ≈ 1745 / 1,000,000 rad.
  */
@@ -157,10 +161,11 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         return;
     }
 
-    int16_t  ax = evt->u.imu.acc_x;
-    int16_t  ay = evt->u.imu.acc_y;
+    uint32_t t0_us  = (uint32_t)rc_time_us();
+    int16_t  ax     = evt->u.imu.acc_x;
+    int16_t  ay     = evt->u.imu.acc_y;
     /* Compute pitch in deci-degrees directly from sample acc_x */
-    int16_t  pitch = (int16_t)(((int32_t)ax * 573) / 1000);
+    int16_t  pitch  = (int16_t)(((int32_t)ax * 573) / 1000);
     uint32_t now_ms = rc_time_ms();
 
     /* --- Hump State Machine --- */
@@ -191,6 +196,11 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         } else if ((now_ms - hump_start_ms) > HUMP_MAX_MS) {
             /* Timed out: slope is too long to be a speed hump, reset */
             hump_state = H_FLAT;
+        } else if ((pitch < PITCH_EXIT_DDEG) &&
+                   ((now_ms - hump_start_ms) > HUMP_FLAT_ABORT_MS)) {
+            /* Pitch settled back to flat without dipping nose-down:
+             * rejects flat-ground linear acceleration surges (Risk G6). */
+            hump_state = H_FLAT;
         } else {
             /* Continue tracking climb */
         }
@@ -211,16 +221,17 @@ static void on_sample(const rc_event_t *evt, void *ctx)
                 /*
                  * ENCODER CROSS-CHECK:
                  * Discard false positives if wheels didn't roll forward.
-                 * Also allows desk simulation if encoders are inactive (0).
+                 * Stationary bench tests have 0 wheel speed and 0 travel.
                  */
-                bool encoders_active = (drv_encoder_speed_mm_s(RC_SIDE_LEFT) != 0) ||
-                       (drv_encoder_speed_mm_s(RC_SIDE_RIGHT) != 0) ||
-                       (dist_travelled > 0U);
+                bool encoders_active =
+                    (drv_encoder_speed_mm_s(RC_SIDE_LEFT) != 0) ||
+                    (drv_encoder_speed_mm_s(RC_SIDE_RIGHT) != 0) ||
+                    (dist_travelled > 0U);
 
                 if (!encoders_active ||
                     (dist_travelled >= MIN_HUMP_TRAVEL_MM)) {
 
-                    /* Primary estimate: Chassis Wheelbase Geometry */
+                    /* Primary estimate: Chassis Axle Distance Geometry */
                     uint32_t h_geom = pitch_to_height_mm(hump_peak_pitch);
                     uint16_t final_height = (uint16_t)h_geom;
 
@@ -280,6 +291,11 @@ static void on_sample(const rc_event_t *evt, void *ctx)
             (void)rc_event_publish(&impact_evt);
         }
     }
+
+    uint32_t elapsed_us = (uint32_t)rc_time_us() - t0_us;
+    if (elapsed_us > max_wcet_us) {
+        max_wcet_us = elapsed_us;
+    }
 }
 
 /* ------------------------------------------------------------------ *
@@ -289,6 +305,7 @@ static void on_sample(const rc_event_t *evt, void *ctx)
 rc_result_t sub_terrain_init(void)
 {
     sub_terrain_reset();
+    max_wcet_us = 0U;
     hump_cb = NULL;
     hump_cb_ctx = NULL;
 
@@ -331,4 +348,9 @@ uint16_t sub_terrain_max_peak_mm(void)
 rc_motion_class_t sub_terrain_motion_class(void)
 {
     return current_motion_class;
+}
+
+uint32_t sub_terrain_wcet_us(void)
+{
+    return max_wcet_us;
 }
