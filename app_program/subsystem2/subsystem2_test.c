@@ -64,6 +64,10 @@
 /* #TODO: set to about half of the tick counts S2-U09 prints. */
 #define S2_MIN_SPIN_TICKS	(20U)
 
+/* S2-U11: longest extra wait, after s2_stop_settle, for both wheels to
+ * read speed 0.  A wheel still turning after this is a real fault. */
+#define S2_STOP_TMO_MS		(1500)
+
 /* S2-U13..U15: straight moves of S2_MOVE_MM.  The distance the car
  * reports must be within S2_DIST_TOL_PCT of the goal (NFR12: 5%). */
 #define S2_MOVE_MM		(300U)
@@ -172,6 +176,23 @@ static bool s2_near(uint32_t value, uint32_t expected, uint32_t tol)
 }
 #endif /* S2_CALIBRATED */
 
+/* Poll in 10 ms steps until both wheels read speed 0, or ms runs out.
+ * A free wheel on a box can coast or rock for a while after the brake,
+ * so a fixed wait is not proof that it has stopped.  *waited gets the
+ * time it took. */
+static bool s2_wait_stopped(INT ms, INT *waited)
+{
+	*waited = 0;
+	while (((drv_encoder_speed_mm_s(RC_SIDE_LEFT) != 0)
+		|| (drv_encoder_speed_mm_s(RC_SIDE_RIGHT) != 0))
+	       && (*waited < ms)) {
+		(void)tk_dly_tsk(10);
+		*waited += 10;
+	}
+	return (drv_encoder_speed_mm_s(RC_SIDE_LEFT) == 0)
+	       && (drv_encoder_speed_mm_s(RC_SIDE_RIGHT) == 0);
+}
+
 /* Stop everything and let the wheels spin down before the next test. */
 static void s2_stop_settle(void)
 {
@@ -255,6 +276,8 @@ EXPORT void subsystem2_test(void)
 		uint32_t	arc_right;
 		uint32_t	arc_left;
 		bool		b_busy;
+		bool		b_stopped;
+		INT		waited;
 		rc_result_t	r1;
 		rc_result_t	r2;
 
@@ -312,11 +335,19 @@ EXPORT void subsystem2_test(void)
 			   (spd_l > 0) && (spd_r > 0),
 			   "both wheels read a positive speed going forward");
 
-		/* S2-U11: once the wheels have stopped (s2_stop_settle waits
-		   longer than the 100 ms stall timeout), speed reads 0. */
-		TEST_CHECK("S2-U11",
-			   (drv_encoder_speed_mm_s(RC_SIDE_LEFT) == 0)
-			   && (drv_encoder_speed_mm_s(RC_SIDE_RIGHT) == 0),
+		/* S2-U11: once the wheels have stopped, speed reads 0 (no
+		   tick for longer than the 100 ms stall timeout).  The
+		   wheels are given up to S2_STOP_TMO_MS after
+		   s2_stop_settle to come to rest. */
+		spd_l = drv_encoder_speed_mm_s(RC_SIDE_LEFT);
+		spd_r = drv_encoder_speed_mm_s(RC_SIDE_RIGHT);
+		b_stopped = s2_wait_stopped(S2_STOP_TMO_MS, &waited);
+		tm_printf((UB*)"[TEST] S2-U11 info  after settle: speed L %d, "
+			  "R %d mm/s; read 0 after %d more ms; now L %d, R %d\n",
+			  (INT)spd_l, (INT)spd_r, waited,
+			  (INT)drv_encoder_speed_mm_s(RC_SIDE_LEFT),
+			  (INT)drv_encoder_speed_mm_s(RC_SIDE_RIGHT));
+		TEST_CHECK("S2-U11", b_stopped,
 			   "speed reads 0 once the wheels have stopped");
 
 		/* S2-U12: drv_encoder_reset zeroes both distances. */

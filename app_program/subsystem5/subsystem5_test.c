@@ -25,6 +25,7 @@
 #include "../rc_config.h"
 #include "../rc_event.h"
 #include "../rc_gpioirq.h"
+#include "../rc_sense.h"
 #include "drv_servo.h"
 #include "drv_ultrasonic.h"
 #include "sub_scan.h"
@@ -62,6 +63,10 @@
  * result copied in a callback is complete before its "done" flag is
  * seen, and is re-read after it. */
 #define S5_BARRIER()	__asm volatile ("" ::: "memory")
+
+/* After rc_sense_test_hold(true): lets line samples already published
+ * reach sub_line on both dispatchers before the test forces a state. */
+#define S5_HOLD_SETTLE_MS	(100)
 
 /* Written by the callbacks (dispatcher / scan task), read by the test. */
 static volatile uint32_t ultra_count;
@@ -448,15 +453,23 @@ EXPORT void subsystem5_test(void)
 		   "READING_BARCODE with no data -> FOLLOWING within 2.6 s");
 	nav_reset();
 
+	/* S5-N11 / S5-N12 drive the line state by hand, so the real line
+	 * samples are held: otherwise whatever is under the sensors (a stand
+	 * reads "11", on the line) makes sub_line report the line found and
+	 * cancels RECOVERING before the 3 s are up.  Released after N12. */
+	rc_sense_test_hold(true);
+	(void)tk_dly_tsk(S5_HOLD_SETTLE_MS);
+
 	/* S5-N11: FR9 - RECOVERING with no line found gives up after 3 s:
-	 * STOPPED plus one RC_EVT_RECOVERY_FAILED.  Needs both line sensors
-	 * OFF the line (lift the car or hold it over white). */
+	 * STOPPED plus one RC_EVT_RECOVERY_FAILED. */
 	before = recov_failed;
 	r1 = sub_nav_test_force(RC_NAV_RECOVERING);
 	got = (r1 == RC_OK) && wait_nav(RC_NAV_STOPPED, true, 3500);
 	S5_BARRIER();
 	TEST_CHECK("S5-N11", got && (recov_failed == before + 1U),
 		   "RECOVERING, line not found -> STOPPED + RECOVERY_FAILED in 3 s");
+	/* No nav_reset() here: N11 already ends STOPPED, and the STOP that
+	 * sub_nav_stop() queues would land after N12 forces RECOVERING. */
 
 	/* S5-N12: finding the line cancels the FR9 timer: FOLLOWING, and
 	 * still FOLLOWING (no RECOVERY_FAILED) after the 3 s have passed. */
@@ -476,6 +489,7 @@ EXPORT void subsystem5_test(void)
 		   && (recov_failed == before),
 		   "LINE_REACQUIRED in RECOVERING -> FOLLOWING, timer cancelled");
 	nav_reset();
+	rc_sense_test_hold(false);	/* real line samples flow again */
 
 	/* S5-N13: a remote turn is executed while following (FR10b), and
 	 * ignored once STOPPED: only STOP is honoured from every state. */

@@ -5,7 +5,7 @@
  *  polls every sensor that has to be polled, so there is one stack and
  *  one wake-up per period instead of one per sensor:
  *
- *    every RC_PERIOD_LINE_MS (5 ms)  drv_ir_sample_line()  S3, IR line pair
+ *    every RC_PERIOD_LINE_MS (10 ms) drv_ir_sample_line()  S3, IR line pair
  *    every RC_PERIOD_IMU_MS  (10 ms) drv_imu_sample()      S4, IMU over I2C
  *
  *  Each driver publishes its own event (RC_EVT_LINE_SAMPLE,
@@ -37,6 +37,15 @@ uint32_t rc_sense_overruns(void);
  * the encoder, echo and barcode ISRs and their bottom halves keep running.
  * Always release it (false) at the end of the test. */
 void rc_sense_test_hold(bool hold);
+
+/* TEST BUILD ONLY: Sense task loop passes since boot, held or not. With
+ * rc_sense_overruns() this tells a slow Sense task (few passes, overruns)
+ * apart from samples lost after publishing (passes on time, few seen). */
+uint32_t rc_sense_ticks(void);
+
+/* TEST BUILD ONLY: longest single line sample and IMU sample since boot,
+ * in microseconds. Either near RC_PERIOD_LINE_MS x 1000 explains overruns. */
+void rc_sense_max_us(uint32_t *line_us, uint32_t *imu_us);
 #endif
 
 #endif /* RC_SENSE_H */

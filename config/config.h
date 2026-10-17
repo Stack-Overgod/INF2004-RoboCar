@@ -91,12 +91,15 @@
  * exception frame plus the assignment's arrays and call chain does not fit in
  * 256 bytes with any margin. knl_tmp_stack_used() reports the true high-water
  * mark so this number can be set from measurement rather than from hope.
+ *
+ * The single-core profile needs the same size. On ARMv6-M every interrupt
+ * taken while the core is idle stacks onto knl_idle_stack, and the RoboCar
+ * application raises several back to back (encoders, SysTick, PendSV, USB).
+ * Measured high-water on the car was 288 bytes; at 256 the overflow ran into
+ * knl_idletsk, which sits directly below the stack, and the dispatcher
+ * HardFaulted (car froze mid test run, 4 of 4 runs). 1024 leaves margin.
  */
-#if CNF_SMP
 #define	CNF_TMP_STACK_SIZE	(1024)	/* Temporary stack size */
-#else
-#define	CNF_TMP_STACK_SIZE	(256)	/* Temporary stack size */
-#endif
 
 
 /*---------------------------------------------------------------------- */

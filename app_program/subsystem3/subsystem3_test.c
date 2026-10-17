@@ -40,7 +40,9 @@
 #include "../rc_prelude.h"
 #include <tm/tmonitor.h>
 #include "subsystem3.h"
+#include "../rc_config.h"
 #include "../rc_event.h"
+#include "../rc_sense.h"
 #include "../rc_time.h"
 #include "../test_report.h"
 #include "drv_ir.h"
@@ -184,8 +186,11 @@ static uint32_t const first_wait_us      = 90000000U; /* time to get ready */
 static uint32_t const step_wait_us       = 30000000U; /* later steps */
 static uint32_t const step_run_us        = 30000000U; /* after first move */
 static uint32_t const remind_period_us   = 5000000U;
-static uint32_t const rate_min           = 150U; /* samples per second */
-static uint32_t const rate_max           = 205U;
+/* S3-U05: one line sample per RC_PERIOD_LINE_MS (NFR1: 10 ms, 100 per
+ * second). The window allows -10% for a slow start and +5 for edges. */
+static uint32_t const rate_min           =
+	((1000U / RC_PERIOD_LINE_MS) * 9U) / 10U;
+static uint32_t const rate_max           = (1000U / RC_PERIOD_LINE_MS) + 5U;
 static uint32_t const live_wait_us       = 60000000U; /* first bar */
 static uint32_t const live_wait_alone_us = 20000000U; /* nobody seen */
 static uint32_t const live_idle_us       = 20000000U; /* after a sweep */
@@ -421,7 +426,7 @@ EXPORT void subsystem3_test (void)
 	TEST_CHECK("S3-U04", sensor_passed(&sensor_rep, CH_BARCODE),
 			   "barcode sensor DO (GP27): off on white, 3 crossings");
 	TEST_CHECK("S3-U05", rate_ok(sensor_rep.rate),
-			   "sense thread publishes line samples at ~200 Hz");
+			   "sense thread publishes line samples at ~100 Hz (NFR1)");
 
 	run_barcode_test(sensor_rep.b_user_seen, &barcode_rep);
 	TEST_CHECK("S3-U06", barcode_rep.b_forwards_ok,
@@ -501,11 +506,29 @@ static uint32_t measure_sample_rate (void)
 	}
 	else
 	{
+		/* Where a short count comes from: few Sense passes (or
+		   overruns) = the Sense task runs late; passes on time but
+		   SLOW-lane drops = samples lost on the event bus. */
+		uint32_t ticks0 = rc_sense_ticks();
+		uint32_t over0  = rc_sense_overruns();
+		uint32_t drop0  = rc_event_dropped(RC_LANE_SLOW);
+
 		sample_count = 0U;
 		b_counting   = true;
 		tk_dly_tsk(RATE_WINDOW_MS);
 		b_counting = false;
 		samples    = sample_count;
+		uint32_t line_us;
+		uint32_t imu_us;
+
+		rc_sense_max_us(&line_us, &imu_us);
+		tm_printf((UB *)"[S3] in that window: %lu Sense passes, "
+				  "%lu overruns, %lu SLOW-lane drops\n",
+				  rc_sense_ticks() - ticks0,
+				  rc_sense_overruns() - over0,
+				  rc_event_dropped(RC_LANE_SLOW) - drop0);
+		tm_printf((UB *)"[S3] longest Sense step so far: line %lu us, "
+				  "IMU %lu us\n", line_us, imu_us);
 	}
 
 	return samples;
@@ -874,7 +897,7 @@ static UB const * state_name (bool b_on)
 }
 
 /*!
- * @brief  Whether the measured sample rate is about 200 Hz (S3-U05).
+ * @brief  Whether the measured sample rate is about 100 Hz (S3-U05).
  * @param  rate  samples counted in RATE_WINDOW_MS
  * @return true if it is between rate_min and rate_max.
  */

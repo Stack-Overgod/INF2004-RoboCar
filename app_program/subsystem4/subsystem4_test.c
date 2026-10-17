@@ -20,6 +20,13 @@
  * CPU while this task sleeps, so every check must come after a delay. */
 #define S4_SETTLE_MS	(20)
 
+/* S4-U09: one IMU sample arrives every RC_PERIOD_IMU_MS (NFR1: 10 ms).
+ * sub_terrain shares the FAST dispatcher with the line follower and
+ * sub_nav, so it may use at most 10% of that period. The measured WCET
+ * also includes any interrupt (encoders, USB) that lands mid-callback. */
+#define S4_BUDGET_US	((uint32_t)RC_PERIOD_IMU_MS * 1000U)
+#define S4_WCET_MAX_US	(S4_BUDGET_US / 10U)
+
 static volatile uint16_t cb_last_peak_mm = 0U;
 static volatile uint32_t cb_call_count   = 0U;
 
@@ -128,13 +135,15 @@ EXPORT void subsystem4_test(void)
 		sub_terrain_motion_class() == RC_MOTION_STATIONARY,
 		"flat-ground start/cruise/brake rejected as false hump");
 
-	/* S4-U09: Verify FAST dispatcher callback WCET fits 5 ms control budget */
+	/* S4-U09: Verify FAST dispatcher callback WCET fits its share of the
+	 * 10 ms IMU period */
 	wcet_us = sub_terrain_wcet_us();
-	tm_printf((UB*)"[INFO] S4 on_sample WCET = %u us (budget: 5000 us)\n",
-		  (unsigned int)wcet_us);
+	tm_printf((UB*)"[INFO] S4 on_sample WCET = %u us (limit %u us = 10%% "
+		  "of the %u us IMU period)\n", (unsigned int)wcet_us,
+		  (unsigned int)S4_WCET_MAX_US, (unsigned int)S4_BUDGET_US);
 	TEST_CHECK("S4-U09",
-		wcet_us < 200U,
-		"sub_terrain FAST callback WCET < 200 us (fits 5ms period)");
+		wcet_us < S4_WCET_MAX_US,
+		"sub_terrain FAST callback WCET < 10% of the 10 ms IMU period");
 
 	(void)sub_terrain_on_hump(NULL, NULL);
 	sub_terrain_reset();

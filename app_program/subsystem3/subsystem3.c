@@ -6,7 +6,7 @@
  *                    barcode decoder: their event-bus subscriptions and the
  *                    barcode edge interrupt (left masked). No thread yet.
  * subsystem3_start() nothing to start: the line pair is sampled every
- *                    RC_PERIOD_LINE_MS (5 ms, 200 Hz) by the shared Sense
+ *                    RC_PERIOD_LINE_MS (10 ms, 100 Hz) by the shared Sense
  *                    task in ../rc_sense.c, which app_main.c starts after
  *                    every subsystem (report §3, single Sense task).
  *
@@ -86,7 +86,7 @@ EXPORT ER subsystem3_init (void)
 
 /*!
  * @brief  Start subsystem 3. S3 has no thread of its own: the shared Sense
- *         task (../rc_sense.c) calls drv_ir_sample_line() every 5 ms.
+ *         task (../rc_sense.c) calls drv_ir_sample_line() every 10 ms.
  *
  * @return E_OK on success, E_OBJ if subsystem3_init() failed.
  */
