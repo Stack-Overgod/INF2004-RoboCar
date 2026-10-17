@@ -30,5 +30,7 @@ config/wifi_secrets.h
 ~$*
 .kiro/
 
+# Local agent guide (not shared)
+CLAUDE.md
 # Local test images, serial-capture scripts and logs (not shared)
 /test/
