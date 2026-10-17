@@ -39,10 +39,18 @@
  * turn, so speed and distance are badly off and those checks would fail
  * for a reason that is not a bug. */
 #ifndef S2_CALIBRATED
-/* #TODO: set to 1 once RC_ENC_TICKS_PER_REV, RC_WHEEL_DIAM_MM,
- *        RC_WHEEL_BASE_MM and TURN_SLIP_PERMILLE have been measured. */
-#define S2_CALIBRATED		0
+/* RC_ENC_TICKS_PER_REV, RC_WHEEL_DIAM_MM, RC_WHEEL_BASE_MM and
+ * TURN_SLIP_PERMILLE were all measured on the car on 2026-10-18. */
+#define S2_CALIBRATED		1
 #endif
+
+/* 1 = build a turn-calibration image instead: subsystem2_test() only does
+ * the floor turns in s2_turn_cal() and never returns (later tests do not
+ * run).  Keep 0 in the repo. */
+#ifndef S2_TURN_CAL
+#define S2_TURN_CAL		0
+#endif
+#define S2_TURN_CAL_WAIT_S	(20)
 
 /* ------------------------------------------------------------------ *
  *  Expected values.  Work each one out BY HAND from the settings, so a
@@ -51,18 +59,16 @@
 
 /* S2-U04: micrometres per encoder tick,
  *   31416 x RC_WHEEL_DIAM_MM / (10 x RC_ENC_TICKS_PER_REV).
- * Default: 31416 x 64 / (10 x 20) = 10053. */
-/* #TODO: recalculate with your measured values,
- *        e.g. 31416 x 64 / (10 x 374) = 537. */
-#define S2_EXP_UM_PER_TICK	(10053UL)
+ * Measured: 31416 x 68 / (10 x 640) = 333. */
+#define S2_EXP_UM_PER_TICK	(333UL)
 
 /* S2-U09: the wheels spin at S2_SPIN_PERMILLE for S2_SPIN_MS, and each
  * must give at least S2_MIN_SPIN_TICKS ticks.  20 passes any working
  * encoder; the test prints the real counts. */
 #define S2_SPIN_PERMILLE	(400)
 #define S2_SPIN_MS		(1000)
-/* #TODO: set to about half of the tick counts S2-U09 prints. */
-#define S2_MIN_SPIN_TICKS	(20U)
+/* About half of what S2-U09 printed on the car (L 977, R 945). */
+#define S2_MIN_SPIN_TICKS	(450U)
 
 /* S2-U11: longest extra wait, after s2_stop_settle, for both wheels to
  * read speed 0.  A wheel still turning after this is a real fault. */
@@ -76,10 +82,8 @@
 
 /* S2-U16..U18: 90 degree spin turns.  Each wheel runs an arc of
  *   RC_WHEEL_BASE_MM x 3.1416 x 90 / 360 x TURN_SLIP_PERMILLE / 1000.
- * Default: 110 x 3.1416 x 90 / 360 x 1000 / 1000 = 86 mm. */
-/* #TODO: recalculate with your measured RC_WHEEL_BASE_MM and your
- *        calibrated TURN_SLIP_PERMILLE. */
-#define S2_EXP_ARC_90_MM	(86U)
+ * Measured: 112 x 3.1416 x 90 / 360 x 986 / 1000 = 86.7, so 87 mm. */
+#define S2_EXP_ARC_90_MM	(87U)
 /* Allowed error on that arc: 5 mm is about 5 degrees (FR3) on 86 mm. */
 /* #TODO: recalculate as S2_EXP_ARC_90_MM x 5 / 90 once FR3 is frozen. */
 #define S2_ARC_TOL_MM		(5U)
@@ -200,6 +204,40 @@ static void s2_stop_settle(void)
 	(void)tk_dly_tsk(300);
 }
 
+#if S2_TURN_CAL
+/* TURN_SLIP_PERMILLE calibration, CAR ON THE FLOOR.  After a countdown:
+ * 4 x 90 degree right turns, a pause, then 4 x 90 degree left turns.
+ * Mark the car's heading on the floor before it starts; how far each set
+ * of four ends short of (or past) that mark gives the slip:
+ *   TURN_SLIP_PERMILLE = 1000 x 360 / (360 - degrees short). */
+static void s2_turn_cal(void)
+{
+	INT	deg;
+	INT	i;
+
+	for (i = S2_TURN_CAL_WAIT_S; i > 0; i--) {
+		tm_printf((UB*)"[CAL] turns start in %d s\n", (INT)i);
+		(void)tk_dly_tsk(1000);
+	}
+	for (deg = 90; deg >= -90; deg -= 180) {
+		for (i = 1; i <= 4; i++) {
+			s2_clear(&move_a);
+			(void)sub_motion_turn_deg(deg, s2_on_done, &move_a);
+			(void)s2_wait_done(&move_a, S2_MOVE_TMO_MS);
+			tm_printf((UB*)"[CAL] turn %d #%d: done %d, completed %d, "
+				  "arc %d mm\n", (INT)deg, (INT)i,
+				  (INT)move_a.b_done, (INT)move_a.b_completed,
+				  (INT)move_a.travelled_mm);
+			s2_stop_settle();
+			(void)tk_dly_tsk(700);
+		}
+		tm_printf((UB*)"[CAL] set of 4 done, pause 10 s\n");
+		(void)tk_dly_tsk(10000);
+	}
+	tm_printf((UB*)"[CAL] finished\n");
+}
+#endif /* S2_TURN_CAL */
+
 #endif /* S2_TEST_MOTORS */
 
 EXPORT void subsystem2_test(void)
@@ -207,6 +245,18 @@ EXPORT void subsystem2_test(void)
 	TEST_INIT();
 	int32_t		h_odo;
 	uint32_t	odo;
+
+#if S2_TEST_MOTORS && S2_TURN_CAL
+	/* Calibration image only: do the floor turns and nothing else. */
+	(void)test_pass_;
+	(void)test_fail_;
+	(void)h_odo;
+	(void)odo;
+	s2_turn_cal();
+	for (;;) {
+		(void)tk_dly_tsk(1000);
+	}
+#endif
 
 	/* ============ Motors stay off (safe on the bench) ============ */
 

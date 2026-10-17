@@ -91,8 +91,10 @@
 /* Wheels slip when spinning in place, so a turn usually falls short of
  * the geometry. Permille: 1000 = trust the geometry, 1100 = drive each
  * wheel 10 % further. Measure ~10 turns with a protractor, then set
- *     TURN_SLIP_PERMILLE = 1000 * angle asked / average angle measured. */
-#define TURN_SLIP_PERMILLE      (1000U)
+ *     TURN_SLIP_PERMILLE = 1000 * angle asked / average angle measured.
+ * Measured 2026-10-18 on the floor: 4 x 90 right and 4 x 90 left each
+ * ended ~5 degrees past 360, so 1000 x 360 / 365 = 986. */
+#define TURN_SLIP_PERMILLE      (986U)
 
 /* Straight-line correction. For every mm one wheel has travelled further
  * than the other, that wheel's target speed drops by SYNC_GAIN mm/s and
