@@ -59,4 +59,11 @@ rc_result_t rc_gpioirq_detach(uint32_t pin);
  * ultrasonic driver, which only wants echo edges while a ping is live. */
 rc_result_t rc_gpioirq_enable(uint32_t pin, bool on);
 
+#if APP_TEST
+/* Risk 1 / NFR5 instrumentation, TEST builds only. */
+uint32_t rc_gpioirq_max_us(void);
+uint32_t rc_gpioirq_irq_count(void);
+void     rc_gpioirq_probe_reset(void);
+#endif
+
 #endif /* RC_GPIOIRQ_H */
