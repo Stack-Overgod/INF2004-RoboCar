@@ -7,8 +7,30 @@
 #include "../rc_config.h"
 #include "../rc_event.h"
 
+/* 1 = the line is NARROWER than the gap between the L and R sensors (the
+ * track's 18 mm line, 2026-10-18: over it only one LED ever goes out). A
+ * centred car then reads 0/0 with the line between the sensors, so 0/0
+ * only means "lost" once it has lasted LOST_THRESHOLD samples, and each
+ * correction is gentler so the car doesn't swing across the line.
+ * 0 = line wider than the gap: 1/1 is centred, 0/0 is soon lost. */
+#ifndef RC_LINE_STRADDLE
+#define RC_LINE_STRADDLE    (1)
+#endif
+
+#if RC_LINE_STRADDLE
+/* 1 s of 0/0 (about 28 cm at cruise) before we call the line lost. */
+#define LOST_THRESHOLD      (100U)
+/* +-125 permille: the inner wheel slows to 225, the outer speeds to 475.
+ * +-250 turned the car ~30 degrees in one 0.26 s correction on the
+ * track (2026-10-18), swinging the sensors right across the line. */
+#define STEER_KP            (1)
+#define STEER_DIV           (4)
+#else
 /* How many consecutive all-dark samples before we call the line lost.*/
 #define LOST_THRESHOLD      (20U)
+#define STEER_KP            (2)
+#define STEER_DIV           (2)
+#endif
 
 /* Both sensors on the line for this long means a junction or a barcode
  * lead-in, not a centred car. */
@@ -30,8 +52,10 @@ static rc_line_state_t state = RC_LINE_TRACKING;
 static bool     enabled;
 /* true once a LOST search timed out: no output until re-enabled */
 static bool     gave_up;
-/* forward speed while tracking, in permille (parts per 1000 of full speed) */
-static int16_t  base_permille = 350;
+/* forward speed while tracking, in permille (parts per 1000 of full speed).
+ * 400, not 350: at 350 the car stalled on the ridge between two foam
+ * track tiles (2026-10-18 run log: 285 -> 3 mm/s at constant duty). */
+static int16_t  base_permille = 400;
 /* consecutive samples with neither sensor on the line */
 static uint32_t lost_count;
 /* consecutive samples with both sensors on the line (junction candidate) */
@@ -39,13 +63,11 @@ static uint32_t both_count;
 /* most recent position reading, kept so we know which way to arc if the line vanishes */
 static int16_t  last_position;
 
-#define STEER_KP        (2)
-
 /* Turns a raw sideways position error into a motor steering command.*/
 static void steer_from_position(int16_t position)
 {
 
-    int16_t steer = (int16_t)((int32_t)position * STEER_KP / 2);
+    int16_t steer = (int16_t)((int32_t)position * STEER_KP / STEER_DIV);
 
     (void)sub_motion_drive(base_permille, steer);
 }
@@ -136,9 +158,15 @@ static void on_sample(const rc_event_t *evt, void *ctx)
             (void)sub_motion_drive(base_permille / 2,
                                    (last_position < 0) ? -400 : 400);
         } else {
+#if RC_LINE_STRADDLE
+            /* 0/0, not lost yet: the line is between the sensors, so
+             * the car is on target - drive straight. */
+            (void)sub_motion_drive(base_permille, 0);
+#else
             /* Brief dropout just keep steering if the
              * last known position still holds */
             steer_from_position(last_position);
+#endif
         }
     }
 }
