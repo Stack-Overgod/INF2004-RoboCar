@@ -47,8 +47,9 @@
 /* 1 = build a turn-calibration image instead: subsystem2_test() only does
  * the floor turns in s2_turn_cal() and never returns (later tests do not
  * run).  2 = same, but s2_drive_cal(): straight open-loop drive on the
- * floor, to see whether the wheel speed holds under load.  Keep 0 in the
- * repo. */
+ * floor, to see whether the wheel speed holds under load.  3 = s2_wire_check():
+ * each wheel alone, on a stand, to find reversed motor/encoder wires.  Keep 0
+ * in the repo. */
 #ifndef S2_TURN_CAL
 #define S2_TURN_CAL		0
 #endif
@@ -259,6 +260,46 @@ static void s2_drive_cal(void)
 	s2_stop_settle();
 	tm_printf((UB*)"[CAL] finished\n");
 }
+
+/* Wiring check, CAR ON A STAND.  Each wheel alone is told "forward" for
+ * 2 s, twice.  Watch which way the wheel turns (forward = top of the
+ * tyre moving toward the ultrasonic end); the log says which way its
+ * encoder thinks it turned.  Wheel backward = swap that motor's leads;
+ * encoder disagrees with what you saw = swap that encoder's A/B. */
+static void s2_wire_check(void)
+{
+	INT		i;
+	INT		rep;
+	rc_side_t	side;
+	uint32_t	c0;
+	int32_t		spd;
+	int8_t		dir;
+
+	for (i = S2_TURN_CAL_WAIT_S; i > 0; i--) {
+		tm_printf((UB*)"[CAL] wire check starts in %d s\n", (INT)i);
+		(void)tk_dly_tsk(1000);
+	}
+	for (rep = 1; rep <= 2; rep++) {
+		for (side = RC_SIDE_LEFT; side <= RC_SIDE_RIGHT; side++) {
+			tm_printf((UB*)"[CAL] %s wheel told FORWARD now\n",
+				  (side == RC_SIDE_LEFT) ? "LEFT" : "RIGHT");
+			c0 = drv_encoder_count(side);
+			(void)drv_motor_set(side, 350);
+			(void)tk_dly_tsk(1000);
+			spd = drv_encoder_speed_mm_s(side);
+			dir = drv_encoder_dir(side);
+			(void)tk_dly_tsk(1000);
+			(void)drv_motor_set(side, 0);
+			tm_printf((UB*)"[CAL] %s: ticks %u, encoder says %s "
+				  "(speed %d mm/s)\n",
+				  (side == RC_SIDE_LEFT) ? "LEFT" : "RIGHT",
+				  (unsigned)(drv_encoder_count(side) - c0),
+				  (dir > 0) ? "FORWARD" : "BACKWARD", (INT)spd);
+			(void)tk_dly_tsk(4000);
+		}
+	}
+	tm_printf((UB*)"[CAL] finished\n");
+}
 #endif /* S2_TURN_CAL */
 
 #endif /* S2_TEST_MOTORS */
@@ -275,7 +316,9 @@ EXPORT void subsystem2_test(void)
 	(void)test_fail_;
 	(void)h_odo;
 	(void)odo;
-	if (S2_TURN_CAL == 2) {
+	if (S2_TURN_CAL == 3) {
+		s2_wire_check();
+	} else if (S2_TURN_CAL == 2) {
 		s2_drive_cal();
 	} else {
 		s2_turn_cal();
