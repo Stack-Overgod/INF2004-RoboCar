@@ -21,12 +21,8 @@
 /* Left wheel on the MOTOR 2 terminal, right wheel on MOTOR 1. */
 #define RC_PIN_MOTOR_L_A        (10U)   /* M2A, PWM slice 5 chan A */
 #define RC_PIN_MOTOR_L_B        (11U)   /* M2B, PWM slice 5 chan B */
-/* Right motor is mounted mirror-image to the left, so its A/B (and its
- * encoder's A/B below) are swapped: found 2026-10-18, a floor "spin turn"
- * drove straight because the right wheel ran the wrong way while its
- * encoder agreed with the command. */
-#define RC_PIN_MOTOR_R_A        (9U)    /* M1B, PWM slice 4 chan B */
-#define RC_PIN_MOTOR_R_B        (8U)    /* M1A, PWM slice 4 chan A */
+#define RC_PIN_MOTOR_R_A        (8U)    /* M1A, PWM slice 4 chan A */
+#define RC_PIN_MOTOR_R_B        (9U)    /* M1B, PWM slice 4 chan B */
 
 /* Servo header: GP12..GP15 are servo ports 1..4. The scan servo is on
  * port 4 (GP15, PWM slice 7 chan B). Ports 1-3 are free. */
@@ -58,8 +54,8 @@
  * TX and fight the encoder. */
 #define RC_PIN_ENC_L_A          (0U)
 #define RC_PIN_ENC_L_B          (1U)
-#define RC_PIN_ENC_R_A          (28U)   /* swapped with B, see RC_PIN_MOTOR_R_A */
-#define RC_PIN_ENC_R_B          (7U)
+#define RC_PIN_ENC_R_A          (7U)
+#define RC_PIN_ENC_R_B          (28U)
 
 /* HC-SR04 on Grove 2 (GP2/GP3).
  * ECHO is 5 V on this module and MUST go through a divider. See HARDWARE.md. */
