@@ -19,7 +19,7 @@
 
 #if RC_LINE_STRADDLE
 /* 1 s of 0/0 (about 28 cm at cruise) before we call the line lost. */
-#define LOST_THRESHOLD      (100U)
+#define LOST_THRESHOLD      (200U)
 /* +-125 permille: the inner wheel slows to 225, the outer speeds to 475.
  * +-250 turned the car ~30 degrees in one 0.26 s correction on the
  * track (2026-10-18), swinging the sensors right across the line. */
