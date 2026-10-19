@@ -91,7 +91,7 @@ static int16_t      fine_from;
 static int16_t      fine_to;
 /* distance threshold for the forward watch mode (currently stored but not yet
  * acted on here — sub_nav.c decides when to escalate to a full scan) */
-static uint16_t     watch_trigger_mm = 300U;
+static uint16_t     watch_trigger_mm = 150U;
 /* whether continuous forward-watch mode is currently requested */
 static bool         watch_on;
 /* kernel task ID for the background scan_task */

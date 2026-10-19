@@ -33,9 +33,10 @@
 #include "subsystem3/sub_barcode.h"
 #include "subsystem5/sub_scan.h"
 
-/* FR6: a watch ping at or under this range starts avoidance. Placeholder
- * in the report ("Buddy 5 to confirm"). */
-#define NAV_WATCH_TRIGGER_MM    (300U)
+/* FR6: a watch ping at or under this range starts avoidance. Set to
+ * 150 mm by Buddy 5 after the 19 Oct track runs (300 stopped too early).
+ * The car rolls ~60 mm past the trigger before it stands still. */
+#define NAV_WATCH_TRIGGER_MM    (150U)
 
 /* The forward watch always pings straight ahead (sub_scan.c, S_WATCH). */
 #define NAV_WATCH_ANGLE_DEG     (90)
@@ -52,8 +53,8 @@
 
 /* Duty while RECOVERING: sub_line does not steer while SEARCHING, so nav
  * keeps the car rolling forward until it crosses the line.
- * TODO Buddy 2/3: tune on the track. */
-#define NAV_RECOVER_PERMILLE    (250)
+ * TODO Buddy 2/3: tune on the track. 188 = 250 less 25 % (2026-10-19). */
+#define NAV_RECOVER_PERMILLE    (188)
 
 /* State timeouts, ms (RELTIM).
  *   RECOVER  FR9: line not found within 3 s -> STOPPED + RECOVERY_FAILED
