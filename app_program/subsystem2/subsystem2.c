@@ -22,8 +22,9 @@
 #include "drv_encoder.h"
 #include "sub_motion.h"
 
-/* Report §6.5 IDLE: base speed for distance moves and turns, mm/s. */
-#define S2_CRUISE_MM_S  (250U)
+/* Report §6.5 IDLE: base speed for distance moves and turns, mm/s.
+ * 188 = 250 less 25 % (Buddy 5's track call, 2026-10-19). */
+#define S2_CRUISE_MM_S  (188U)
 
 /* Print the first failing step, return true if r is RC_OK. */
 static bool s2_ok(rc_result_t r, const char *what)
