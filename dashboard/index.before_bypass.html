@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoboCar Ground Station</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f3f3f1;
+  --surface-1: #fcfcfb;
+  --surface-2: #efeeeb;
+  --border: #dcdbd6;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7974;
+  --grid: #e6e5e1;
+  --series-1: #2a78d6;   /* left wheel */
+  --series-2: #eb6834;   /* right wheel */
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --accent: #2a78d6;
+  --black-tile: #1b1b1a; --white-tile: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #111110; --surface-1: #1a1a19; --surface-2: #232321; --border: #33332f;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
+    --grid: #2a2a27; --series-1: #3987e5; --series-2: #d95926; --accent: #3987e5;
+    --black-tile: #050505; --white-tile: #e9e8e4;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111110; --surface-1: #1a1a19; --surface-2: #232321; --border: #33332f;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
+  --grid: #2a2a27; --series-1: #3987e5; --series-2: #d95926; --accent: #3987e5;
+  --black-tile: #050505; --white-tile: #e9e8e4;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text-primary);
+  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+}
+.num, code, .mono { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+header {
+  position: sticky; top: 0; z-index: 5; background: var(--surface-1);
+  border-bottom: 1px solid var(--border); padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+}
+header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .02em; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+  border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); font-size: 13px;
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: none; }
+.dot.good { background: var(--good); } .dot.warning { background: var(--warning); }
+.dot.critical { background: var(--critical); }
+.grow { flex: 1; }
+button {
+  font: inherit; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-primary); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--text-muted); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--good); border-color: var(--good); color: #fff; }
+button.danger { background: var(--critical); border-color: var(--critical); color: #fff; }
+main {
+  display: grid; gap: 14px; padding: 14px 16px 40px;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+}
+.card {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px; min-width: 0;
+}
+.card h2 {
+  margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--text-secondary); display: flex; justify-content: space-between; gap: 8px;
+}
+.card h2 small { text-transform: none; letter-spacing: 0; color: var(--text-muted); font-weight: 400; }
+.wide { grid-column: 1 / -1; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 13px; }
+.kv dt { color: var(--text-muted); } .kv dd { margin: 0; }
+.stat { font-size: 30px; font-weight: 600; line-height: 1.1; }
+.stat small { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 4px; }
+.label { font-size: 12px; color: var(--text-muted); }
+.row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+
+/* commands */
+.cmds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cmds button { padding: 12px 6px; font-weight: 600; }
+.cmds .go, .cmds .stop { grid-column: span 3; font-size: 17px; padding: 14px; }
+.hint { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+kbd { font: 11px Consolas, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+
+/* line sensors */
+.sensors { display: flex; gap: 10px; }
+.tile {
+  flex: 1; border-radius: 10px; padding: 12px; text-align: center; border: 1px solid var(--border);
+  background: var(--white-tile); color: #222; transition: background .1s;
+}
+.tile.black { background: var(--black-tile); color: #eee; }
+.tile b { display: block; font-size: 20px; }
+
+/* duty bars */
+.duty { display: grid; grid-template-columns: 18px 1fr 52px; gap: 6px 8px; align-items: center; font-size: 13px; }
+.bar { position: relative; height: 10px; background: var(--surface-2); border-radius: 5px; }
+.bar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.bar::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--text-muted); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; }
+
+/* charts */
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.15);
+  display: none; white-space: nowrap; z-index: 3;
+}
+
+/* obstacle sketch */
+.polar svg { width: 100%; height: 170px; display: block; }
+
+/* events */
+.toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.chip { padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+.chip.off { opacity: .4; }
+.log {
+  height: 320px; overflow: auto; font: 12px/1.5 "Cascadia Mono", Consolas, monospace;
+  background: var(--surface-2); border-radius: 8px; padding: 6px 8px;
+}
+.log div { white-space: pre-wrap; word-break: break-all; }
+.log .t { color: var(--text-muted); }
+.log .k { font-weight: 600; }
+.log .bad { color: var(--critical); }
+.banner {
+  display: none; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; font-weight: 600;
+  background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--text-primary);
+}
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--grid); }
+th { color: var(--text-muted); font-weight: 500; }
+.toast {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text-primary);
+  color: var(--surface-1); padding: 8px 14px; border-radius: 8px; font-size: 13px; display: none; z-index: 9;
+}
+/* car view */
+:root { --ground: #d9d4c7; --car-body: #f7f6f2; --car-edge: #8a877d; --wheel: #2b2b29; --sensor: #9fb3c8; --car-label: #5b5952; }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) { --ground: #3a372f; --car-body: #2c2c29; --car-edge: #77746a; --wheel: #0d0d0c; --sensor: #6b86a3; --car-label: #b9b6aa; }
+}
+:root[data-theme="dark"] { --ground: #3a372f; --car-body: #2c2c29; --car-edge: #77746a; --wheel: #0d0d0c; --sensor: #6b86a3; --car-label: #b9b6aa; }
+.carview { position: relative; max-width: 300px; margin: 0 auto; }
+.carview svg { width: 100%; display: block; }
+.mode {
+  position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-flex; gap: 6px; align-items: center;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 13px; font-weight: 600;
+}
+.mode .dot { background: var(--text-muted); }
+.mode.good .dot { background: var(--good); } .mode.warning .dot { background: var(--warning); }
+.mode.critical .dot { background: var(--critical); } .mode.info .dot { background: var(--accent); }
+
+/* barcode scans */
+.scan { border-top: 1px solid var(--grid); padding: 10px 0; }
+.scan-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; margin-bottom: 6px; }
+.scan-head .res { font-weight: 600; }
+.scan-head .res.ok { color: var(--good); } .scan-head .res.fail { color: var(--critical); }
+.sym { display: inline-block; padding: 1px 8px; border-radius: 6px; background: var(--surface-2); font: 600 14px "Cascadia Mono", Consolas, monospace; }
+.strip { overflow-x: auto; padding-bottom: 4px; }
+.strip svg { display: block; }
+.strip.fit { overflow: hidden; }
+.strip.fit svg { width: 100%; height: auto; max-height: 90px; }
+details.more { margin-top: 8px; border-top: 1px solid var(--grid); padding-top: 6px; }
+details.more summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); padding: 4px 0; }
+details.more[open] summary { margin-bottom: 4px; }
+#scansAll { max-height: 60vh; overflow-y: auto; }
+@media (max-width: 520px) { header { gap: 8px; } .stat { font-size: 24px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>RoboCar 01</h1>
+  <span class="pill" title="Local MQTT broker (scripts/mqtt_broker.py)"><span class="dot" id="brDot"></span><span id="brText">Broker: ?</span></span>
+  <button id="brStart" class="primary">Start broker</button>
+  <button id="brStop">Stop broker</button>
+  <span class="pill" title="Car's MQTT session"><span class="dot" id="carDot"></span><span id="carText">Car: no data</span></span>
+  <span class="pill mono" id="flags" title="WiFi / MQTT flags and link counters from car/01/status">wifi - · mqtt - · tx - · fail -</span>
+  <span class="pill mono" id="live" title="Streams heard in the last second: odometry, line, IMU, ultrasonic">live ----</span>
+  <span class="grow"></span>
+  <span class="label mono" id="logPath"></span>
+</header>
+
+<main>
+  <!-- Commands -->
+  <section class="card">
+    <h2>Commands <small id="ack">no ack yet</small></h2>
+    <div class="cmds">
+      <button class="go primary" data-c="G">GO <span class="label" style="color:#fff">(G)</span></button>
+      <button data-c="L">↰ Left</button>
+      <button data-c="S">↑ Straight</button>
+      <button data-c="R">↱ Right</button>
+      <span></span>
+      <button data-c="U">↶ U-turn</button>
+      <span></span>
+      <button class="stop danger" data-c="X">STOP (X)</button>
+    </div>
+    <div class="hint">Keys: <kbd>Space</kbd> stop · <kbd>G</kbd> go · <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd> left / straight / right / U-turn. Turns run once, then line following resumes.</div>
+  </section>
+
+  <!-- Car view -->
+  <section class="card">
+    <h2>Car <small>top-down, inferred from telemetry</small></h2>
+    <div class="carview">
+      <div class="mode" id="mode"><span class="dot"></span><span id="modeText">No data</span></div>
+      <svg id="carSvg" viewBox="0 0 240 300" role="img" aria-label="Car view">
+        <defs>
+          <clipPath id="groundClip"><rect x="0" y="0" width="240" height="300" rx="10"/></clipPath>
+        </defs>
+        <g clip-path="url(#groundClip)">
+          <rect x="0" y="0" width="240" height="300" fill="var(--ground)"/>
+          <g id="ticks"></g>
+          <rect id="trackLine" x="111" y="-20" width="18" height="340" fill="var(--black-tile)"/>
+          <g id="crossBar" style="display:none"><rect x="0" y="86" width="240" height="18" fill="var(--black-tile)"/></g>
+          <g id="bcStripes" style="display:none"></g>
+          <path id="pathArc" d="" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 5"/>
+          <path id="beam" d="" fill="var(--accent)" fill-opacity=".14" stroke="var(--accent)" stroke-opacity=".5"/>
+          <rect id="obstacleMark" x="0" y="0" width="0" height="8" rx="3" fill="var(--critical)" style="display:none"/>
+          <!-- body -->
+          <rect x="72" y="88" width="96" height="150" rx="14" fill="var(--car-body)" stroke="var(--car-edge)" stroke-width="2"/>
+          <rect x="80" y="150" width="80" height="70" rx="8" fill="var(--car-edge)" opacity=".35"/>
+          <!-- wheels with moving treads -->
+          <g id="wheelL"><rect x="54" y="168" width="16" height="48" rx="4" fill="var(--wheel)"/><g id="treadL" clip-path="url(#clipWL)"></g></g>
+          <g id="wheelR"><rect x="170" y="168" width="16" height="48" rx="4" fill="var(--wheel)"/><g id="treadR" clip-path="url(#clipWR)"></g></g>
+          <clipPath id="clipWL"><rect x="54" y="168" width="16" height="48" rx="4"/></clipPath>
+          <clipPath id="clipWR"><rect x="170" y="168" width="16" height="48" rx="4"/></clipPath>
+          <!-- ultrasonic on its servo -->
+          <rect x="102" y="74" width="36" height="12" rx="3" fill="var(--car-edge)"/>
+          <circle cx="111" cy="80" r="6" fill="var(--sensor)"/><circle cx="129" cy="80" r="6" fill="var(--sensor)"/>
+          <!-- line sensors + barcode sensor -->
+          <circle id="irL" cx="100" cy="98" r="7" stroke="var(--car-edge)" stroke-width="2"/>
+          <circle id="irR" cx="140" cy="98" r="7" stroke="var(--car-edge)" stroke-width="2"/>
+          <rect id="irBC" x="115" y="104" width="10" height="10" rx="2" stroke="var(--car-edge)" stroke-width="2"/>
+          <text x="100" y="124" text-anchor="middle" font-size="9" fill="var(--car-label)">L</text>
+          <text x="140" y="124" text-anchor="middle" font-size="9" fill="var(--car-label)">R</text>
+          <text x="120" y="126" text-anchor="middle" font-size="8" fill="var(--car-label)">BC</text>
+          <text id="spdLt" x="48" y="194" text-anchor="end" font-size="11" fill="var(--text-secondary)"></text>
+          <text id="spdRt" x="192" y="194" font-size="11" fill="var(--text-secondary)"></text>
+        </g>
+      </svg>
+    </div>
+    <div class="hint">The car doesn't send its nav state, so the mode is inferred: wheel speeds → driving / turning / spinning; a barcode decode → reading; range ≤ 150 mm while stopped → obstacle; impact event → stopped.</div>
+  </section>
+
+  <!-- Drive -->
+  <section class="card">
+    <h2>Drive <small id="stateAge">-</small></h2>
+    <div class="sensors">
+      <div class="tile" id="senL"><span class="label">Left IR</span><b>-</b></div>
+      <div class="tile" id="senR"><span class="label">Right IR</span><b>-</b></div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="duty">
+      <span>L</span><div class="bar"><i id="dutyL"></i></div><span class="num" id="dutyLt">-</span>
+      <span>R</span><div class="bar"><i id="dutyR"></i></div><span class="num" id="dutyRt">-</span>
+    </div>
+    <div class="label" style="margin-top:4px">Motor duty, permille (−1000 … 1000)</div>
+    <div style="height:10px"></div>
+    <dl class="kv">
+      <dt>Distance</dt><dd class="num" id="dist">-</dd>
+      <dt>Encoders L / R</dt><dd class="num" id="enc">-</dd>
+      <dt>Motion class</dt><dd id="cls">-</dd>
+    </dl>
+  </section>
+
+  <!-- Wheel speed chart -->
+  <section class="card">
+    <h2>Wheel speed <small>mm/s, last 60 s</small></h2>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--series-1)"></span> Left</span>
+      <span><span class="swatch" style="background:var(--series-2)"></span> Right</span>
+    </div>
+    <div class="chart" id="spdChart"><svg></svg><div class="tip"></div></div>
+  </section>
+
+  <!-- Obstacle -->
+  <section class="card">
+    <h2>Obstacle <small id="obsAge">no scan yet</small></h2>
+    <div class="row">
+      <div><div class="label">Range ahead</div><div class="stat num" id="rng">-<small>mm</small></div></div>
+      <div><div class="label">Nearest (last scan)</div><div class="stat num" id="near">-<small>mm</small></div></div>
+      <div><div class="label">Width</div><div class="stat num" id="width">-<small>mm</small></div></div>
+    </div>
+    <div class="polar" id="polar"></div>
+    <dl class="kv">
+      <dt>Clearance L / R</dt><dd class="num" id="clear">-</dd>
+      <dt>Scan points</dt><dd class="num" id="npts">-</dd>
+      <dt>Avoid plan</dt><dd id="plan">-</dd>
+    </dl>
+  </section>
+
+  <!-- Range chart -->
+  <section class="card">
+    <h2>Ultrasonic range <small>mm, last 60 s</small></h2>
+    <div class="chart" id="rngChart"><svg></svg><div class="tip"></div></div>
+  </section>
+
+  <!-- IMU / terrain -->
+  <section class="card">
+    <h2>IMU / terrain <small id="imuAge"></small></h2>
+    <div class="banner" id="impactBanner">⚠ IMPACT</div>
+    <div class="row">
+      <div><div class="label">Last hump pitch</div><div class="stat num" id="pitch">-<small>°</small></div></div>
+      <div><div class="label">Tallest hump</div><div class="stat num" id="peak">-<small>mm</small></div></div>
+    </div>
+    <div style="height:8px"></div>
+    <table>
+      <thead><tr><th>Time</th><th>Peak mm</th><th>Pitch °</th><th>Duration</th></tr></thead>
+      <tbody id="humps"><tr><td colspan="4" class="label">No humps yet</td></tr></tbody>
+    </table>
+    <div class="hint">The car only sends tilt per hump (max pitch) and the motion class; there is no continuous pitch/roll stream in the firmware yet.</div>
+  </section>
+
+  <!-- Barcode -->
+  <section class="card">
+    <h2>Barcode scans <small id="bcAge">no scan yet</small></h2>
+    <div class="row" style="margin-bottom:10px">
+      <div><div class="label">Last symbol</div><div class="stat num" id="bcSym">-</div></div>
+      <div><div class="label">Last scan</div><div class="stat num" id="bcRes" style="font-size:20px">-</div></div>
+      <div><div class="label">Edges / ratio fails</div><div class="stat num" id="bcEdges" style="font-size:20px">-</div></div>
+      <div><div class="label">Element times</div><div class="stat num" id="bcWidths" style="font-size:20px">-</div></div>
+    </div>
+    <div id="scans"><div class="label">The latest scan: the letters the car decoded and the sensor bits, scaled to fit (black = bar, 1 = wide).</div></div>
+    <details class="more" id="bcMore">
+      <summary id="bcMoreSum">Expanded view: all scans, bits to scale</summary>
+      <div class="label">Each scan: decoded letters, the sensor bits at 2 px/mm, and what each 9-element group decodes to on its own. Scroll sideways for long scans.</div>
+      <div id="scansAll"></div>
+    </details>
+  </section>
+
+  <!-- Event log -->
+  <section class="card wide">
+    <h2>Event log <small>everything except car/01/state</small></h2>
+    <div class="toolbar" id="chips"></div>
+    <div class="toolbar">
+      <button id="pause">Pause</button>
+      <button id="clear">Clear view</button>
+      <label class="label"><input type="checkbox" id="showState"> include state</label>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const CLS = ["stationary", "accelerating", "cruising", "decelerating", "turning", "climbing", "descending", "IMPACT"];
+const CMD = ["none", "left", "right", "straight", "U-turn", "stop", "start"];
+const KEY_CMD = { " ": "X", g: "G", G: "G", ArrowLeft: "L", ArrowUp: "S", ArrowRight: "R", ArrowDown: "U" };
+const WINDOW_S = 60;
+
+let car = { connected: false, last_rx: null };
+let status = null;           // latest car/01/status payload
+let lastRx = 0;              // browser time of the last car message
+const spd = [], rng = [];    // {t, l, r} / {t, v}
+const hidden = new Set();
+let paused = false;
+
+/* ---------- link health ---------- */
+// Car pill: green only when the broker has robocar-01 connected AND its data is
+// fresh; red otherwise, with the reason. 4 Hz state means 3 s is ~12 missed
+// messages, well past the car's ~40 ms reconnects but short of a reboot (~14 s).
+const FRESH_S = 3;
+function carLinkState(connected, ageS, status) {
+  if (!connected && !isFinite(ageS)) return { level: "critical", text: "Car: not connected" };
+  if (!connected) return { level: "critical", text: `Car: disconnected (last data ${ageS.toFixed(0)} s ago)` };
+  if (ageS > FRESH_S) return { level: "critical", text: isFinite(ageS) ? `Car: connected, silent ${ageS.toFixed(0)} s` : "Car: connected, no data yet" };
+  const fails = status && status.fail ? ` · ${status.fail} send fails` : "";
+  return { level: "good", text: `Car: connected (${car.ip || "?"})${fails}` };
+}
+
+function refreshLink() {
+  const ageS = lastRx ? (Date.now() - lastRx) / 1000 : Infinity;
+  const s = carLinkState(car.connected, ageS, status);
+  $("carDot").className = "dot " + (s.level || "");
+  $("carText").textContent = s.text;
+  if (lastRx) $("stateAge").textContent = ageS < 1 ? "live" : `${ageS.toFixed(0)} s ago`;
+}
+setInterval(refreshLink, 500);
+
+/* ---------- broker ---------- */
+function setBroker(b) {
+  $("brDot").className = "dot " + (b.running ? "good" : "");
+  $("brText").textContent = "Broker: " + (b.running ? "running" : "stopped");
+  $("brStart").disabled = b.running;
+  $("brStop").disabled = !b.running;
+  $("logPath").textContent = b.log ? b.log.replace(/^.*[\\/]test[\\/]/, "test/") : "";
+  document.querySelectorAll(".cmds button").forEach(x => x.disabled = !b.running);
+}
+async function post(url) {
+  try {
+    const r = await fetch(url, { method: "POST" });
+    const j = await r.json();
+    toast(j.info || (j.ok ? "ok" : "failed"), j.ok && j.acked !== false ? "" : "bad");
+    return j;
+  } catch (e) { toast("dashboard server not reachable"); }
+}
+$("brStart").onclick = () => post("/api/broker/start");
+$("brStop").onclick = () => post("/api/broker/stop");
+
+/* ---------- commands ---------- */
+function sendCmd(c) { post("/api/cmd?c=" + c); }
+document.querySelectorAll(".cmds button").forEach(b => b.onclick = () => sendCmd(b.dataset.c));
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.ctrlKey || e.altKey || e.metaKey) return;
+  const c = KEY_CMD[e.key];
+  if (c && $("brStart").disabled) { e.preventDefault(); sendCmd(c); }   // broker running
+});
+
+/* ---------- telemetry handlers ---------- */
+function onState(d, t, epoch) {
+  const L = d.line?.[0] === "1", R = d.line?.[1] === "1";
+  setTile("senL", L); setTile("senR", R);
+  setDuty("dutyL", "dutyLt", d.m_l, "--series-1");
+  setDuty("dutyR", "dutyRt", d.m_r, "--series-2");
+  $("dist").textContent = `${(d.dist / 1000).toFixed(2)} m`;
+  $("enc").textContent = `${d.enc_l} / ${d.enc_r}`;
+  $("cls").textContent = CLS[d.cls] ?? d.cls;
+  $("rng").innerHTML = (d.rng ? d.rng : "-") + "<small>mm</small>";
+  const now = epoch ?? Date.now() / 1000;
+  spd.push({ t: now, l: d.spd_l, r: d.spd_r, ts: t });
+  rng.push({ t: now, v: d.rng, ts: t });
+  trim(spd, now); trim(rng, now);
+  drawSpeed(); drawRange();
+  Object.assign(view, { l: d.spd_l, r: d.spd_r, line: d.line, rng: d.rng, lastState: now * 1000 });
+}
+function setTile(id, black) {
+  const el = $(id);
+  el.classList.toggle("black", black);
+  el.querySelector("b").textContent = black ? "BLACK" : "white";
+}
+function setDuty(barId, txtId, v, token) {
+  const pct = Math.min(Math.abs(v) / 1000, 1) * 50;
+  const bar = $(barId);
+  bar.style.background = `var(${token})`;
+  bar.style.width = pct + "%";
+  bar.style.left = v >= 0 ? "50%" : (50 - pct) + "%";
+  $(txtId).textContent = v;
+}
+function onStatus(d) {
+  status = d;
+  const failPct = d.tx ? (100 * d.fail / (d.tx + d.fail)).toFixed(1) : "0.0";
+  $("flags").textContent = `wifi ${d.wifi} · mqtt ${d.mqtt} · tx ${d.tx} · fail ${d.fail} (${failPct}%) · drops ${d.drop_fast}/${d.drop_slow} · up ${(d.up / 1000).toFixed(0)} s`;
+  const n = ["odo", "line", "imu", "ultra"];
+  $("live").textContent = "live " + n.map((x, i) => (d.live?.[i] === "1" ? x : x.toUpperCase() + "✗")).join(" ");
+}
+function onObstacle(d, t) {
+  $("obsAge").textContent = "scan at " + t;
+  $("near").innerHTML = d.near_mm + "<small>mm</small>";
+  $("width").innerHTML = d.w_mm + "<small>mm</small>";
+  $("clear").textContent = `${d.cl_l} / ${d.cl_r} mm`;
+  $("npts").textContent = d.n;
+  drawPolar(d);
+  view.obstacle = { ...d, until: Date.now() + 5000 };
+}
+function onAvoid(d, t) {
+  view.avoid = { ...d, until: Date.now() + 5000 };
+  $("plan").textContent = `${CMD[d.act] ?? d.act}` + (d.act === 5 ? " (no safe gap)" : `, lateral ${d.lat_mm} mm, forward ${d.fwd_mm} mm`) + ` · ${t}`;
+}
+const humps = [];
+function onHump(d, t) {
+  humps.unshift({ t, ...d }); humps.length = Math.min(humps.length, 8);
+  $("pitch").innerHTML = d.pitch + "<small>°</small>";
+  $("peak").innerHTML = Math.max(...humps.map(h => h.peak_mm)) + "<small>mm</small>";
+  $("humps").innerHTML = humps.map(h => `<tr><td class="num">${h.t}</td><td class="num">${h.peak_mm}</td><td class="num">${h.pitch}</td><td class="num">${h.ms} ms</td></tr>`).join("");
+}
+function onImpact(t) {
+  const b = $("impactBanner");
+  b.textContent = `⚠ IMPACT at ${t} (car stopped)`;
+  b.style.display = "block";
+  view.impact = true;
+}
+function onAck(d, t) {
+  $("ack").textContent = `ack ${d.rx} → ${d.cmd ? CMD[d.cmd] : "ignored"} · ${t}`;
+  if (d.cmd === 6) { $("impactBanner").style.display = "none"; view.impact = false; }
+}
+
+/* ---------- barcode scans: decoded letters + sensor bits ---------- */
+// Code 39, 9 elements (bar space bar ... bar), 1 = wide, first element first.
+const C39 = {
+  "0": "000110100", "1": "100100001", "2": "001100001", "3": "101100000", "4": "000110001",
+  "5": "100110000", "6": "001110000", "7": "000100101", "8": "100100100", "9": "001100100",
+  A: "100001001", B: "001001001", C: "101001000", D: "000011001", E: "100011000", F: "001011000",
+  G: "000001101", H: "100001100", I: "001001100", J: "000011100", K: "100000011", L: "001000011",
+  M: "101000010", N: "000010011", O: "100010010", P: "001010010", Q: "000000111", R: "100000110",
+  S: "001000110", T: "000010110", U: "110000001", V: "011000001", W: "111000000", X: "010010001",
+  Y: "110010000", Z: "011010000", "-": "010000101", ".": "110000100", " ": "011000100", "*": "010010100",
+};
+const C39R = Object.fromEntries(Object.entries(C39).map(([c, p]) => [p, c]));
+function decodeGroup(g) {
+  if (g.length !== 9) return null;
+  if (C39R[g]) return { c: C39R[g], rev: false };
+  const r = [...g].reverse().join("");
+  return C39R[r] ? { c: C39R[r], rev: true } : null;
+}
+const scans = [];
+let pend = { syms: [], bits: null };
+function onBarcode(d, t, replay) {
+  $("bcSym").textContent = `${d.sym}${d.rev ? " (rev)" : ""} → ${CMD[d.cmd] ?? d.cmd}`;
+  $("bcAge").textContent = t;
+  pend.syms.push(d);
+  if (!replay) view.readUntil = Date.now() + 2500;
+}
+function onBits(d) { pend.bits = d; }
+function onScan(d, t, replay) {
+  $("bcRes").textContent = `${d.res} "${d.txt}"`;
+  $("bcEdges").textContent = `${d.edges} / ${d.f_ratio}`;
+  $("bcWidths").textContent = `${(d.min_us / 1000).toFixed(0)}–${(d.max_us / 1000).toFixed(0)} ms`;
+  $("bcAge").textContent = t;
+  scans.unshift({ t, ...d, syms: pend.syms, bits: pend.bits });
+  scans.length = Math.min(scans.length, 8);
+  pend = { syms: [], bits: null };
+  if (!replay) view.readUntil = 0;
+  renderScans();
+}
+function renderScans() {
+  $("scans").innerHTML = scans.length ? scanHtml(scans[0], true) : "";
+  $("scansAll").innerHTML = scans.map(sc => scanHtml(sc, false)).join("");
+  $("bcMoreSum").textContent = `Expanded view: all ${scans.length} scan${scans.length === 1 ? "" : "s"}, bits to scale`;
+}
+function scanHtml(sc, fit) {
+    const syms = sc.syms.length
+      ? sc.syms.map(x => `<span class="sym" title="${CMD[x.cmd] ?? x.cmd}">${x.sym === " " ? "␣" : x.sym}${x.rev ? "↺" : ""}</span>`).join(" ")
+      : `<span class="label">no letters</span>`;
+    const b = sc.bits;
+    const times = b ? ` · narrow ${(b.nar_us / 1000).toFixed(0)} ms, wide ${(b.wid_us / 1000).toFixed(0)} ms` : "";
+    return `<div class="scan">
+      <div class="scan-head"><span class="num label">${sc.t}</span>
+        <span class="res ${sc.res === "ok" ? "ok" : "fail"}">${sc.res === "ok" ? "✓ ok" : "✗ fail"}</span>
+        ${syms}
+        <span class="label num">edges ${sc.edges} · ratio fails ${sc.f_ratio} · no-match ${sc.f_nomatch}${times}${b && b.more ? " · bits truncated" : ""}</span></div>
+      <div class="strip${fit ? " fit" : ""}">${b ? stripSvg(b) : `<span class="label">no bits sent for this scan</span>`}</div>
+    </div>`;
+}
+// Draw the bits to scale: narrow 3 mm, wide 9 mm, at 2 px/mm. Groups are
+// separated in the string by spaces: 9-element characters and 1-element gaps.
+function stripSvg(b) {
+  const PX = 2, H = 40, groups = b.bits.split(" ").filter(g => g.length);
+  const barFirst = b.first !== "space";
+  let x = 4, k = 0, g = "", labels = "";
+  groups.forEach(grp => {
+    const x0 = x;
+    for (const bit of grp) {
+      const w = (bit === "1" ? 9 : 3) * PX, isBar = (k % 2 === 0) === barFirst;
+      if (isBar) g += `<rect x="${x}" y="2" width="${w}" height="${H}" fill="var(--black-tile)"/>`;
+      x += w; k++;
+    }
+    if (grp.length > 1) {
+      const mid = (x0 + x) / 2, dec = decodeGroup(grp), wides = [...grp].filter(c => c === "1").length;
+      const name = dec ? (dec.c === " " ? "␣" : dec.c) + (dec.rev ? " ↺" : "") : grp.length < 9 ? "partial" : `? (${wides} wide)`;
+      labels += `<line x1="${x0}" x2="${x}" y1="${H + 6}" y2="${H + 6}" stroke="var(--border)"/>`;
+      labels += `<text x="${mid}" y="${H + 18}" text-anchor="middle" font-size="10" font-family="Consolas, monospace" fill="var(--text-muted)">${grp}</text>`;
+      labels += `<text x="${mid}" y="${H + 33}" text-anchor="middle" font-size="12" font-weight="600" fill="${dec ? "var(--text-primary)" : "var(--critical)"}">${name}</text>`;
+    }
+  });
+  const W = Math.max(x + 4, 80);
+  return `<svg width="${W}" height="${H + 40}" viewBox="0 0 ${W} ${H + 40}" role="img" aria-label="Barcode bits ${b.bits}">
+    <rect x="0" y="0" width="${W}" height="${H + 4}" fill="var(--white-tile)" stroke="var(--border)"/>${g}${labels}</svg>`;
+}
+
+/* ---------- car view (top-down, animated from telemetry) ---------- */
+const view = { l: 0, r: 0, line: "00", rng: 0, lastState: 0, readUntil: 0, impact: false, obstacle: null, avoid: null };
+const MM = 0.9;                  // px per mm on the ground
+const BASE_MM = 112;             // RC_WHEEL_BASE_MM
+let offG = 0, offL = 0, offR = 0, lastFrame = performance.now();
+(function buildCar() {
+  let t = "";
+  for (let row = -1; row < 13; row++) {
+    for (const x of [24, 66, 174, 216]) {
+      t += `<line x1="${x - 6}" x2="${x + 6}" y1="${row * 25}" y2="${row * 25}" stroke="var(--car-edge)" stroke-opacity=".5" stroke-width="2"/>`;
+    }
+  }
+  $("ticks").innerHTML = t;
+  const tread = x => Array.from({ length: 12 }, (_, i) =>
+    `<line x1="${x}" x2="${x + 16}" y1="${162 + i * 6}" y2="${162 + i * 6}" stroke="var(--car-edge)" stroke-width="2"/>`).join("");
+  $("treadL").innerHTML = tread(54);
+  $("treadR").innerHTML = tread(170);
+  // a *A pattern for the "reading" animation: bars only, to scale (2 px/mm)
+  let bars = "", y = 0, k = 0;
+  for (const bit of C39["*"] + "0" + C39["A"]) {
+    const w = (bit === "1" ? 9 : 3) * 2;
+    if (k % 2 === 0) bars += `<rect x="78" y="${y}" width="84" height="${w}" fill="var(--black-tile)"/>`;
+    y += w; k++;
+  }
+  $("bcStripes").innerHTML = bars;
+})();
+function carMode(now, stale) {
+  const { l, r } = view, still = Math.abs(l) < 5 && Math.abs(r) < 5;
+  if (stale) return ["", "No live data"];
+  if (view.impact) return ["critical", "IMPACT – stopped"];
+  if (now < view.readUntil) return ["info", "Reading barcode"];
+  if (view.avoid && now < view.avoid.until && !still) return ["warning", `Avoiding (${CMD[view.avoid.act] ?? view.avoid.act})`];
+  if (still) {
+    if (view.avoid && now < view.avoid.until && view.avoid.act === 5) return ["critical", "No safe gap – stopped"];
+    if (view.rng && view.rng <= 150) return ["warning", "Obstacle ahead – stopped"];
+    return ["", "At rest"];
+  }
+  if (Math.sign(l) !== Math.sign(r) && Math.abs(l) > 15 && Math.abs(r) > 15) return ["info", `Spinning ${l < r ? "left" : "right"}`];
+  if (Math.abs(l - r) > 20) return ["info", `Turning ${l < r ? "left" : "right"}`];
+  return ["good", l < 0 && r < 0 ? "Reversing" : "Driving straight"];
+}
+function frame(tNow) {
+  const dt = Math.min((tNow - lastFrame) / 1000, 0.1);
+  lastFrame = tNow;
+  const now = Date.now(), stale = !view.lastState || now - view.lastState > 3000;
+  const l = stale ? 0 : view.l, r = stale ? 0 : view.r, v = (l + r) / 2;
+  // ground ticks slide back as the car moves; each tread moves with its wheel
+  offG = (offG + v * MM * dt) % 25;
+  offL = (offL + l * MM * dt) % 6;
+  offR = (offR + r * MM * dt) % 6;
+  $("ticks").setAttribute("transform", `translate(0 ${(offG + 25) % 25})`);
+  $("treadL").setAttribute("transform", `translate(0 ${-((offL + 6) % 6)})`);
+  $("treadR").setAttribute("transform", `translate(0 ${-((offR + 6) % 6)})`);
+  // sensors and the line under them (straddle mode: 00 = line between the sensors)
+  const L = view.line[0] === "1", R = view.line[1] === "1";
+  $("irL").setAttribute("fill", L ? "var(--black-tile)" : "var(--white-tile)");
+  $("irR").setAttribute("fill", R ? "var(--black-tile)" : "var(--white-tile)");
+  $("trackLine").setAttribute("x", L && !R ? 91 : R && !L ? 131 : 111);
+  $("crossBar").style.display = L && R ? "" : "none";
+  const reading = now < view.readUntil;
+  $("irBC").setAttribute("fill", reading ? "var(--accent)" : "var(--white-tile)");
+  const bc = $("bcStripes");
+  bc.style.display = reading ? "" : "none";
+  if (reading) bc.setAttribute("transform", `translate(0 ${((now / 1000) * 45) % 300 - 150})`);
+  // predicted path for the next 2 s from the wheel speeds
+  const w = (l - r) / BASE_MM;   // rad/s, + = right
+  let d = "";
+  if (Math.abs(v) > 3) {
+    let x = 120, y = 88, th = 0;
+    d = `M${x},${y}`;
+    for (let i = 0; i < 25; i++) {
+      th += w * 0.08;
+      x += v * MM * 0.08 * Math.sin(th);
+      y -= v * MM * 0.08 * Math.cos(th);
+      d += `L${x.toFixed(1)},${y.toFixed(1)}`;
+    }
+  } else if (Math.abs(w) > 0.2) {
+    d = w > 0 ? "M120,62 A92,92 0 0 1 212,154" : "M120,62 A92,92 0 0 0 28,154";
+  }
+  $("pathArc").setAttribute("d", d);
+  // ultrasonic beam (schematic: 0..1200 mm -> 0..70 px) and the last obstacle
+  const len = view.rng && !stale ? Math.min(view.rng, 1200) / 1200 * 70 : 0;
+  $("beam").setAttribute("d", len ? `M120,74 L${120 - len * 0.27},${74 - len} L${120 + len * 0.27},${74 - len} Z` : "");
+  const ob = view.obstacle, om = $("obstacleMark");
+  if (ob && now < ob.until) {
+    const rr = Math.min(ob.near_mm, 1200) / 1200 * 70, a = ob.at_deg * Math.PI / 180;
+    const ox = 120 + rr * Math.cos(a), oy = 74 - rr * Math.sin(a), half = Math.max(ob.w_mm / 1200 * 70 / 2, 6);
+    om.setAttribute("x", ox - half); om.setAttribute("y", oy - 4); om.setAttribute("width", half * 2);
+    om.style.display = "";
+  } else {
+    om.style.display = "none";
+  }
+  $("spdLt").textContent = stale ? "" : `${view.l}`;
+  $("spdRt").textContent = stale ? "" : `${view.r}`;
+  const [lvl, txt] = carMode(now, stale);
+  $("mode").className = "mode " + lvl;
+  $("modeText").textContent = txt;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------- charts (SVG, crosshair + tooltip) ---------- */
+function trim(arr, now) { while (arr.length && arr[0].t < now - WINDOW_S) arr.shift(); }
+function chartFrame(el) {
+  const svg = el.querySelector("svg");
+  const W = svg.clientWidth || 300, H = 150, P = { l: 36, r: 34, t: 6, b: 18 };
+  return { svg, W, H, P, iw: W - P.l - P.r, ih: H - P.t - P.b };
+}
+function niceMax(v) { const m = Math.max(v, 1); const p = 10 ** Math.floor(Math.log10(m)); return Math.ceil(m / p) * p; }
+function axes(f, ymin, ymax, now) {
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = ymin + (ymax - ymin) * i / 4, y = f.P.t + f.ih - f.ih * i / 4;
+    g += `<line x1="${f.P.l}" x2="${f.W - f.P.r}" y1="${y}" y2="${y}" stroke="var(--grid)"/>`;
+    g += `<text x="${f.P.l - 6}" y="${y + 4}" text-anchor="end" font-size="10" fill="var(--text-muted)">${Math.round(v)}</text>`;
+  }
+  [-60, -30, 0].forEach(s => {
+    const x = f.P.l + f.iw * (s + WINDOW_S) / WINDOW_S;
+    g += `<text x="${x}" y="${f.H - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${s ? s + " s" : "now"}</text>`;
+  });
+  return g;
+}
+const xOf = (f, t, now) => f.P.l + f.iw * (t - (now - WINDOW_S)) / WINDOW_S;
+const yOf = (f, v, ymin, ymax) => f.P.t + f.ih - f.ih * (v - ymin) / (ymax - ymin || 1);
+function path(f, pts, key, ymin, ymax, now) {
+  return pts.map((p, i) => `${i ? "L" : "M"}${xOf(f, p.t, now).toFixed(1)},${yOf(f, p[key], ymin, ymax).toFixed(1)}`).join("");
+}
+function drawSpeed() {
+  const el = $("spdChart"), f = chartFrame(el), now = Date.now() / 1000;
+  const vals = spd.flatMap(p => [p.l, p.r]);
+  const ymin = Math.min(0, ...vals), ymax = niceMax(Math.max(100, ...vals));
+  let g = axes(f, ymin, ymax, now);
+  for (const [k, c, name] of [["l", "--series-1", "L"], ["r", "--series-2", "R"]]) {
+    if (!spd.length) continue;
+    g += `<path d="${path(f, spd, k, ymin, ymax, now)}" fill="none" stroke="var(${c})" stroke-width="2" stroke-linejoin="round"/>`;
+    const last = spd[spd.length - 1];
+    g += `<text x="${f.W - f.P.r + 4}" y="${yOf(f, last[k], ymin, ymax) + (k === "l" ? -2 : 10)}" font-size="11" fill="var(--text-secondary)">${name} ${last[k]}</text>`;
+  }
+  f.svg.innerHTML = g;
+  hover(el, f, spd, p => `<b>${p.ts}</b><br><span class="swatch" style="background:var(--series-1)"></span> L ${p.l} mm/s<br><span class="swatch" style="background:var(--series-2)"></span> R ${p.r} mm/s`, ymin, ymax, ["l", "r"], ["--series-1", "--series-2"]);
+}
+function drawRange() {
+  const el = $("rngChart"), f = chartFrame(el), now = Date.now() / 1000;
+  const pts = rng.filter(p => p.v > 0);
+  const ymax = niceMax(Math.max(300, ...pts.map(p => p.v)));
+  let g = axes(f, 0, ymax, now);
+  const trig = 150;   // NAV_WATCH_TRIGGER_MM
+  if (trig < ymax) {
+    const y = yOf(f, trig, 0, ymax);
+    g += `<line x1="${f.P.l}" x2="${f.W - f.P.r}" y1="${y}" y2="${y}" stroke="var(--critical)" stroke-dasharray="4 4"/>`;
+    g += `<text x="${f.W - f.P.r + 4}" y="${y + 4}" font-size="10" fill="var(--text-secondary)">trigger</text>`;
+  }
+  if (pts.length) g += `<path d="${path(f, pts, "v", 0, ymax, now)}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>`;
+  f.svg.innerHTML = g;
+  hover(el, f, pts, p => `<b>${p.ts}</b><br>${p.v} mm`, 0, ymax, ["v"], ["--series-1"]);
+}
+function hover(el, f, pts, fmt, ymin, ymax, keys, colors) {
+  const tip = el.querySelector(".tip");
+  el.onmousemove = e => {
+    if (!pts.length) return;
+    const now = Date.now() / 1000, rect = f.svg.getBoundingClientRect();
+    const t = (now - WINDOW_S) + (e.clientX - rect.left - f.P.l) / f.iw * WINDOW_S;
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    const x = xOf(f, best.t, now);
+    f.svg.querySelectorAll(".hv").forEach(n => n.remove());
+    let h = `<line class="hv" x1="${x}" x2="${x}" y1="${f.P.t}" y2="${f.P.t + f.ih}" stroke="var(--text-muted)"/>`;
+    keys.forEach((k, i) => h += `<circle class="hv" cx="${x}" cy="${yOf(f, best[k], ymin, ymax)}" r="4" fill="var(${colors[i]})" stroke="var(--surface-1)" stroke-width="2"/>`);
+    f.svg.insertAdjacentHTML("beforeend", h);
+    tip.innerHTML = fmt(best);
+    tip.style.display = "block";
+    tip.style.left = Math.min(x + 10, f.W - 130) + "px";
+    tip.style.top = "8px";
+  };
+  el.onmouseleave = () => { tip.style.display = "none"; f.svg.querySelectorAll(".hv").forEach(n => n.remove()); };
+}
+function drawPolar(d) {
+  // Top-down sketch: car at the bottom centre, servo sweep as a half circle,
+  // the nearest return at its servo angle (sub_scan: 90 = straight ahead,
+  // > 90 = left), so the servo angle is the plot angle as-is.
+  const W = 320, H = 170, cx = W / 2, cy = H - 12, R = 140, maxMm = 600;
+  const r = Math.min(d.near_mm, maxMm) / maxMm * R;
+  const a = d.at_deg * Math.PI / 180;
+  const off = d.at_deg - 90, side = off > 0 ? `${off}° L` : off < 0 ? `${-off}° R` : "ahead";
+  const ox = cx + r * Math.cos(a), oy = cy - r * Math.sin(a);
+  const halfW = Math.max(d.w_mm / maxMm * R / 2, 3);
+  let g = `<path d="M${cx - R},${cy} A${R},${R} 0 0 1 ${cx + R},${cy}" fill="none" stroke="var(--grid)"/>`;
+  g += `<path d="M${cx - R / 2},${cy} A${R / 2},${R / 2} 0 0 1 ${cx + R / 2},${cy}" fill="none" stroke="var(--grid)"/>`;
+  g += `<text x="${cx + R / 2 + 3}" y="${cy - 2}" font-size="10" fill="var(--text-muted)">300</text><text x="${cx + R + 3}" y="${cy - 2}" font-size="10" fill="var(--text-muted)">600 mm</text>`;
+  g += `<line x1="${cx}" y1="${cy}" x2="${ox}" y2="${oy}" stroke="var(--text-muted)" stroke-dasharray="3 3"/>`;
+  g += `<line x1="${ox - halfW * Math.sin(a)}" y1="${oy - halfW * Math.cos(a)}" x2="${ox + halfW * Math.sin(a)}" y2="${oy + halfW * Math.cos(a)}" stroke="var(--critical)" stroke-width="5" stroke-linecap="round"/>`;
+  g += `<text x="${ox}" y="${oy - 10}" text-anchor="middle" font-size="11" fill="var(--text-primary)">${d.near_mm} mm, ${side}</text>`;
+  g += `<rect x="${cx - 9}" y="${cy - 6}" width="18" height="14" rx="3" fill="var(--text-secondary)"/>`;
+  $("polar").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Nearest obstacle ${d.near_mm} mm, ${side}">${g}</svg>`;
+}
+
+/* ---------- event log ---------- */
+const CHIP_TOPICS = ["link", "ack", "barcode", "bcscan", "bcbits", "obstacle", "avoid", "hump", "impact", "motion", "line", "move", "status", "cmd"];
+CHIP_TOPICS.forEach(k => {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = k;
+  b.onclick = () => { hidden.has(k) ? hidden.delete(k) : hidden.add(k); b.classList.toggle("off"); };
+  $("chips").appendChild(b);
+});
+$("pause").onclick = () => { paused = !paused; $("pause").textContent = paused ? "Resume" : "Pause"; };
+$("clear").onclick = () => $("log").innerHTML = "";
+function logLine(t, key, text, bad) {
+  if (paused || hidden.has(key)) return;
+  const el = $("log"), atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+  const d = document.createElement("div");
+  d.innerHTML = `<span class="t">${t}</span> <span class="k${bad ? " bad" : ""}">${key}</span> `;
+  d.appendChild(document.createTextNode(text));
+  el.appendChild(d);
+  while (el.childNodes.length > 1500) el.firstChild.remove();
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+/* ---------- stream ---------- */
+// The broker has no auth: anything on the hotspot can publish car/01/*. Escape
+// every string from MQTT once, here, before any handler puts it in the page.
+const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+function clean(v) {
+  if (typeof v === "string") return v.replace(/[&<>"']/g, c => ESC[c]);
+  if (Array.isArray(v)) return v.map(clean);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [clean(k), clean(x)]));
+  return v;
+}
+function handle(ev, replay) {
+  if (ev.kind === "broker") { setBroker(ev); if (ev.note) toast(ev.note); return; }
+  if (ev.kind === "link") {
+    car = ev.car;
+    logLine(ev.t, "link", ev.text, /disconnected/.test(ev.text));
+    refreshLink();
+    return;
+  }
+  if (ev.kind !== "msg") return;
+  ev = { ...ev, leaf: clean(ev.leaf), data: clean(ev.data) };
+  const d = ev.data, t = ev.t;
+  if (ev.leaf !== "cmd" && !replay) lastRx = Date.now();
+  switch (ev.leaf) {
+    case "state": if (!replay) onState(d, t); if (!$("showState").checked) return; break;
+    case "status": onStatus(d); break;
+    case "obstacle": onObstacle(d, t); if (replay) view.obstacle = null; break;
+    case "avoid": onAvoid(d, t); if (replay) view.avoid = null; break;
+    case "hump": onHump(d, t); break;
+    case "impact": onImpact(t); break;
+    case "barcode": onBarcode(d, t, replay); break;
+    case "bcscan": onScan(d, t, replay); break;
+    case "bcbits": onBits(d); break;
+    case "ack": onAck(d, t); break;
+  }
+  logLine(t, ev.leaf, typeof d === "string" ? d : JSON.stringify(d), ev.leaf === "impact" || (ev.leaf === "line" && d.lost));
+}
+function hello(ev) {
+  setBroker(ev.broker); car = ev.car;
+  if (ev.car.last_rx_age_s != null) lastRx = Date.now() - ev.car.last_rx_age_s * 1000;
+  (ev.states || []).forEach(s => onState(clean(s.data), s.t, s.epoch));
+  ev.events.forEach(e => handle(e, true));
+}
+function connect() {
+  if (location.search.includes("static")) {   // one-shot render (headless screenshots)
+    fetch("/api/snapshot?n=200").then(r => r.json()).then(hello);
+    return;
+  }
+  const es = new EventSource("/api/events");
+  es.onmessage = m => {
+    const ev = JSON.parse(m.data);
+    if (ev.kind === "hello") { hello(ev); return; }
+    handle(ev, false);
+  };
+  es.onerror = () => { $("brText").textContent = "Dashboard server offline"; $("brDot").className = "dot critical"; };
+}
+function toast(msg, kind) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  t.style.background = kind === "bad" ? "var(--critical)" : "";
+  t.style.color = kind === "bad" ? "#fff" : "";
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", kind === "bad" ? 4000 : 2200);
+}
+window.addEventListener("resize", () => { drawSpeed(); drawRange(); });
+setBroker({ running: false });
+connect();
+</script>
+</body>
+</html>

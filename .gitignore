@@ -34,3 +34,6 @@ config/wifi_secrets.h
 CLAUDE.md
 # Local test images, serial-capture scripts and logs (not shared)
 /test/
+dashboard/fake_car.py
+dashboard/shot_bcfold.png
+dashboard/shot_bypass.png
