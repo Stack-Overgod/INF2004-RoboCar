@@ -10,9 +10,9 @@
  *	With no sensor every ping simply times out, which still exercises the
  *	whole trigger -> timer alarm -> timeout -> deferred publish chain.
  *
- *	Watch the servo while S5-U09 runs: it should stop at 30, 60, 90, 120
- *	and 150 degrees (plus a 6-degree fine sweep if something is closer
- *	than the obstacle threshold).
+ *	Watch the servo while S5-U09 runs: it should stop at 70, 80, 90, 100 
+ * / and 110 degrees (plus a 5-degree fine sweep if something is closer 
+ * / than the obstacle threshold). The servo only swings ±20 degrees.
  */
 
 #include "../rc_prelude.h"	/* must be first: size_t clash, see the file */
@@ -50,7 +50,7 @@
 
 /*
  * Set to 1 for a live bench after the tests finish: the servo sweeps
- * 30 -> 150 -> 30 degrees in 30-degree steps, pausing at each stop, and
+ * 70 -> 110 -> 70 degrees in 10-degree steps, pausing at each stop, and
  * prints that angle's range, forever.  Use it to SEE the servo turn and
  * to check distances with a hand or a box.  Put it back to 0 before
  * committing, so other buddies' TEST=1 runs stay quiet.
@@ -152,6 +152,22 @@ static void fake_barcode(char symbol, rc_nav_cmd_t cmd)
 	(void)rc_event_publish(&e);
 }
 
+/* Publish the line samples of a junction: both sensors black (1/1) for
+ * longer than sub_nav's NAV_JUNCTION_CONFIRM (3 samples). */
+static void fake_junction(void)
+{
+	rc_event_t e = { 0 };
+	int        i;
+
+	e.id                = RC_EVT_LINE_SAMPLE;
+	e.u.line.on_line_l  = true;
+	e.u.line.on_line_r  = true;
+	e.u.line.position   = 0;
+	for (i = 0; i < 5; i++) {
+		(void)rc_event_publish(&e);
+	}
+}
+
 /* True if nav is busy with the command (EXECUTING_CMD) or has already
  * stopped because sub_motion refused or aborted the move. Either means
  * the command was taken, with or without Buddy 2's motion wired. */
@@ -186,7 +202,7 @@ static const char *plan_name(rc_nav_cmd_t c)
  * normally).  One stop every ~0.7 s so the movement is easy to see. */
 static void s5_live_task(INT stacd, void *exinf)
 {
-	static const int16_t stops[] = { 30, 60, 90, 120, 150, 120, 90, 60 };
+	static const int16_t stops[] = { 70, 80, 90, 100, 110, 100, 90, 80 };
 	uint32_t i = 0U;
 	uint32_t before;
 	int16_t  from;
@@ -195,7 +211,7 @@ static void s5_live_task(INT stacd, void *exinf)
 	(void)stacd;
 	(void)exinf;
 
-	tm_printf((UB*)"[S5] live bench: servo sweeps 30..150, one range per stop\n");
+	tm_printf((UB*)"[S5] live bench: servo sweeps 70..110, one range per stop\n");
 	for (;;) {
 		from = drv_servo_get_angle();
 		to   = stops[i];
@@ -275,14 +291,14 @@ EXPORT void subsystem5_test(void)
 	TEST_CHECK("S5-U03",
 		   (a_hi == RC_SERVO_ANGLE_MAX) && (a_lo == RC_SERVO_ANGLE_MIN)
 		   && (drv_servo_get_angle() == 90),
-		   "servo clamps commands to 0..180 deg");
+		   "servo clamps commands to 70..110 deg (±20 deg swing)");
 
 	/* S5-U04: the settle estimate behaves sensibly.  Checks properties,
 	 * not exact numbers, so it keeps passing after US_PER_DEG is tuned. */
 	TEST_CHECK("S5-U04",
 		   (drv_servo_settle_ms(90, 90) > 0U)
-		   && (drv_servo_settle_ms(30, 150) == drv_servo_settle_ms(150, 30))
-		   && (drv_servo_settle_ms(30, 150) > drv_servo_settle_ms(60, 90)),
+		   && (drv_servo_settle_ms(70, 110) == drv_servo_settle_ms(110, 70))
+		   && (drv_servo_settle_ms(70, 110) > drv_servo_settle_ms(80, 90)),
 		   "settle time is positive, symmetric and grows with travel");
 
 #if S5_TEST_STANDALONE
@@ -325,7 +341,7 @@ EXPORT void subsystem5_test(void)
 #endif
 
 	/* S5-U09: a whole coarse (+ fine, if something is close) scan runs
-	 * and reports.  Coarse is 30..150 deg in 30-deg steps = 5 bearings;
+	 * and reports.  Coarse is 70..110 deg in 10-deg steps = 5 bearings;
 	 * every bearing is recorded, even when it timed out. */
 	scan_done = false;
 	(void)sub_scan_on_complete(on_scan, NULL);
@@ -387,9 +403,9 @@ EXPORT void subsystem5_test(void)
 	/* S5-N04: the scan finishes and its plan is acted on: FOLLOWING
 	 * (nothing close), STOPPED (no gap, or bypass refused) or
 	 * RECOVERING (bypass driven, once sub_motion is wired). */
-	got = wait_nav(RC_NAV_AVOIDING, false, 5000);
+	got = wait_nav(RC_NAV_AVOIDING, false, 15000);	/* creep + spin ~8 s */
 	TEST_CHECK("S5-N04", got,
-		   "scan plan handled: nav leaves AVOIDING within 5 s");
+		   "scan plan handled: nav leaves AVOIDING within 15 s");
 	tm_printf((UB*)"[INFO] S5 nav after plan: %s\n",
 		  sub_nav_state_name(sub_nav_state()));
 
@@ -432,13 +448,23 @@ EXPORT void subsystem5_test(void)
 		   (r1 == RC_OK) && wait_nav(RC_NAV_READING_BARCODE, true, 200),
 		   "start character while FOLLOWING -> READING_BARCODE");
 
-	/* S5-N09: the data character 'A' is executed as a left turn (FR3):
-	 * EXECUTING_CMD, or STOPPED if sub_motion refuses the move. */
+	/* S5-N09: the data character 'A' is stored, not run (2026-10-29):
+	 * nav goes back to FOLLOWING, and at the next junction (line pair
+	 * 1/1) runs the left turn (FR3): EXECUTING_CMD, or STOPPED if
+	 * sub_motion refuses the move.  Real line samples are held, so what
+	 * is under the sensors can't make the junction early or late. */
+	rc_sense_test_hold(true);
+	(void)tk_dly_tsk(S5_HOLD_SETTLE_MS);
 	fake_barcode('A', RC_CMD_TURN_LEFT);
-	got = wait_nav(RC_NAV_READING_BARCODE, false, 200) && nav_took_command();
+	got = wait_nav(RC_NAV_FOLLOWING, true, 200);
+	tm_printf((UB*)"[INFO] S5 nav after barcode A: %s (stored)\n",
+		  sub_nav_state_name(sub_nav_state()));
+	fake_junction();
+	got = got && wait_nav(RC_NAV_FOLLOWING, false, 200) && nav_took_command();
+	rc_sense_test_hold(false);
 	TEST_CHECK("S5-N09", got,
-		   "barcode 'A' while READING_BARCODE -> EXECUTING_CMD (or STOPPED if refused)");
-	tm_printf((UB*)"[INFO] S5 nav after barcode A: %s\n",
+		   "barcode 'A' stored, then junction (1/1) -> EXECUTING_CMD (or STOPPED if refused)");
+	tm_printf((UB*)"[INFO] S5 nav after junction: %s\n",
 		  sub_nav_state_name(sub_nav_state()));
 	nav_reset();
 

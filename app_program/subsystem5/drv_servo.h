@@ -14,12 +14,18 @@
 
 #include "../rc_types.h"
 
-/* The physical limits of the servo bracket's swing, in degrees. 0 is
- * fully one side, 180 fully the other, 90 is straight ahead (see
- * the Buddy 5 guide for how "straight ahead" is set mechanically).
- * Every angle passed into this driver gets clamped to this range. */
-#define RC_SERVO_ANGLE_MIN  (0)
-#define RC_SERVO_ANGLE_MAX  (180)
+/* The physical limits of the servo bracket's swing, in degrees. 90 is
+ * straight ahead (see the Buddy 5 guide for how "straight ahead" is set
+ * mechanically); smaller angles look right, larger look left. Our servo
+ * can only swing 20 degrees either side of centre, so the usable range
+ * is 70..110, not the 0..180 of a full hobby servo. Every angle passed
+ * into this driver gets clamped to this range, so nothing ever drives
+ * the servo into its stop (a stalled servo draws stall current from the
+ * battery the motors share). */
+#define RC_SERVO_ANGLE_CENTRE (90)
+#define RC_SERVO_HALF_SWING   (20)
+#define RC_SERVO_ANGLE_MIN  (RC_SERVO_ANGLE_CENTRE - RC_SERVO_HALF_SWING)
+#define RC_SERVO_ANGLE_MAX  (RC_SERVO_ANGLE_CENTRE + RC_SERVO_HALF_SWING)
 
 /* Sets up the PWM (Pulse Width Modulation — a way to encode a value, here
  * an angle, as how long a repeating electrical pulse stays "on") signal

@@ -41,6 +41,18 @@ rc_result_t sub_scan_start(void);
 /* Cancels a scan currently in progress and returns the state machine to
  * idle. */
 rc_result_t sub_scan_abort(void);
+
+/* As sub_scan_start(), but the car spins in place (+-40 deg, encoders
+ * for the heading) with the servo straight ahead, to measure the
+ * obstacle's length and where its edges are (2026-10-29, Buddy 5). The
+ * profile's clearance_left/right_mm are then each edge's distance from
+ * the line (0 = edge not found). Takes ~5 s; motors stopped at the end. */
+rc_result_t sub_scan_start_spin(void);
+
+/* As sub_scan_start(), but the servo sweeps +-15 deg with the chassis
+ * still (2026-10-29, Buddy 5); an edge not seen is placed from the
+ * longest obstacle on the course (20 cm) and the length reads 0. */
+rc_result_t sub_scan_start_narrow(void);
 /* True while a coarse or fine scan is actively running (not just the
  * slow forward watch — see sub_scan_set_watch below). */
 bool sub_scan_busy(void);

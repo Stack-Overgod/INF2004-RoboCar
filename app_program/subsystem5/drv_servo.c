@@ -18,17 +18,22 @@
 #define SERVO_HZ            (50UL)
 
 /* The pulse width (how long the pin stays "on" within each 20 ms frame)
- * that a hobby servo reads as "go to one extreme" (500 us) and "go to
- * the other extreme" (2400 us). These numbers come from the servo's own
- * datasheet/convention, not from this codebase — most hobby servos use
- * something close to this range. Everything in between is linearly
- * interpolated to an angle (see drv_servo_set_angle below). */
-#define PULSE_MIN_US        (500UL)
-#define PULSE_MAX_US        (2400UL)
+ * sent at each end of our limited swing: PULSE_MIN_US at
+ * RC_SERVO_ANGLE_MIN (70 deg) and PULSE_MAX_US at RC_SERVO_ANGLE_MAX
+ * (110 deg). A standard hobby servo maps 500 us..2400 us onto 0..180
+ * deg, which puts 70 deg at 1239 us, 90 deg at 1450 us and 110 deg at
+ * 1661 us. Everything in between is linearly interpolated to an angle
+ * (see drv_servo_set_angle below).
+ *
+ * Calibrate on the bench: if the servo hits its stop (buzzes) before
+ * 70/110, move these two values toward 1450; if it stops short of its
+ * real ±20 deg travel, move them away from 1450. */
+#define PULSE_MIN_US        (1239UL)
+#define PULSE_MAX_US        (1661UL)
 
-/* Total degrees of travel the servo bracket covers (180 - 0 = 180). Used
+/* Total degrees of travel the servo bracket covers (110 - 70 = 40). Used
  * as the divisor below to turn "degrees requested" into "fraction of the
- * full pulse-width range." */
+ * pulse-width range." */
 #define SWEEP_DEG           (RC_SERVO_ANGLE_MAX - RC_SERVO_ANGLE_MIN)
 
 /* Typical 9 g servo is around 0.12 s per 60 degrees unloaded. Add a
@@ -88,13 +93,16 @@ rc_result_t drv_servo_set_angle(int16_t deg)
         deg = RC_SERVO_ANGLE_MAX;
     }
 
-    /* Linear interpolation: 0 deg -> PULSE_MIN_US, 180 deg -> PULSE_MAX_US,
-     * everything else proportional in between. All integer arithmetic
+    /* Linear interpolation: RC_SERVO_ANGLE_MIN -> PULSE_MIN_US,
+     * RC_SERVO_ANGLE_MAX -> PULSE_MAX_US, everything else proportional in
+     * between. The angle is measured from RC_SERVO_ANGLE_MIN (not from 0),
+     * since the swing no longer starts at 0 deg. All integer arithmetic
      * (multiply before divide, to keep as much precision as possible
      * without ever using a fractional/float type — see TEAM_GUIDE.md §5,
      * \"No floating point anywhere\"). */
     pulse_us = PULSE_MIN_US
-             + (((PULSE_MAX_US - PULSE_MIN_US) * (uint32_t)deg) / SWEEP_DEG);
+             + (((PULSE_MAX_US - PULSE_MIN_US)
+                 * (uint32_t)(deg - RC_SERVO_ANGLE_MIN)) / SWEEP_DEG);
 
     last_angle = deg;
 
