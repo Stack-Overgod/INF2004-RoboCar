@@ -66,7 +66,7 @@ One owner per pin. Source of truth: report §2 (TABLE 7) and `rc_config.h`.
 | GP20 | | free |
 | GP21 | | free |
 | GP22 | | free |
-| GP26 | S3 (Buddy 3) | `IR_BARCODE_A` barcode analogue AO (Grove 6), ADC0 — threshold auto-cal |
+| GP26 | S3 (Buddy 3) | Barcode analogue AO (Grove 6) is wired here but **not read**; ADC disabled (DEVCNF_USE_ADC 0). Keep it free of other signals |
 | GP27 | S3 (Buddy 3) | `IR_BARCODE_D` barcode digital DO (Grove 6), both-edge IRQ |
 | GP28 | S2 (Buddy 2) | `ENC_R_B` right encoder B (Grove 7) |
 
@@ -78,7 +78,6 @@ report §2/§9 (TABLE 7, TABLE 8).
 | Peripheral | Owner subsystem | Owning task | Pins |
 |---|---|---|---|
 | I2C0 | S4 (Buddy 4) | Sense task | GP4/GP5 (re-pinned from GP8/GP9) |
-| ADC (ch0) | S3 (Buddy 3) | Sense task (barcode cal) | GP26 |
 | PWM slice 4 (motors R) | S2 (Buddy 2) | Motion task | GP8/GP9 |
 | PWM slice 5 (motors L) | S2 (Buddy 2) | Motion task | GP10/GP11 |
 | PWM slice 7 ch B (servo) | S5 (Buddy 5) | Scan task | GP15 |
