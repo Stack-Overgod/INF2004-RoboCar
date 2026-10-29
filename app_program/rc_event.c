@@ -314,6 +314,9 @@ static const char *evt_name(rc_evt_id_t id)
     case RC_EVT_LINK_STATE:       return "LINK_STATE";
     case RC_EVT_NAV_TIMEOUT:      return "NAV_TIMEOUT";
     case RC_EVT_RECOVERY_FAILED:  return "RECOVERY_FAILED";
+    case RC_EVT_BARCODE_SCAN:     return "BARCODE_SCAN";
+    case RC_EVT_BARCODE_RAW:      return "BARCODE_RAW";
+    case RC_EVT_SPIN_EDGES:       return "SPIN_EDGES";
     default:                      return "?";
     }
 }

@@ -71,10 +71,9 @@
 #define RC_PIN_IR_LINE_L        (16U)
 #define RC_PIN_IR_LINE_R        (6U)
 
-/* IR barcode sensor on Grove 6 (GP26/GP27). Both are inputs to the Pico:
- * AOUT on the ADC for calibration, DOUT on an edge interrupt for decoding. */
-#define RC_PIN_IR_BARCODE_A     (26U)   /* ADC channel 0 */
-#define RC_ADC_CH_IR_BARCODE    (0U)
+/* IR barcode sensor on Grove 6 (GP26/GP27). Only DOUT (GP27) is used, on
+ * an edge interrupt for decoding. AOUT (GP26) is not read, so the ADC is
+ * off (config/config_device.h DEVCNF_USE_ADC 0). */
 #define RC_PIN_IR_BARCODE_D     (27U)
 
 /* Liveness LED on the GPIO breakout header. The port defaults
@@ -185,10 +184,14 @@
  *  Servo scan geometry
  * ------------------------------------------------------------------ */
 
-#define RC_SCAN_COARSE_START    (30)
-#define RC_SCAN_COARSE_END      (150)
-#define RC_SCAN_COARSE_STEP     (30)
-#define RC_SCAN_FINE_STEP       (6)
+/* The scan servo only swings ±20 deg about 90 (drv_servo.h), so the
+ * coarse sweep covers 70..110: 5 bearings 10 deg apart. The fine sweep
+ * re-scans ±1 coarse step around the closest hit in 5 deg steps, which
+ * is already finer than the HC-SR04's ~15 deg beam. */
+#define RC_SCAN_COARSE_START    (70)
+#define RC_SCAN_COARSE_END      (110)
+#define RC_SCAN_COARSE_STEP     (10)
+#define RC_SCAN_FINE_STEP       (5)
 #define RC_SCAN_MAX_POINTS      (32U)
 
 /* ------------------------------------------------------------------ *

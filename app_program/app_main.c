@@ -60,14 +60,6 @@
 #include "sub_nav.h"		/* shared layer: mission state machine (report §6.5) */
 #include "rc_sense.h"		/* shared layer: the one Sense task (report §3) */
 #include "rc_config.h"		/* shared layer: RC_RISK1_SOAK_SECS */
-#if TM_MQTT && !APP_TEST
-#include "subsystem1/sub_telemetry.h"	/* sub_telemetry_mqtt_link() */
-
-/* MQTT build: longest wait at boot for the broker before the run starts
-   anyway.  Joining the hotspot and the broker takes ~8 s; without the
-   wait a short run is over before the laptop sees any of it. */
-#define START_WAIT_BROKER_MS	(20000)
-#endif
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -171,33 +163,16 @@ EXPORT INT usermain(void)
 	   collide with the subsystem tests' own pings.  subsystem5_test()
 	   starts and stops nav itself (S5-N02..N05). */
 #if TM_MQTT
-	{
-		bool	wifi_up = false;
-		bool	broker_up = false;
-		INT	waited;
-
-		for (waited = 0; waited < START_WAIT_BROKER_MS; waited += 100) {
-			sub_telemetry_mqtt_link(&wifi_up, &broker_up);
-			if (broker_up) {
-				break;
-			}
-			(void)tk_dly_tsk(100);
-		}
-		tm_printf((UB*)"start: broker %s after %d ms\n",
-			  broker_up ? "up" : "NOT up, starting anyway",
-			  (int)waited);
-		/* The telemetry task may still be asleep in a reconnect
-		   back-off from before the broker came up (seen on the car:
-		   broker up at ~4.7 s, first state message at 8.7 s), so give
-		   it its longest back-off before the wheels turn. */
-		if (broker_up) {
-			(void)tk_dly_tsk((TMO)RC_NET_BACKOFF_MAX_MS);
-		}
-	}
-#endif
+	/* MQTT build: stay in IDLE, motors off, until START (G) arrives on
+	   the cmd topic (sub_nav on_command_rx).  2026-10-29, Buddy 5: the
+	   car drove off ~13 s after every boot or flash. */
+	tm_printf((UB*)"start: IDLE, waiting for START (G) over MQTT\n");
+#else
+	/* No MQTT: nothing can send START, so start the run now. */
 	if (sub_nav_start() != RC_OK) {
 		tm_printf((UB*)"ERROR sub_nav_start\n");
 	}
+#endif
 #endif
 
 #if APP_TEST

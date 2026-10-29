@@ -36,7 +36,8 @@ typedef enum {
     RC_CMD_TURN_RIGHT,
     RC_CMD_GO_STRAIGHT,
     RC_CMD_U_TURN,
-    RC_CMD_STOP
+    RC_CMD_STOP,
+    RC_CMD_START    /* remote only: restart the run from STOPPED */
 } rc_nav_cmd_t;
 
 typedef enum {
@@ -100,6 +101,12 @@ typedef enum {
     /* buddy 5, navigation (sub_nav). Appended so no existing id moves. */
     RC_EVT_NAV_TIMEOUT,         /* sub_nav's own state timer; tick.seq   */
     RC_EVT_RECOVERY_FAILED,     /* FR9: line not found after a bypass    */
+    /* buddy 3, barcode.*/
+    RC_EVT_BARCODE_SCAN,        /* summary of one pass over a barcode,   */
+    RC_EVT_BARCODE_RAW,         /* the same pass as wide/narrow bits     */
+    /* buddy 5, spin scan diagnostics. Appended so no existing id moves. */
+    RC_EVT_SPIN_EDGES,          /* each pass's edge, after a spin scan   */
+
 
     RC_EVT_COUNT                /* keep last */
 } rc_evt_id_t;
@@ -138,7 +145,6 @@ typedef struct {
     bool     on_line_l;
     bool     on_line_r;
     int16_t  position;          /* -1000 far left .. +1000 far right     */
-    uint16_t barcode_raw;       /* ADC counts from the barcode sensor    */
 } rc_pl_line_t;
 
 typedef struct {
@@ -151,6 +157,51 @@ typedef struct {
     rc_nav_cmd_t command;       /* mapped navigation command             */
     bool         reversed;      /* decoded while scanning back to front  */
 } rc_pl_barcode_t;
+
+/* One scan attempt: every edge from the first after a quiet spell until
+ * the sensor goes quiet again. Counters stop at 255. A failed window is
+ * normal between characters of a good read; a pass with ok == 0 is the
+ * one to look at. 16 bytes, so rc_event_t does not grow. */
+typedef struct {
+    char     text[4];           /* first 3 symbols decoded, NUL-ended    */
+    uint8_t  edges;             /* bar/space edges seen                  */
+    uint8_t  ok;                /* characters decoded                    */
+    uint8_t  f_ratio;           /* window not wide:narrow >= 2           */
+    uint8_t  f_wide;            /* window without exactly 3 wide         */
+    uint8_t  f_nomatch;         /* 3 wide, but not in the Code 39 table  */
+    uint8_t  f_glitch;          /* edge under ELEM_MIN_US, window reset  */
+    uint16_t last_nomatch;      /* pattern of the last f_nomatch, 9 bits */
+    uint16_t min_10us;          /* narrowest element, 10 us units        */
+    uint16_t max_10us;          /* widest element, 10 us units           */
+} rc_pl_bar_scan_t;
+
+
+/* One scan attempt as the sensor saw it: every bar and space in order,
+ * 1 = wide, 0 = narrow, each judged against its 9 neighbours (as the
+ * decoder does), so a slow-down part way through does not turn every
+ * later element wide. Edges under ELEM_MIN_US are left out. 16 bytes. */
+#define RC_BAR_RAW_MAX  (64U)
+typedef struct {
+    uint8_t  n;                 /* elements recorded, <= RC_BAR_RAW_MAX  */
+    uint8_t  first_bar;         /* 1: element 0 is a bar (black)         */
+    uint8_t  bits[8];           /* element i wide: bits[i/8] bit (i%8)   */
+    uint16_t nar_10us;          /* average narrow element, 10 us units   */
+    uint16_t wid_10us;          /* average wide element, 10 us units     */
+    uint8_t  more;              /* elements past RC_BAR_RAW_MAX, dropped */
+    uint8_t  pad;
+} rc_pl_bar_raw_t;
+
+/* A spin scan's edges, one per pass (sub_scan): [0] left on the way out,
+ * [1] left on the way back across, [2] right on the way out, [3] right on
+ * the way back to straight. Heading in 0.1 deg (> 0 left) where the beam
+ * left the obstacle, range in 2 mm units (0..510 mm). 16 bytes. */
+typedef struct {
+    uint16_t face_mm;           /* face distance from the axle           */
+    int16_t  ddeg[4];
+    uint8_t  r_2mm[4];
+    uint8_t  found;             /* bit i: pass i found its edge          */
+    uint8_t  n_points;          /* readings taken                        */
+} rc_pl_spin_t;
 
 typedef struct {
     int16_t acc_x;              /* raw, in milli-g                       */
@@ -189,7 +240,10 @@ typedef struct {
 typedef struct {
     rc_nav_cmd_t action;
     uint16_t     lateral_mm;    /* how far to step aside                 */
-    uint16_t     forward_mm;    /* how far to run past the obstacle      */
+    uint16_t     forward_mm;    /* how far ahead of the axle the car must
+                                 * get before turning back in (sub_nav
+                                 * bypass; spin scan: past a square
+                                 * obstacle's far side)                  */
 } rc_pl_plan_t;
 
 typedef struct {
@@ -217,6 +271,9 @@ typedef struct {
         rc_pl_line_t         line;
         rc_pl_bar_edge_t     bar_edge;
         rc_pl_barcode_t      barcode;
+        rc_pl_bar_scan_t     bar_scan;
+        rc_pl_bar_raw_t      bar_raw;
+        rc_pl_spin_t         spin;
         rc_pl_imu_t          imu;
         rc_pl_hump_t         hump;
         rc_pl_motion_class_t motion_class;
