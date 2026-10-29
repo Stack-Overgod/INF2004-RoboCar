@@ -1,8 +1,8 @@
 # RoboCar dashboard (local, stdlib only)
 
 ```powershell
-python -I test\dashboard\dashboard.py                  # open http://127.0.0.1:8080
-python -I test\dashboard\dashboard.py --start-broker   # also start the broker at launch
+python -I dashboard\dashboard.py                  # open http://127.0.0.1:8080
+python -I dashboard\dashboard.py --start-broker   # also start the broker at launch
 ```
 
 - **Broker**: Start/Stop buttons run `scripts/mqtt_broker.py` (port 1883, no time limit).
@@ -33,7 +33,7 @@ curl -s localhost:8080/api/log?n=200       # last 200 raw broker lines
 
 ## Testing without the car
 
-`python -I test\dashboard\fake_car.py 20` connects as `robocar-01` from 127.0.0.1,
+`python -I dashboard\fake_car.py 20` connects as `robocar-01` from 127.0.0.1,
 publishes sample telemetry for 20 s and acks commands like the firmware.
 **Don't leave a test dashboard/broker running before a track run**: it holds ports
 8080 and 1883, and the real car (which connects to this laptop) would join it.

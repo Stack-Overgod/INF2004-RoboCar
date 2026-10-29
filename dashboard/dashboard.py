@@ -5,7 +5,7 @@ reads its stdout (every PUBLISH and every connect/disconnect is printed
 there), keeps the latest value of each topic and a ring of recent events,
 and streams them to the browser with Server-Sent Events.
 
-    python -I test\\dashboard\\dashboard.py            # then open http://127.0.0.1:8080
+    python -I dashboard\\dashboard.py            # then open http://127.0.0.1:8080
 
 HTTP endpoints (127.0.0.1 only):
     GET  /                    the dashboard page
@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+REPO = os.path.abspath(os.path.join(HERE, ".."))
 BROKER_PY = os.path.join(REPO, "scripts", "mqtt_broker.py")
 LOG_DIR = os.path.join(REPO, "test", "wifi")
 PAGE = os.path.join(HERE, "index.html")
