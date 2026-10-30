@@ -73,6 +73,12 @@
  * Both are guesses; measure them with the motion bench. */
 #define FF_START_PERMILLE       (150)
 #define FF_TOP_SPEED_MM_S       (400)
+/* Per-wheel feedforward gain, permille. The left motor is ~15 % weaker
+ * than the right (2026-10-29 track, Buddy 5; 2026-10-26 stand 83 vs 97
+ * mm/s at equal duty): it gets 15 % more feedforward so it does not have
+ * to wait for the integral to catch up at every speed change. */
+#define FF_GAIN_L_PERMILLE      (1150)
+#define FF_GAIN_R_PERMILLE      (1000)
 
 /* Speed profile for queued moves. A move starts at MIN_SPEED_MM_S, speeds
  * up by ACCEL_MM_S_PER_CYCLE every 20 ms (1 m/s^2, gentle enough not to
@@ -80,6 +86,10 @@
  * down to MIN_SPEED_MM_S, so the brake at the goal stops the car close to
  * it instead of coasting past. */
 #define MIN_SPEED_MM_S          (60)
+/* A cruise speed set below MIN_SPEED_MM_S (sub_nav's slow detour, at the
+ * ~32 mm/s line speed, 2026-10-29) becomes the floor and the turn speed
+ * too, down to SLOW_FLOOR_MM_S so a move always finishes. */
+#define SLOW_FLOOR_MM_S         (15)
 #define ACCEL_MM_S_PER_CYCLE    (20)
 #define DECEL_ZONE_MM           (60U)
 
@@ -164,6 +174,7 @@ typedef struct {
     int32_t kd;
     int32_t i_term;
     int32_t prev_meas;
+    int32_t ff_permille;            /* feedforward gain, FF_GAIN_x */
 } pid_t;
 
 /* Everything the control loop keeps about one wheel. */
@@ -287,13 +298,31 @@ static int32_t clamp_duty(int32_t v)
     return v;
 }
 
-/* The speed a move cruises at. Never below MIN_SPEED_MM_S, so a move can
- * always finish (a cruise speed of 0 would never get there). */
+/* The slowest a move runs (start, end of the ramp down): MIN_SPEED_MM_S,
+ * or the cruise speed when that is set lower (never below
+ * SLOW_FLOOR_MM_S, so a move can always finish). Spin turns never go
+ * below MIN_SPEED_MM_S: at 32 mm/s a turn in place stalled on the foam
+ * mat (2026-10-29 18:56, both wheels 0 while the duty climbed to 500). */
+static int32_t speed_floor(mode_t m)
+{
+    int32_t c = (int32_t)cruise_mm_s;
+
+    if ((c >= MIN_SPEED_MM_S) || (m == MODE_TURN)) {
+        return MIN_SPEED_MM_S;
+    }
+    return (c < SLOW_FLOOR_MM_S) ? SLOW_FLOOR_MM_S : c;
+}
+
+/* The speed a move cruises at. Turns run at TURN_SPEED_MM_S unless the
+ * cruise speed is lower, then at that. Never below speed_floor(). */
 static int32_t cruise_speed(mode_t m)
 {
-    int32_t v = (m == MODE_TURN) ? TURN_SPEED_MM_S : (int32_t)cruise_mm_s;
+    int32_t v = (int32_t)cruise_mm_s;
 
-    return (v < MIN_SPEED_MM_S) ? MIN_SPEED_MM_S : v;
+    if ((m == MODE_TURN) && (v > TURN_SPEED_MM_S)) {
+        v = TURN_SPEED_MM_S;
+    }
+    return (v < speed_floor(m)) ? speed_floor(m) : v;
 }
 
 /* ------------------------------------------------------------------ *
@@ -344,7 +373,8 @@ static int32_t pid_step(pid_t *p, int32_t target, int32_t meas)
     d = -((meas - p->prev_meas) * 1000) / RC_PERIOD_MOTION_MS;
     p->prev_meas = meas;
 
-    out = ((feedforward(target) * PID_SCALE) + (p->kp * err) + p->i_term
+    out = (((feedforward(target) * p->ff_permille / 1000) * PID_SCALE)
+           + (p->kp * err) + p->i_term
            + (p->kd * d)) / PID_SCALE;
 
     /* Anti-windup: only integrate while the output can still act on the
@@ -589,7 +619,7 @@ static uint32_t start_move(mode_t m, uint64_t goal_um, int8_t sign,
 
     goal_ticks  = um_to_ticks(goal_um);
     decel_ticks = um_to_ticks((uint64_t)zone_mm * 1000U);
-    ramp_mm_s   = MIN_SPEED_MM_S;
+    ramp_mm_s   = speed_floor(m);
     move_cycles = 0U;
 
     /* Expected time in ms is micrometres / (mm/s). Allow twice that plus
@@ -630,6 +660,7 @@ static uint32_t queue_move(mode_t m, uint64_t goal_um, int8_t sign,
 static int32_t profile_speed(uint32_t progress)
 {
     int32_t  cruise    = cruise_speed(mode);
+    int32_t  floor_v   = speed_floor(mode);
     int32_t  v         = cruise;
     uint32_t remaining = goal_ticks - progress;
     int32_t  v_decel;
@@ -644,14 +675,14 @@ static int32_t profile_speed(uint32_t progress)
     /* (cruise - MIN) is at most ~65000 and remaining < decel_ticks here,
      * so the product stays well inside 32 bits. */
     if (remaining < decel_ticks) {
-        v_decel = MIN_SPEED_MM_S
-                  + (int32_t)(((uint32_t)(cruise - MIN_SPEED_MM_S)
+        v_decel = floor_v
+                  + (int32_t)(((uint32_t)(cruise - floor_v)
                                * remaining) / decel_ticks);
         if (v > v_decel) {
             v = v_decel;
         }
     }
-    return (v < MIN_SPEED_MM_S) ? MIN_SPEED_MM_S : v;
+    return (v < floor_v) ? floor_v : v;
 }
 
 /* Straight-line correction in mm/s: positive when the left wheel is
@@ -849,6 +880,8 @@ rc_result_t sub_motion_init(void)
         wheels[i].pid.kp = PID_KP;
         wheels[i].pid.ki = PID_KI;
         wheels[i].pid.kd = PID_KD;
+        wheels[i].pid.ff_permille = (i == (uint32_t)RC_SIDE_LEFT)
+                                    ? FF_GAIN_L_PERMILLE : FF_GAIN_R_PERMILLE;
         wheels[i].dir    = 1;
         wheels[i].raw    = 0;
         wheels[i].meas   = 0;
@@ -897,11 +930,18 @@ rc_result_t sub_motion_init(void)
 }
 
 /* Cruise speed for distance moves, mm/s. Takes effect at once, even on a
- * move already running. Values below MIN_SPEED_MM_S cruise at that. */
+ * move already running. Below MIN_SPEED_MM_S it also slows the turns and
+ * the ramp ends (see speed_floor). */
 rc_result_t sub_motion_set_speed(uint16_t mm_s)
 {
     cruise_mm_s = mm_s;
     return RC_OK;
+}
+
+/* The cruise speed last set, mm/s (so a caller can put it back). */
+uint16_t sub_motion_get_speed(void)
+{
+    return cruise_mm_s;
 }
 
 /* moveForward(distance). Non-blocking: returns the move id at once while

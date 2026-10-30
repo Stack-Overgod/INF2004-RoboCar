@@ -79,6 +79,8 @@ rc_result_t sub_motion_init(void);
  * between the ramp up and the slow-down at the end of a move. Takes
  * effect at once, even on a move already running. */
 rc_result_t sub_motion_set_speed(uint16_t mm_s);
+/* The cruise speed last set, mm/s. */
+uint16_t sub_motion_get_speed(void);
 
 /*
  *  Queued moves. Each returns a move id (used to match it up with the
