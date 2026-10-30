@@ -365,8 +365,8 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
     }
 }
 
-/* Everything that gets its own message the moment it happens: barcode,
- * hump, impact, obstacle, avoidance plan, line lost/found, move done.
+/* Everything that gets its own message the moment it happens: barcode scan attempt,
+ * hump, impact, obstacle, avoidance plan, lost/found, move done.
  * Two of them also feed the per-tick line, so cache those on the way. */
 static void on_notable(const rc_event_t *evt, void *ctx)
 {
@@ -410,6 +410,119 @@ rc_result_t sub_telemetry_publish_event(const rc_event_t *evt)
                 (int)evt->u.barcode.command,
                 evt->u.barcode.reversed ? 1 : 0);
             return send("barcode", buf);
+
+        case RC_EVT_BARCODE_SCAN:
+        {
+            /* The last unmatched pattern, first element first, as w (wide)
+             * / n (narrow), e.g. "nnwwnnnnw"; "-" if every 3-wide window
+             * matched. */
+            const rc_pl_bar_scan_t *s = &evt->u.bar_scan;
+            char     pat[10];
+            uint32_t b;
+
+            if (s->f_nomatch == 0U)
+            {
+                pat[0] = '-';
+                pat[1] = '\0';
+            }
+            else
+            {
+                for (b = 0U; b < 9U; b++)
+                {
+                    pat[b] = ((s->last_nomatch & (1U << (8U - b))) != 0U)
+                             ? 'w' : 'n';
+                }
+                pat[9] = '\0';
+            }
+            (void)rc_snprintf(buf, sizeof(buf),
+                "{\"res\":\"%s\",\"txt\":\"%s\",\"ok\":%u,\"edges\":%u,"
+                "\"f_ratio\":%u,\"f_wide\":%u,\"f_nomatch\":%u,"
+                "\"f_glitch\":%u,\"pat\":\"%s\",\"min_us\":%u,\"max_us\":%u}",
+                (s->ok != 0U) ? "ok" : "fail",
+                s->text,
+                (unsigned int)s->ok,
+                (unsigned int)s->edges,
+                (unsigned int)s->f_ratio,
+                (unsigned int)s->f_wide,
+                (unsigned int)s->f_nomatch,
+                (unsigned int)s->f_glitch,
+                pat,
+                (s->min_10us == 0xFFFFU) ? 0U
+                                         : (unsigned int)s->min_10us * 10U,
+                (unsigned int)s->max_10us * 10U);
+            return send("bcscan", buf);
+        }
+
+        
+        case RC_EVT_SPIN_EDGES:
+        {
+            /* {"face":277,"n":45,"l0":"229/203","l1":"193/215",
+             *  "r1":"-287/222","r2":"-"}: each pass's edge as heading
+             * (0.1 deg, > 0 left) / range (mm), "-" when not found */
+            static const char *const key[4] = { "l0", "l1", "r1", "r2" };
+            const rc_pl_spin_t *sp = &evt->u.spin;
+            char     pass[4][16];
+            uint32_t i;
+
+            for (i = 0U; i < 4U; i++)
+            {
+                if ((sp->found & (1U << i)) != 0U)
+                {
+                    (void)rc_snprintf(pass[i], sizeof(pass[i]), "%d/%u",
+                                      (int)sp->ddeg[i],
+                                      (unsigned int)sp->r_2mm[i] * 2U);
+                }
+                else
+                {
+                    (void)rc_snprintf(pass[i], sizeof(pass[i]), "-");
+                }
+            }
+            (void)rc_snprintf(buf, sizeof(buf),
+                "{\"face\":%u,\"n\":%u,\"%s\":\"%s\",\"%s\":\"%s\","
+                "\"%s\":\"%s\",\"%s\":\"%s\"}",
+                (unsigned int)sp->face_mm, (unsigned int)sp->n_points,
+                key[0], pass[0], key[1], pass[1],
+                key[2], pass[2], key[3], pass[3]);
+            return send("spin", buf);
+        }
+
+        case RC_EVT_BARCODE_RAW:
+        {
+            /* "010010100 0 011010000 0 010010100": 1 = wide, 0 = narrow,
+             * in the order the sensor met them. A Code 39 character is 9
+             * elements and then a narrow gap, so after every 9 a space,
+             * the gap's bit, and a space. Lines up with the characters
+             * when the first element is the first bar of the start '*'. */
+            const rc_pl_bar_raw_t *r = &evt->u.bar_raw;
+            char     bits[RC_BAR_RAW_MAX + (2U * (RC_BAR_RAW_MAX / 10U)) + 3U];
+            uint32_t i;
+            uint32_t k = 0U;
+
+            for (i = 0U; i < (uint32_t)r->n; i++)
+            {
+                if ((i % 10U) == 9U)
+                {
+                    bits[k++] = ' ';
+                }
+                bits[k++] = ((r->bits[i / 8U] & (1U << (i % 8U))) != 0U)
+                            ? '1' : '0';
+                if (((i % 10U) == 9U) && ((i + 1U) < (uint32_t)r->n))
+                {
+                    bits[k++] = ' ';
+                }
+            }
+            bits[k] = '\0';
+            (void)rc_snprintf(buf, sizeof(buf),
+                "{\"n\":%u,\"first\":\"%s\",\"bits\":\"%s\","
+                "\"nar_us\":%u,\"wid_us\":%u,\"more\":%u}",
+                (unsigned int)r->n,
+                (r->first_bar != 0U) ? "bar" : "space",
+                bits,
+                (unsigned int)r->nar_10us * 10U,
+                (unsigned int)r->wid_10us * 10U,
+                (unsigned int)r->more);
+            return send("bcbits", buf);
+        }
 
         case RC_EVT_HUMP_END:
             (void)rc_snprintf(buf, sizeof(buf),
@@ -650,6 +763,8 @@ static const telem_sub_t subs[] =
     { RC_EVT_LINE_LOST,         on_notable      },  /* car/01/line        */
     { RC_EVT_LINE_REACQUIRED,   on_notable      },  /* car/01/line        */
     { RC_EVT_BARCODE_DECODED,   on_notable      },  /* car/01/barcode, bc */
+    { RC_EVT_BARCODE_SCAN,      on_notable      },  /* car/01/bcscan      */
+    { RC_EVT_BARCODE_RAW,       on_notable      },  /* car/01/bcbits      */
 
     /* Buddy 4, IMU and terrain */
     { RC_EVT_IMU_SAMPLE,        on_imu          },  /* status: live       */
@@ -660,7 +775,8 @@ static const telem_sub_t subs[] =
     /* Buddy 5, scanning and avoidance */
     { RC_EVT_ULTRA_RESULT,      on_ultra        },  /* state: rng         */
     { RC_EVT_OBSTACLE_PROFILE,  on_notable      },  /* car/01/obstacle    */
-    { RC_EVT_AVOIDANCE_PLAN,    on_notable      }   /* car/01/avoid       */
+    { RC_EVT_AVOIDANCE_PLAN,    on_notable      },  /* car/01/avoid       */
+    { RC_EVT_SPIN_EDGES,        on_notable      }   /* car/01/spin        */
 };
 
 /* Pass one: subscribe to everything in subs[] and, in a WiFi build, make
@@ -740,9 +856,9 @@ rc_result_t sub_telemetry_on_command(sub_telemetry_cmd_cb_t cb, void *ctx)
     return RC_OK;
 }
 
-/* One command character -> a driving command. Takes the mnemonic letters
- * (L/R/S/U/X) and the barcode letters (A/B/C/D), either case; P also means
- * stop. Anything else is RC_CMD_NONE and gets ignored. Lives here rather
+/* (L/R/S/U/X) and the barcode letters (A/B/C/D), either case; P also means
+ * stop and G (go) restarts a stopped run. Anything else is RC_CMD_NONE and
+ * gets ignored. Lives here rather
  * than in the MQTT file so it can be tested without a WiFi build. */
 rc_nav_cmd_t sub_telemetry_parse_cmd(char c)
 {
@@ -753,6 +869,7 @@ rc_nav_cmd_t sub_telemetry_parse_cmd(char c)
         case 'S': case 's': case 'C': case 'c': return RC_CMD_GO_STRAIGHT;
         case 'U': case 'u': case 'D': case 'd': return RC_CMD_U_TURN;
         case 'X': case 'x': case 'P': case 'p': return RC_CMD_STOP;
+        case 'G': case 'g':                     return RC_CMD_START;
         default:                                return RC_CMD_NONE;
     }
 }

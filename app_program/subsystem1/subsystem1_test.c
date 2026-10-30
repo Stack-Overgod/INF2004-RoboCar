@@ -432,7 +432,8 @@ static bool check_mnemonics(void)
         {'R', RC_CMD_TURN_RIGHT},  {'r', RC_CMD_TURN_RIGHT},
         {'S', RC_CMD_GO_STRAIGHT}, {'s', RC_CMD_GO_STRAIGHT},
         {'U', RC_CMD_U_TURN},      {'u', RC_CMD_U_TURN},
-        {'X', RC_CMD_STOP},        {'x', RC_CMD_STOP}
+        {'X', RC_CMD_STOP},        {'x', RC_CMD_STOP},
+        {'G', RC_CMD_START},       {'g', RC_CMD_START}
     };
 
     return decodes(cases, sizeof(cases) / sizeof(cases[0]));
