@@ -46,7 +46,8 @@
  * -----------------------------
  *   RC_EVT_COMMAND_RX   a command from the dashboard (car/01/cmd), already
  *                       decoded: u.command.command is an rc_nav_cmd_t
- *                       (RC_CMD_STOP for X or P), u.command.arg is 0.
+ *                       (RC_CMD_STOP for X or P, RC_CMD_START for G),
+ *                       u.command.arg is 0.
  *                       The vehicle controller subscribes on the FAST lane.
  *   RC_EVT_LINK_STATE   the network link changed: u.link.connected (WiFi
  *                       joined) and u.link.broker_up (MQTT session live).
