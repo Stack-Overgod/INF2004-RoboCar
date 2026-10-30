@@ -4,6 +4,7 @@
 #include "../rc_prelude.h"
 #include "sub_line.h"
 #include "../subsystem2/sub_motion.h"
+#include "../subsystem2/drv_encoder.h"
 #include "../rc_config.h"
 #include "../rc_event.h"
 
@@ -12,15 +13,22 @@
  * centred car then reads 0/0 with the line between the sensors, so 0/0
  * only means "lost" once it has lasted LOST_THRESHOLD samples, and each
  * correction is gentler so the car doesn't swing across the line.
- * 0 = line wider than the gap: 1/1 is centred, 0/0 is soon lost. */
+ * 0 = line wider than the gap: 1/1 is centred, 0/0 is soon lost.
+ * 2026-10-29: still 1. Buddy 5 moved the IR pair in to JUST OUTSIDE the
+ * line edges (minimal leeway, to stop the jitter): centred = 0/0, drift
+ * = 1/0 or 0/1, a crossing line / junction = 1/1. (The 14:54 run read 1/1
+ * on the straights with the pair set too close; mode 0 was tried for
+ * that and is kept below.) */
 #ifndef RC_LINE_STRADDLE
 #define RC_LINE_STRADDLE    (1)
 #endif
 
 #if RC_LINE_STRADDLE
-/* 5 s of 0/0 before we call the line lost (Buddy 5's track call,
- * 2026-10-19; was 2 s). 500 samples of RC_PERIOD_LINE_MS. */
-#define LOST_THRESHOLD      (500U)
+/* 2 s of 0/0 before we call the line lost and start the search (Buddy
+ * 5's track call, 2026-10-29: 10 s, then 5 s, then 3 s, left the car too
+ * far past the line end before searching). 200 samples of
+ * RC_PERIOD_LINE_MS, ~60 mm at line speed. */
+#define LOST_THRESHOLD      (200U)
 /* Gentle correction, +-30 permille: wheels 380 / 320 at base 350, about
  * 46 mm/s wheel difference = 0.4 rad/s, so ~2-5 degrees over the 0.1 to
  * 0.23 s a correction lasts (Buddy 5's on-track target: ~5 degrees).
@@ -29,10 +37,15 @@
 #define STEER_KP            (3)
 #define STEER_DIV           (50)
 #else
-/* How many consecutive all-dark samples before we call the line lost.*/
-#define LOST_THRESHOLD      (20U)
-#define STEER_KP            (2)
-#define STEER_DIV           (2)
+/* Samples of 0/0 (off the line) before we call the line lost: 2 s, Buddy
+ * 5's call (2026-10-29; was 3 s). Until then the car arcs back toward the side the
+ * line was last seen on (see on_sample), so this is the time it gets to
+ * find the line again before LOST. */
+#define LOST_THRESHOLD      (200U)
+/* Same gentle first correction as straddle mode (+-30 permille, then
+ * STEER_STEP): the tuned strength, now at the closed-loop speed. */
+#define STEER_KP            (3)
+#define STEER_DIV           (50)
 #endif
 
 /* Both sensors on the line for this long means a junction or a barcode
@@ -108,7 +121,10 @@
  * committed arcs and the car zig-zagged left/right every 0.25 s
  * (2026-10-19 19:05 run). A drift recentres within ~150 ms; a 140 mm
  * corner keeps the line on one side longer. */
-#define CURVE_AFTER         (8U)    /* 80 ms: 150 ms derailed on the tight loop (2026-10-19 20:09) */
+/* 160 ms (2026-10-29: doubled from 80 ms with the speed halved, Buddy 5's
+ * track call; 150 ms derailed on the tight loop at base 350 on 2026-10-19
+ * 20:09, at twice today's speed). */
+#define CURVE_AFTER         (16U)
 #define CURVE_HOLD          (30U)
 /* A 0/0 shorter than this (100 ms) does not reset the CURVE_AFTER count:
  * in a curve the sensor flickers on the line edge (2026-10-19 19:26:
@@ -121,19 +137,55 @@
  * CURVE_AFTER. (2026-10-19 19:31: the left sensor saw the left curve for
  * about one telemetry sample, then 0/0, and the car drove off the mat.)
  * The car then commits the arc toward that side, held for CURVE_HOLD. */
-#define ESCAPE_MIN          (3U)
-#define ESCAPE_MAX          (7U)    /* must stay below CURVE_AFTER */
+/* Doubled with CURVE_AFTER (2026-10-29): the same distance takes twice
+ * as long at half speed. */
+#define ESCAPE_MIN          (6U)
+#define ESCAPE_MAX          (14U)   /* must stay below CURVE_AFTER */
 /* ...and only if the line had sat between the sensors for this many
  * samples (250 ms) before that reading: a real curve starts from a
  * settled straight. Without this, every swing of a weave looked like an
  * escape, committed a full arc and swung the car back across (2026-10-19
  * 19:48: arcs 316/112 <-> 112/368 every 0.25 s). */
 #define ESCAPE_SETTLED      (15U)   /* 150 ms */
+/* 1 = drive on wheel SPEED (sub_motion_drive_speed, its PID finds the
+ * duty), 0 = open-loop duty (sub_motion_drive). 2026-10-29, Buddy 5's
+ * track call: everything 50 % slower. Open-loop half power is ~70 / 61
+ * duty, inside the ~+-100 dead band on the foam (the wheels would not
+ * turn); on speed the PID holds ~30 mm/s (it held ~35 mm/s at ~110 / 89
+ * duty on 2026-10-26). Every module value below stays in permille and is
+ * converted once, in line_drive(), so all corrections and turns shrink
+ * with the speed and keep their shape (same steering per mm travelled). */
+#define LINE_CLOSED_LOOP    (1)
+/* Wheel speed for one permille of command: ~63 mm/s was measured at 175
+ * open-loop (2026-10-26), times LINE_SPEED_PCT. */
+#define LINE_MM_S_AT_175    (63)
+#define LINE_SPEED_PCT      (50)
+
 /* Left steering is scaled up by this (permille): the left motor runs
  * faster at low duty, so an equal left correction turned less than a
- * right one (same ratio as ARC_SPEED_CAL_L / ARC_SPEED_CAL_R). */
+ * right one (same ratio as ARC_SPEED_CAL_L / ARC_SPEED_CAL_R). Open loop
+ * only: on speed the PID already matches the wheels. */
+#if LINE_CLOSED_LOOP
+#define STEER_TRIM_L        (1000)
+#else
 #define STEER_TRIM_L        ((1000 * ARC_SPEED_CAL_L) / ARC_SPEED_CAL_R)
+#endif
 #define ARC_RADIUS_MM       (140)   /* Buddy 5's track measurement */
+/* The arc the wheels are TOLD to drive in a curve (closed loop), tighter
+ * than the track (2026-10-29, Buddy 5: "increase turn angle"; the 15:42
+ * run held 0/1 for 8 s in a curve, then lost the line):
+ *  - the sensors are ~80 mm ahead of the wheels, so for them to follow the
+ *    140 mm curve the wheels must drive sqrt(140^2 - 80^2) ~ 115 mm;
+ *  - asked for 140 mm the wheels drove ~165 mm (45 / 22 mm/s, ratio 2.0
+ *    vs 2.33): sub_motion's PID never brakes and its feedforward puts the
+ *    inner wheel at ~22 mm/s when ~19 is wanted.
+ * 100 mm (ratio 3.5, ~48 / 14 mm/s) should land near 115 mm. Still ran
+ * wide on the track (2026-10-29 15:5x): +20 % turn (curvature), 100 / 1.2
+ * = 83 mm (ratio 5.1, ~52 / 10 mm/s target). Another +10 %: 83 / 1.1
+ * = 75 mm (ratio 6.9, ~55 / 8 mm/s target). 71 mm (~7 mm/s inner) was
+ * tried and stalled the inner wheel (0-4 mm/s, 17:03): the car pivoted on
+ * it, so back to 75. */
+#define ARC_TURN_RADIUS_MM  (75)
 /* Per direction, permille: the motors differ at low duty. 2026-10-19
  * 19:05-19:14 arcs at 150 inner: right turns ran 275 / 130 mm/s (ratio
  * 2.1), left turns 275 / 160 (ratio 1.8, R ~190 mm: left turns missed
@@ -150,14 +202,33 @@
  * onto something dark and the inner one found the line: keep turning. */
 #define CROSS_AFTER         (15U)
 
-/* FR9 / FR12: how long the follower searches after declaring the line
- * LOST before it gives up, brakes and reports a failed recovery. 3 s is
- * FR9's value (placeholder - Buddy 5 to confirm). Counted in line
- * samples, one every RC_PERIOD_LINE_MS. Does not apply in SEARCHING: there
- * sub_nav owns the timeout (RECOVERING, after a bypass). */
-#define LOST_SEARCH_MS      (3000U)
-#define LOST_GIVE_UP        (LOST_THRESHOLD + \
-                             (LOST_SEARCH_MS / RC_PERIOD_LINE_MS))
+/* FR9 / FR12 line search (2026-10-29, Buddy 5; replaces a 3 s arc toward
+ * the last side). Once LOST the car spins in place SEARCH_SWEEP_DEG left,
+ * then back right to SEARCH_SWEEP_DEG right of where it started, at
+ * SEARCH_SPIN_MM_S per wheel (closed loop). The first sample with either
+ * sensor on the line ends the search: the spin stops, the car drives
+ * forward toward the line and the normal correction takes over. Line not
+ * found by the end of the right sweep: brake and report RECOVERY_FAILED.
+ * The angle comes from the encoder clicks (both wheels, any direction):
+ * a wheel travels (W/2) * pi / 180 = 977 um per degree of spin. Does not
+ * apply in SEARCHING: there sub_nav owns the search (RECOVERING, after a
+ * bypass). */
+#define SEARCH_SWEEP_DEG    (135)   /* 2026-10-29: 90 -> 135 (Buddy 5) */
+/* sub_line_find() passes its own limit: after a junction turn the branch
+ * line is close, so sub_nav sweeps only 35 degrees (2026-10-29, Buddy 5). */
+/* Before the sweep: a slight turn ON THE MOVE toward the side the line
+ * was last seen on (last_position), the likely side, to check there first
+ * (2026-10-29, Buddy 5): line speed with a SEARCH_NUDGE_STEER correction
+ * until the heading has changed SEARCH_NUDGE_DEG (~0.9 s, ~28 mm).
+ * Skipped if no side was ever seen. The sweep limits stay measured from
+ * the heading at LOST. */
+#define SEARCH_NUDGE_DEG    (10)    /* 2026-10-29: 20 -> 10 (~1.8 s -> ~0.9 s) */
+#define SEARCH_NUDGE_STEER  (60)    /* permille, = STEER_MAX */
+/* 2026-10-29: 40 -> 70 (Buddy 5: sweep faster). Sensor tip ~125 mm/s:
+ * an 18 mm line stays under it ~14 samples; 135 degrees in ~1.9 s. */
+#define SEARCH_SPIN_MM_S    (70)
+#define SEARCH_UM_PER_DEG   ((uint32_t)RC_WHEEL_BASE_MM * 1000UL * 31416UL \
+                             / (2UL * 180UL * 10000UL))
 
 /* `static` at file scope means "only visible inside this .c file" */
 /* current line-follow mode, see sub_line.h enum */
@@ -167,10 +238,10 @@ static bool     enabled;
 /* true once a LOST search timed out: no output until re-enabled */
 static bool     gave_up;
 /* forward speed while tracking, in permille (parts per 1000 of full speed).
- * 350 (2026-10-19, slower for the track runs). At 350 the car stalled on
- * the ridge between two foam tiles (2026-10-18: 285 -> 3 mm/s), so the
+ *  At 350 the car stalled on
+ * the ridge between two foam tiles, so the
  * joint must be taped; 400 if it still stalls. */
-static int16_t  base_permille = 350;
+static int16_t  base_permille = 175;
 /* consecutive samples with neither sensor on the line */
 static uint32_t lost_count;
 /* consecutive samples with both sensors on the line (junction candidate) */
@@ -201,24 +272,53 @@ static uint32_t settled;
 /* derivative damping term and the previous error (see STEER_KD) */
 static int16_t  d_term;
 static int16_t  prev_err;
+/* sub_barcode is reading a barcode: the line is not declared LOST (see
+ * sub_line_set_reading) */
+static bool     reading;
+/* line search after LOST (see SEARCH_SWEEP_DEG): which leg is running,
+ * both wheels' encoder clicks when it started, the leg's direction (+1
+ * right, -1 left) and the heading it started from (degrees from the
+ * heading at LOST, < 0 = left) */
+typedef enum { SWEEP_NONE = 0, SWEEP_NUDGE, SWEEP_LEFT, SWEEP_RIGHT } sweep_t;
+static sweep_t  sweep;
+static uint32_t sweep_clicks_l0;
+static uint32_t sweep_clicks_r0;
+static int32_t  sweep_dir;
+static int32_t  sweep_from_deg;
+/* this search's sweep limit each side, degrees (SEARCH_SWEEP_DEG, or the
+ * one sub_line_find() was given) */
+static int32_t  sweep_limit = SEARCH_SWEEP_DEG;
 
-/* Every motor command from this module goes through here (SPEED_SCALE). */
+/* Left/right motor match, permille of base added to the left wheel and
+ * taken off the right. 2026-10-26: at 131/131 the left wheel ran ~15 %
+ * slower (stand 83 vs 97 mm/s, mat 60 vs 75; encoders L/R 0.84), so the
+ * car twisted left on straights. 70 -> left/right duty 1.07 / 0.93.
+ * 0 once the left wheel is fixed mechanically. Open loop only: on speed
+ * the PID matches the wheels, and a trim would curve the car. */
+#if LINE_CLOSED_LOOP
+#define STRAIGHT_TRIM       (0)
+#else
+#define STRAIGHT_TRIM       (70)
+#endif
+
+/* Every motor command from this module goes through here. `base` and
+ * `steer` are permille; closed loop turns them into wheel speeds
+ * (LINE_MM_S_AT_175, LINE_SPEED_PCT), open loop into duty (STRAIGHT_TRIM,
+ * SPEED_SCALE). Barcodes are read at this same speed. */
 static void line_drive(int32_t base, int32_t steer)
 {
+#if LINE_CLOSED_LOOP
+    int32_t k_num = LINE_MM_S_AT_175 * LINE_SPEED_PCT;
+    int32_t k_den = 175 * 100;
+
+    (void)sub_motion_drive_speed((int16_t)((base * k_num) / k_den),
+                                 (int16_t)((steer * k_num) / k_den));
+#else
+    steer += (base * STRAIGHT_TRIM) / 1000;
     (void)sub_motion_drive((int16_t)((base * SPEED_SCALE) / 1000),
                            (int16_t)((steer * SPEED_SCALE) / 1000));
-}
-
-#if !RC_LINE_STRADDLE
-/* Turns a raw sideways position error into a motor steering command.*/
-static void steer_from_position(int16_t position)
-{
-
-    int16_t steer = (int16_t)((int32_t)position * STEER_KP / STEER_DIV);
-
-    line_drive(base_permille, steer);
-}
 #endif
+}
 
 /* Drive with the current steer_level, slowing as the turn tightens. */
 static void drive_level(void)
@@ -227,13 +327,32 @@ static void drive_level(void)
     int32_t mag   = (total < 0) ? (-total * STEER_TRIM_L) / 1000 : total;
     int32_t base  = (int32_t)base_permille - (mag / 2);
 
-    if ((mag != 0) && ((base - mag) < TURN_INNER_MIN)) {
+    /* Open loop: keep the inner wheel out of the dead band (this speeds
+     * the car up in corrections). On speed the PID turns the inner wheel
+     * at any target; worst case STEER_MAX + d_term ~ 100 leaves it at
+     * ~25 permille, still forwards. */
+    if (!LINE_CLOSED_LOOP && (mag != 0) && ((base - mag) < TURN_INNER_MIN)) {
         base = TURN_INNER_MIN + mag;    /* keep the inner wheel turning */
     }
     line_drive(base, (total < 0) ? -mag : mag);
 }
 
-/* Drive the ARC_RADIUS_MM arc toward `dir` (+1 right, -1 left). */
+#if LINE_CLOSED_LOOP
+/* Drive the ARC_RADIUS_MM arc toward `dir` (+1 right, -1 left) at the
+ * line speed (2026-10-29, Buddy 5: keep the 140 mm radius). For wheel
+ * spacing W the wheels run at (R +- W/2) / R of the centre speed, 1.4 /
+ * 0.6 for R = 140 mm, W = 112 mm; on speed the PID holds that ratio, so
+ * no inner-wheel floor is needed (the open-loop near spin below was the
+ * answer to the dead band). */
+static void drive_arc(int16_t dir)
+{
+    int32_t base  = base_permille;
+    int32_t steer = (base * ((int32_t)RC_WHEEL_BASE_MM / 2)) / ARC_TURN_RADIUS_MM;
+
+    line_drive(base, (dir < 0) ? -steer : steer);
+}
+#else
+/* Near spin toward `dir` (+1 right, -1 left), see TURN_SPEED. */
 static void drive_arc(int16_t dir)
 {
     int32_t base  = ((int32_t)base_permille * TURN_SPEED) / 1000;
@@ -241,6 +360,7 @@ static void drive_arc(int16_t dir)
 
     line_drive(base, (dir < 0) ? -steer : steer);
 }
+#endif
 
 /* One more sample with the line under one sensor (position < 0 = left):
  * start gentle on a new side, otherwise tighten by STEER_STEP. */
@@ -284,6 +404,89 @@ static void publish_id(rc_evt_id_t id)
     (void)rc_event_publish(&out);
 }
 
+/* Heading now, degrees from the heading at LOST (< 0 = left). Clicks
+ * count up whichever way a wheel turns, so the leg's direction gives the
+ * sign. In place (LEFT / RIGHT legs) the heading change is the MEAN wheel
+ * travel over SEARCH_UM_PER_DEG; on the move (NUDGE, both wheels forward)
+ * it is HALF the outer-minus-inner travel over the same. */
+static int32_t sweep_heading(void)
+{
+    uint32_t dl = drv_encoder_count(RC_SIDE_LEFT) - sweep_clicks_l0;
+    uint32_t dr = drv_encoder_count(RC_SIDE_RIGHT) - sweep_clicks_r0;
+    uint32_t half;
+
+    if (sweep == SWEEP_NUDGE) {
+        uint32_t outer = (sweep_dir > 0) ? dl : dr;
+        uint32_t inner = (sweep_dir > 0) ? dr : dl;
+
+        half = (outer > inner) ? ((outer - inner) / 2U) : 0U;
+    } else {
+        half = (dl + dr) / 2U;
+    }
+    return sweep_from_deg
+           + (sweep_dir * (int32_t)((half * RC_ENC_UM_PER_TICK)
+                                    / SEARCH_UM_PER_DEG));
+}
+
+/* Starts one leg of the line search from the current heading. */
+static void sweep_begin(sweep_t leg, int32_t dir)
+{
+    int32_t from = (sweep == SWEEP_NONE) ? 0 : sweep_heading();
+
+    sweep           = leg;
+    sweep_dir       = dir;
+    sweep_from_deg  = from;
+    sweep_clicks_l0 = drv_encoder_count(RC_SIDE_LEFT);
+    sweep_clicks_r0 = drv_encoder_count(RC_SIDE_RIGHT);
+}
+
+/* Starts the search at LOST: the nudge toward the last-seen side, or
+ * straight to the left sweep if no side was ever seen. */
+static void search_begin(void)
+{
+    sweep = SWEEP_NONE;
+    if (last_position != 0) {
+        sweep_begin(SWEEP_NUDGE, (last_position < 0) ? -1 : 1);
+    } else {
+        sweep_begin(SWEEP_LEFT, -1);
+    }
+}
+
+/* One 0/0 sample while LOST: spin the current leg; nudge done -> sweep
+ * left to -sweep_limit -> sweep right to +sweep_limit -> give up. */
+static void search_step(void)
+{
+    int32_t h;
+
+    if (sweep == SWEEP_NONE) {
+        search_begin();             /* LOST carried over a re-enable */
+    }
+    h = sweep_heading();
+    if ((sweep == SWEEP_NUDGE)
+        && (((sweep_dir < 0) ? -h : h) >= SEARCH_NUDGE_DEG)) {
+        sweep_begin(SWEEP_LEFT, -1);
+        h = sweep_heading();
+    }
+    if ((sweep == SWEEP_LEFT) && (h <= -sweep_limit)) {
+        sweep_begin(SWEEP_RIGHT, 1);
+        h = sweep_heading();
+    }
+    if ((sweep == SWEEP_RIGHT) && (h >= sweep_limit)) {
+        /* FR9 / FR12: not found either side. Brake and report it; stay
+         * silent until sub_line_enable() or sub_line_begin_search(). */
+        sweep   = SWEEP_NONE;
+        gave_up = true;
+        (void)sub_motion_stop(true);
+        publish_id(RC_EVT_RECOVERY_FAILED);
+        return;
+    }
+    if (sweep == SWEEP_NUDGE) {
+        line_drive(base_permille, sweep_dir * SEARCH_NUDGE_STEER);
+    } else {
+        (void)sub_motion_drive_speed(0, (int16_t)(sweep_dir * SEARCH_SPIN_MM_S));
+    }
+}
+
 /* A sensor sees the line again (1/0, 0/1 or 1/1). Report §6.5: "any
  * sensor seeing the line -> LINE_REACQUIRED", after a real loss (LOST) as
  * well as after a deliberate search (SEARCHING), and before the junction
@@ -291,6 +494,7 @@ static void publish_id(rc_evt_id_t id)
 static void line_seen(void)
 {
     lost_count = 0U;
+    sweep      = SWEEP_NONE;    /* a search spin ends here */
 
     if ((state == RC_LINE_LOST) || (state == RC_LINE_SEARCHING)) {
         state = RC_LINE_TRACKING;
@@ -332,6 +536,12 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         settled   = 0U;
         both_count++;
 
+#if !RC_LINE_STRADDLE
+        /* Edge mode: 1/1 is the centred car, so a curve is over as soon
+         * as both sensors are back on the line. */
+        curve_dir   = 0;
+        steer_level = 0;
+#endif
         if (curve_dir != 0) {
             if (both_count > CROSS_AFTER) {
                 /* Too long for a crossing line: the outer sensor is on
@@ -420,22 +630,28 @@ static void on_sample(const rc_event_t *evt, void *ctx)
             return;
         }
 
-        if (lost_count >= LOST_GIVE_UP) {
-            /* FR9 / FR12: searched for LOST_SEARCH_MS without finding
-             * the line. Brake and report it; stay silent until
-             * sub_line_enable() or sub_line_begin_search() is called. */
-            gave_up = true;
-            (void)sub_motion_stop(true);
-            publish_id(RC_EVT_RECOVERY_FAILED);
-        } else if (lost_count >= LOST_THRESHOLD) {
-            /* Officially lost now. */
+        if (reading && (lost_count >= LOST_THRESHOLD)) {
+            /* Reading a barcode: the white spaces between the bars are
+             * not a lost line. Hold the count just short of LOST, so the
+             * steering below carries on as usual; the line is declared
+             * lost only if it is still missing once the read ends. */
+            lost_count = LOST_THRESHOLD - 1U;
+        }
+
+        if (lost_count >= LOST_THRESHOLD) {
+            /* Officially lost now: a slight turn on the move toward the
+             * last-seen side, then sweep left, then right in place (see
+             * SEARCH_NUDGE_DEG, SEARCH_SWEEP_DEG). */
             if (state != RC_LINE_LOST) {
-                state = RC_LINE_LOST;
+                state       = RC_LINE_LOST;
+                curve_dir   = 0;
+                steer_level = 0;
+                d_term      = 0;
                 publish_id(RC_EVT_LINE_LOST);
+                sweep_limit = SEARCH_SWEEP_DEG;
+                search_begin();
             }
-            /* Arc toward the side the line was last seen on. */
-            line_drive(base_permille / 2,
-                                   (last_position < 0) ? -400 : 400);
+            search_step();
         } else {
 #if RC_LINE_STRADDLE
             /* 0/0, not lost yet. In a curve: hold the arc (see
@@ -470,9 +686,15 @@ static void on_sample(const rc_event_t *evt, void *ctx)
                 one_count = 0U;     /* a short flicker keeps the count */
             }
 #else
-            /* Brief dropout just keep steering if the
-             * last known position still holds */
-            steer_from_position(last_position);
+            /* Edge mode: 0/0 = off the line, which slid out past the
+             * sensor that saw it last (a curve, or a drift). Follow the
+             * ARC_RADIUS_MM arc back toward that side. While a barcode is
+             * read its white spaces read 0/0 too: keep straight then. */
+            if (reading) {
+                line_drive(base_permille, 0);
+            } else {
+                drive_arc((last_position < 0) ? -1 : 1);
+            }
 #endif
         }
     }
@@ -499,6 +721,11 @@ rc_result_t sub_line_enable(bool on)
 {
     enabled     = on;
     gave_up     = false;
+    sweep       = SWEEP_NONE;
+    sweep_limit = SEARCH_SWEEP_DEG;
+    if (state == RC_LINE_LOST) {
+        state = RC_LINE_TRACKING;   /* a new run starts a new search */
+    }
     lost_count  = 0U;
     both_count  = 0U;
     one_count   = 0U;
@@ -536,4 +763,43 @@ rc_result_t sub_line_set_base(int16_t permille)
     base_permille = permille;
     return RC_OK;
 }
+
+/* sub_barcode calls this when a read starts (on) and ends (off). Only
+ * the LOST declaration is held off; steering is unchanged. */
+rc_result_t sub_line_set_reading(bool on)
+{
+    if (!on && reading && (lost_count >= (LOST_THRESHOLD - 1U))) {
+        /* The read held the count just short of LOST; start the 0/0
+         * count afresh, or the next 0/0 (a centred car) reads as lost
+         * at once (2026-10-26 20:57/20:58: LOST then REACQUIRED). */
+        lost_count = 0U;
+    }
+    reading = on;
+    return RC_OK;
+}
+
+bool sub_line_reading(void)
+{
+    return reading;
+}
+
+/* sub_nav: find the line now, with the in-place sweep (left then right,
+ * no nudge: there is no last-seen side yet). For the start of a run and
+ * after a junction turn (2026-10-29, Buddy 5). The first sample with a
+ * sensor on the line ends it, as after LOST; not found: RECOVERY_FAILED.
+ * sweep_deg: how far each side (SEARCH_SWEEP_DEG for a full search).
+ * Call after sub_line_enable(true). */
+rc_result_t sub_line_find(int16_t sweep_deg)
+{
+    sweep_limit   = (sweep_deg > 0) ? sweep_deg : SEARCH_SWEEP_DEG;
+    state         = RC_LINE_LOST;   /* no LINE_LOST event: not a loss */
+    lost_count    = LOST_THRESHOLD;
+    last_position = 0;
+    curve_dir     = 0;
+    steer_level   = 0;
+    d_term        = 0;
+    search_begin();
+    return RC_OK;
+}
+
 /*** end of file ***/

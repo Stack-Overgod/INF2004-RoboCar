@@ -39,5 +39,18 @@ rc_line_state_t sub_line_state(void);
 /* Base speed in permille used while tracking. */
 rc_result_t sub_line_set_base(int16_t permille);
 
+/* sub_barcode: a barcode read started (true) or ended (false). While
+ * reading the line is never declared LOST; steering is unchanged. */
+rc_result_t sub_line_set_reading(bool on);
+
+/* true while sub_barcode is reading a barcode (see sub_line_set_reading):
+ * its white spaces read 0/0, which is not a junction or a lost line. */
+bool sub_line_reading(void);
+
+/* Find the line now with the in-place sweep (start of a run, after a
+ * junction turn), sweep_deg each side; 0 = the full LOST search angle.
+ * Call after sub_line_enable(true). */
+rc_result_t sub_line_find(int16_t sweep_deg);
+
 #endif /* SUB_LINE_H */
 /*** end of file ***/

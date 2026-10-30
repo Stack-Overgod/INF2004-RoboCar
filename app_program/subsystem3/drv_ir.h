@@ -14,7 +14,7 @@
 typedef enum {
     RC_IR_LINE_L = 0,   /* left line sensor */
     RC_IR_LINE_R,       /* right line sensor */
-    RC_IR_BARCODE       /* barcode sensor (digital DOUT + analogue AOUT) */
+    RC_IR_BARCODE       /* barcode sensor (digital DOUT only) */
 } rc_ir_ch_t;
 
 /* Barcode edge callback. INTERRUPT context. `width_us` is how long the
@@ -25,10 +25,6 @@ rc_result_t drv_ir_init(void);
 
 /* Digital state. True means "over the line", after polarity correction. */
 bool drv_ir_on_line(rc_ir_ch_t ch);
-
-/* Raw ADC counts, 0..4095. Only RC_IR_BARCODE is wired to an ADC pin in
- * the default map. Returns 0 for the others. */
-uint16_t drv_ir_read_raw(rc_ir_ch_t ch);
 
 /* Poll both line sensors and publish RC_EVT_LINE_SAMPLE. Called from the
  * sense task at RC_PERIOD_LINE_MS. */

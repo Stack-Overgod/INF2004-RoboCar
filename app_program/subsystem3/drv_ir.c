@@ -13,23 +13,40 @@
  *  Sensor polarity.*/
 #define IR_ACTIVE_HIGH      (1)
 
-#define ADC_DEVNAME         ((UB *)"adca")
-
-/* ADC device descriptor once opened; -1/invalid until drv_ir_init() succeeds */
-static ID       adc_dd = -1;
 /* optional extra callback for raw barcode edges, set via
  * drv_ir_on_barcode_edge() */
 static drv_ir_edge_cb_t bar_cb;
 /* context pointer passed back to bar_cb untouched */
 static void            *bar_ctx;
-/* timestamp (microseconds) of the previous barcode edge, to compute the next width */
-static volatile uint32_t bar_last_us;
 /* Record Edge boolean */
 static volatile bool     bar_enabled;
 /* handle for the "bottom half" deferred-work registration, see rc_defer_register() */
 static int32_t           defer_h = -1;
 
-#define BAR_RING_SZ     (32U)
+/* DOUT chatters on every bar edge (2026-10-26: 128 to 255+ sub-ms edges
+ * per pass), so edges are debounced HERE, on the pin LEVEL, before the
+ * ring: a new level counts once it has lasted BAR_GLITCH_US; if the pin
+ * goes back sooner, the previous change was a spike and is undone.
+ * Level, not edge counting: one interrupt can carry both a rise and a
+ * fall (rc_gpioirq calls back once per pin), so counting callbacks in
+ * pairs lost the real edge of every bounced bar - only ~15 of the 30
+ * edges of *Z* came through (2026-10-26 21:50).
+ * Keep ~3x below the narrow element time (3 mm at ~63 mm/s = ~46 ms). */
+#define BAR_GLITCH_US   (10000U)
+
+/* Debounce state (ISR only). An element is held back (pend_*) until the
+ * next real transition, because a spike can still undo the transition
+ * that ended it; the last element of a barcode goes out with the next
+ * edge. */
+static bool              acc_valid;     /* acc_* hold a real transition */
+static bool              acc_level;     /* pin level since acc_t        */
+static uint32_t          acc_t;         /* time of the last transition  */
+static uint32_t          acc_prev_t;    /* time of the one before it    */
+static uint32_t          pend_w;        /* element ending at acc_t      */
+static bool              pend_level;    /* level after acc_t            */
+static bool              pend_valid;
+
+#define BAR_RING_SZ     (64U)   /* power of 2; 32 -> 64, 2026-10-26 */
 #define BAR_RING_MASK   (BAR_RING_SZ - 1U)
 
 typedef struct {
@@ -63,10 +80,48 @@ static void barcode_isr(uint32_t pin, bool level, uint32_t t_us, void *ctx)
         return;
     }
 
-    /* bar_width is the data for Code 39, so the timestamp this handler
-     *  was given must not be delayed by work that could happen later.*/
-    width       = t_us - bar_last_us;
-    bar_last_us = t_us;
+    if (!acc_valid) {
+        /* first edge after enabling: only a reference point */
+        acc_level  = level;
+        acc_t      = t_us;
+        acc_prev_t = t_us;
+        acc_valid  = true;
+        pend_valid = false;
+        return;
+    }
+    if (level == acc_level) {
+        return;                     /* bounced back to the same level */
+    }
+    if ((t_us - acc_t) < BAR_GLITCH_US) {
+        /* Changed again too soon: the last transition was a spike. The
+         * element before it carries on. */
+        acc_level  = level;
+        acc_t      = acc_prev_t;
+        pend_valid = false;
+        return;
+    }
+
+    /* A real transition: queue the held element, hold the one that just
+     * ended. */
+    {
+        bool have = pend_valid;
+
+        width = pend_w;
+        {
+            bool l = pend_level;
+
+            pend_w     = t_us - acc_t;
+            pend_level = level;
+            pend_valid = true;
+            level      = l;
+        }
+        acc_prev_t = acc_t;
+        acc_t      = t_us;
+        acc_level  = pend_level;
+        if (!have) {
+            return;
+        }
+    }
 
     /* Compute where the next write would land without committing.
      * If land on `bar_tail`  ring is full — we must drop this edge.*/
@@ -121,8 +176,9 @@ uint32_t drv_ir_barcode_overruns(void)
  *  Init
  * ------------------------------------------------------------------ */
 
-/* Sets up the two line-sensor GPIO pins, attaches
- * barcode ISR, and opens ADC device*/
+/* Sets up the two line-sensor GPIO pins and attaches the barcode ISR.
+ * Only digital outputs are used: the barcode sensor's analogue AOUT
+ * (GP26) is not read. */
 rc_result_t drv_ir_init(void)
 {
     rc_result_t res;
@@ -145,10 +201,6 @@ rc_result_t drv_ir_init(void)
     }
     (void)rc_gpioirq_enable(RC_PIN_IR_BARCODE_D, false);
     bar_enabled = false;
-
-    /* Barcode analogue pin, for threshold calibration. Opening the ADC
-     * is allowed to fail: the digital path still works without it. */
-    adc_dd = tk_opn_dev(ADC_DEVNAME, TD_READ);
 
     return RC_OK;
 }
@@ -189,27 +241,6 @@ bool drv_ir_on_line(rc_ir_ch_t ch)
 #endif
 }
 
-/* Reads the raw ADC brightness value (0..4095) on the barcode sensor's
- * analogue pin.*/
-uint16_t drv_ir_read_raw(rc_ir_ch_t ch)
-{
-    UW  buf = 0U;
-    SZ  asz = 0;
-    ER  er;
-
-    if ((ch != RC_IR_BARCODE) || (adc_dd <= E_OK)) {
-        return 0U;
-    }
-
-    /* The mtk3 ADC driver takes the channel number as the start
-     * position of the read. */
-    er = tk_srea_dev(adc_dd, (W)RC_ADC_CH_IR_BARCODE, &buf, 1, &asz);
-    if (er != E_OK) {
-        return 0U;
-    }
-    return (uint16_t)(buf & 0x0FFFU);
-}
-
 /* Polls both line sensors, turns the two on/off readings into a coarse sideways
  * position number, and publishes it as RC_EVT_LINE_SAMPLE */
 void drv_ir_sample_line(void)
@@ -233,7 +264,6 @@ void drv_ir_sample_line(void)
     evt.u.line.on_line_l  = l;
     evt.u.line.on_line_r  = r;
     evt.u.line.position   = pos;
-    evt.u.line.barcode_raw = drv_ir_read_raw(RC_IR_BARCODE);
 
     (void)rc_event_publish(&evt);
 }
@@ -251,9 +281,10 @@ rc_result_t drv_ir_on_barcode_edge(drv_ir_edge_cb_t cb, void *ctx)
 rc_result_t drv_ir_barcode_enable(bool on)
 {
     if (on) {
-        bar_last_us = rc_time_us();
         bar_head    = 0U;
         bar_tail    = 0U;
+        acc_valid   = false;
+        pend_valid  = false;
     }
     bar_enabled = on;
     return rc_gpioirq_enable(RC_PIN_IR_BARCODE_D, on);
