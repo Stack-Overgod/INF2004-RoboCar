@@ -49,10 +49,11 @@ rc_result_t sub_scan_abort(void);
  * the line (0 = edge not found). Takes ~5 s; motors stopped at the end. */
 rc_result_t sub_scan_start_spin(void);
 
-/* As sub_scan_start(), but the servo sweeps +-15 deg with the chassis
- * still (2026-10-29, Buddy 5); an edge not seen is placed from the
- * longest obstacle on the course (20 cm) and the length reads 0. */
-rc_result_t sub_scan_start_narrow(void);
+/* As sub_scan_start(), but the step scan (2026-10-31, Buddy 5): the
+ * servo swings fully out and the chassis steps, stopped for each ping,
+ * until the beam leaves the obstacle on each side; length from the two
+ * corners (0 if one was not found). The motors must be free. */
+rc_result_t sub_scan_start_measure(void);
 /* True while a coarse or fine scan is actively running (not just the
  * slow forward watch — see sub_scan_set_watch below). */
 bool sub_scan_busy(void);

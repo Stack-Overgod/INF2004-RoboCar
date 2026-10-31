@@ -683,7 +683,7 @@ requestAnimationFrame(frame);
 /* ---------- obstacle bypass map (car view overlay) ---------- */
 // sub_nav.c NAV_WATCH_TRIGGER_MM and the bypass shape (NAV_BYPASS_*): keep in step.
 const TRIGGER_MM = 200;
-const BYP = { OUT: 60, IN: 45, EXTRA_MM: 10, STRETCH: 1.155 };
+const BYP = { OUT: 45, IN: 45, EXTRA_MM: 10, STRETCH: 1.414 };
 const MM_PER_TICK = 0.333;        // 640 ticks per 212 mm wheel turn
 const MM_PER_DEG = 0.977;         // each wheel's travel per degree of spin (112 mm base)
 const SENSOR_AHEAD_MM = 85;       // ultrasonic ahead of the axle (measured)
@@ -699,7 +699,7 @@ function bypassLegs(b) {
     { k: "turn", deg: BYP.OUT * s, what: `turn out ${BYP.OUT}°` },
     { k: "fwd", mm: Math.round((b.lat + BYP.EXTRA_MM) * BYP.STRETCH), what: "step aside" },
     { k: "turn", deg: -BYP.OUT * s, what: `turn back ${BYP.OUT}°` },
-    { k: "fwd", mm: Math.max(1, b.fwd - Math.round((b.lat + BYP.EXTRA_MM) * BYP.STRETCH * 0.5)), what: "drive past" },
+    { k: "fwd", mm: Math.max(1, b.fwd - Math.round((b.lat + BYP.EXTRA_MM) * BYP.STRETCH * Math.cos(BYP.OUT * Math.PI / 180))), what: "drive past" },
     { k: "turn", deg: -BYP.IN * s, what: `turn in ${BYP.IN}°` },
     { k: "fwd", mm: 250, what: "find the line", open: true },
   ];
@@ -765,7 +765,7 @@ function drawBypass(nowMs) {
   const ob = { x: bp.off + bp.near * Math.cos(a), y: SENSOR_AHEAD_MM + bp.near * Math.sin(a) };
   // fit everything (+ margins) into the 240 x 300 view, car start near the bottom
   const xs = [...plan.pts.map(p => p[0]), ob.x - bp.w / 2, ob.x + bp.w / 2, -120, 120];
-  const ys = [...plan.pts.map(p => p[1]), ob.y + bp.w / 2, -90];
+  const ys = [...plan.pts.map(p => p[1]), ob.y + bp.w, -90];
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
   const sc = Math.min(200 / (maxX - minX), 200 / (maxY - minY));   // top 50 px: mode pill
   const X = x => 120 + (x - (minX + maxX) / 2) * sc;
@@ -773,8 +773,8 @@ function drawBypass(nowMs) {
   const line = pts => pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
   let g = `<rect x="0" y="0" width="240" height="300" rx="10" fill="var(--ground)"/>`;
   g += `<rect x="${X(-9)}" y="0" width="${18 * sc}" height="300" fill="var(--black-tile)"/>`;
-  // obstacle depth = half its length (sub_scan spin_plan)
-  g += `<rect x="${X(ob.x - bp.w / 2)}" y="${Y(ob.y + bp.w / 2)}" width="${bp.w * sc}" height="${bp.w / 2 * sc}" rx="3" fill="var(--critical)"/>`;
+  // square obstacle: depth = its length (sub_scan spin_plan)
+  g += `<rect x="${X(ob.x - bp.w / 2)}" y="${Y(ob.y + bp.w)}" width="${bp.w * sc}" height="${bp.w * sc}" rx="3" fill="var(--critical)"/>`;
   // label on the side away from the bypass, two short lines
   const lx = bp.side < 0 ? X(ob.x + bp.w / 2) + 5 : X(ob.x - bp.w / 2) - 5, anc = bp.side < 0 ? "start" : "end";
   g += `<text x="${lx}" y="${Y(ob.y + 20) - 2}" text-anchor="${anc}" font-size="10" fill="var(--text-primary)">${cm(bp.near)} cm away<tspan x="${lx}" dy="12">${view.obstacle && view.obstacle.w_mm ? cm(bp.w) + " cm long" : "length ?"}</tspan></text>`;

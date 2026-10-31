@@ -184,17 +184,26 @@ static void        *user_ctx;
 /* This many clear pings in a row (in one pass, walking out from the
  * centre) end the obstacle; a single clear ping inside it is a dropout. */
 #define SPIN_GAP_PINGS          (2)
-/* Longest obstacle that is bypassed: 20 cm + the 1 cm error + 1 cm.
- * Longer, or an edge not found within the scan: STOP (no safe gap). */
-#define SPIN_MAX_BYPASS_MM      (220)
+/* The longest obstacle on the course, mm (2026-10-31: the brief, 10-20
+ * cm, square). The step scan looks this far out from the line for an
+ * edge; a longer measured length is planned as this; with one edge unseen the obstacle is taken
+ * to be this long. */
+#define OBSTACLE_MAX_MM         (200)
 #define SPIN_MAX_POINTS         (128U)
-/* The obstacle's depth (front to back) is taken as HALF its measured
- * length (2026-10-29, Buddy 5; was square), so its far side is
- * SPIN_SENSOR_AHEAD_MM + closest + length / 2 ahead of the axle. The bypass runs on until the car's
- * rear (SPIN_REAR_MM behind the axle) is SPIN_PAST_MARGIN_MM past that.
- * Axle to rear bumper measured 2026-10-29. */
+/* The obstacle is square (2026-10-31, Buddy 5): its depth (front to
+ * back) is its measured length, so its far side is SPIN_SENSOR_AHEAD_MM
+ * + closest + length ahead of the axle. The bypass runs on until the
+ * car's rear (SPIN_REAR_MM behind the axle) is SPIN_PAST_MARGIN_MM past
+ * that. Axle to rear bumper measured 2026-10-29. */
 #define SPIN_REAR_MM            (55)
 #define SPIN_PAST_MARGIN_MM     (30)
+/* How much of the encoders' spin the chassis really turns, permille:
+ * the wheels slip on the foam. The step scan read a 10.4 cm object as
+ * 13.5 / 12.6 cm (2026-10-31 17:01, 17:02) and a model of the scan with
+ * 0.8 reproduces that (test/scripts/sim_step_slip.py); 45 deg detour
+ * turns lose more (~0.67, sub_nav NAV_DETOUR_TURN_PERMILLE). Calibrate:
+ * a known object reading long -> lower this. */
+#define SPIN_TURN_EFF_PERMILLE  (800)
 /* Each wheel's travel per degree of spin in place, um: (W/2) * pi/180 */
 #define SPIN_UM_PER_DEG         ((uint32_t)RC_WHEEL_BASE_MM * 1000UL * 31416UL \
                                  / (2UL * 180UL * 10000UL))
@@ -240,10 +249,10 @@ static bool         spin_has_r;
 static void spin_profile(rc_pl_profile_t *p);
 /* the last spin scan's per-pass edges, for RC_EVT_SPIN_EDGES */
 static rc_pl_spin_t spin_dbg;
-/* sub_scan_start_narrow() asked for one; the last scan was one */
-static volatile bool narrow_req;
-static bool         narrow_mode;
-static void narrow_profile(rc_pl_profile_t *p);
+/* sub_scan_start_measure() asked for one; the last scan was one */
+static volatile bool step_req;
+static bool         step_mode;
+static void step_profile(rc_pl_profile_t *p);
 static void spin_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan);
 
 /* ------------------------------------------------------------------ *
@@ -524,8 +533,8 @@ static void publish_and_finish(void)
     rc_pl_plan_t    plan;
     rc_event_t      evt;
 
-    if (narrow_mode) {
-        narrow_profile(&profile);
+    if (step_mode) {
+        step_profile(&profile);
         spin_plan(&profile, &plan);
     } else if (spin_mode) {
         spin_profile(&profile);
@@ -549,7 +558,7 @@ static void publish_and_finish(void)
     evt.u.plan = plan;
     (void)rc_event_publish(&evt);
 
-    if (spin_mode || narrow_mode) {
+    if (spin_mode || step_mode) {
         evt.id     = RC_EVT_SPIN_EDGES;     /* car/01/spin, diagnostics */
         evt.u.spin = spin_dbg;
         (void)rc_event_publish(&evt);
@@ -635,14 +644,16 @@ static int32_t isin(int32_t ddeg)
 }
 
 /* Car heading now, 0.1 deg (> 0 = left), from the encoders: the mean
- * wheel travel since the leg began over SPIN_UM_PER_DEG. */
+ * wheel travel since the leg began over SPIN_UM_PER_DEG, less the slip
+ * (SPIN_TURN_EFF_PERMILLE). */
 static int32_t spin_heading(void)
 {
     uint32_t dl = drv_encoder_count(RC_SIDE_LEFT) - spin_l0;
     uint32_t dr = drv_encoder_count(RC_SIDE_RIGHT) - spin_r0;
     uint32_t um = ((dl + dr) / 2U) * RC_ENC_UM_PER_TICK;
 
-    return spin_from + (spin_dir * (int32_t)((um * 10U) / SPIN_UM_PER_DEG));
+    return spin_from + (spin_dir * (int32_t)(((um * 10U) / SPIN_UM_PER_DEG)
+                                             * SPIN_TURN_EFF_PERMILLE / 1000U));
 }
 
 /* An abort was requested (sub_scan_abort), checked without waiting long. */
@@ -904,12 +915,11 @@ static void spin_profile(rc_pl_profile_t *p)
     }
 }
 
-/* Plan from the spin profile: go round on the side AWAY from the
+/* Plan from the spin / step profile: go round on the side AWAY from the
  * obstacle (2026-10-29, Buddy 5): with both edges seen, its centre
  * (xl + xr) / 2 right of the line (or on it) -> left, left of it ->
  * right; with one edge unseen, the obstacle reaches past the scan on
- * that side -> the other side. Obstacles longer than SPIN_MAX_BYPASS_MM,
- * or no edge seen: stop. */
+ * that side -> the other side. No edge seen on either side: stop. */
 static void spin_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan)
 {
     uint32_t len;
@@ -923,8 +933,7 @@ static void spin_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan)
         plan->action = RC_CMD_GO_STRAIGHT;
         return;
     }
-    if (((p->clearance_left_mm == 0U) && (p->clearance_right_mm == 0U))
-        || (p->width_mm > SPIN_MAX_BYPASS_MM)) {
+    if ((p->clearance_left_mm == 0U) && (p->clearance_right_mm == 0U)) {
         plan->action = RC_CMD_STOP;
         return;
     }
@@ -944,107 +953,290 @@ static void spin_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan)
         plan->action     = RC_CMD_TURN_RIGHT;
         plan->lateral_mm = (uint16_t)(p->clearance_right_mm + (CAR_WIDTH_MM / 2U));
     }
-    /* depth = length / 2 (the longest allowed length when one edge was
-     * not seen). forward_mm = how far ahead of the axle's position
-     * now the axle must get before turning back in (sub_nav subtracts
-     * what leg 1 already covers). */
-    len = (p->width_mm != 0U) ? p->width_mm : SPIN_MAX_BYPASS_MM;
+    /* square: depth = length, the measured one up to OBSTACLE_MAX_MM (the
+     * longest allowed when one edge was not seen). forward_mm = how far
+     * ahead of the axle's position now the axle must get before turning
+     * back in (sub_nav subtracts what leg 1 already covers). */
+    len = p->width_mm;
+    if ((len == 0U) || (len > (uint32_t)OBSTACLE_MAX_MM)) {
+        len = (uint32_t)OBSTACLE_MAX_MM;
+    }
     plan->forward_mm = (uint16_t)(SPIN_SENSOR_AHEAD_MM + p->closest_mm
-                                  + (len / 2U) + SPIN_REAR_MM
+                                  + len + SPIN_REAR_MM
                                   + SPIN_PAST_MARGIN_MM);
 }
 
 /* ------------------------------------------------------------------ *
- *  Narrow servo scan (2026-10-29, Buddy 5): the chassis stays still and
- *  the servo sweeps NARROW_HALF_DEG either side of straight ahead. With
- *  the HC-SR04's wide beam a 10-20 cm obstacle at ~20 cm usually echoes
- *  across the whole sweep, so an edge is often not seen; a missing edge
- *  is then placed from NARROW_ASSUME_MM (the longest obstacle on the
- *  course) and the length is reported as unknown (0).
+ *  Step scan (2026-10-31, Buddy 5): the obstacle's length from the servo
+ *  AND the chassis, stopped for every ping.
+ *
+ *  The servo swings only RC_SERVO_HALF_SWING (20 deg) each side and the
+ *  beam is ~SPIN_BEAM_HALF_DDEG wide, so from the 20 cm trigger the beam
+ *  never gets off a 10-20 cm face with the chassis still (2026-10-31
+ *  16:41, servo +-15: no edge in either run). For each side in turn:
+ *
+ *    1. servo fully to that side, chassis straight: ping;
+ *    2. while that echoes off the face, turn the chassis
+ *       STEP_CHASSIS_DDEG further that way, stop, ping (no
+ *       turning-while-pinging lag, the spin scan's main error);
+ *    3. at the first heading where it does not, walk the servo back
+ *       STEP_FINE_DEG at a time until the face echoes again: the edge
+ *       is between the two, to within STEP_FINE_DEG / 2;
+ *    4. chassis back to straight.
+ *
+ *  A side whose beam is still on the face once it points past where the
+ *  corner of the longest allowed obstacle could be (OBSTACLE_MAX_MM out
+ *  from the line) has no edge: the obstacle runs on past the scan. How
+ *  far the chassis turns therefore follows from the obstacle, ~10-15 deg
+ *  for a 10 cm one, not from a fixed swing.
+ *
+ *  Geometry (from the axle at the start, x > 0 right of the line, y
+ *  forward, headings > 0 left): chassis heading phi puts the sensor at
+ *  (-A sin phi, A cos phi) and the beam axis along psi = phi + servo.
+ *  The beam's inner edge is on the corner at the edge heading, so the
+ *  corner lies at range r along psi - side * beta:
+ *
+ *      x = -(A sin phi + r sin(psi - side * beta))
  * ------------------------------------------------------------------ */
-#define NARROW_HALF_DEG         (15)
-#define NARROW_STEP_DEG         (3)
-/* the longest obstacle on the course: used for a side not seen */
-#define NARROW_ASSUME_MM        (200)
+/* Chassis step while the beam is still on the face, 0.1 deg. */
+#define STEP_CHASSIS_DDEG       (50)
+/* Servo step back across the edge, degrees: the edge to +-0.5 deg,
+ * ~2 mm at 20 cm. */
+#define STEP_FINE_DEG           (1)
+/* Wheel speed for the chassis steps: spin turns stall on the foam below
+ * ~60 mm/s (sub_motion speed_floor). */
+#define STEP_TURN_MM_S          (60)
+/* Settle after a chassis step before reading the heading and pinging. */
+#define STEP_SETTLE_MS          (150U)
+/* Pings per stop; the nearest valid one counts (a face seen at an angle
+ * sometimes returns no echo). */
+#define STEP_PINGS              (2U)
 
-/* Servo 90 - NARROW_HALF_DEG .. 90 + NARROW_HALF_DEG, one ping a step,
- * left to right as sub_scan's angles run (> 90 = left), then back to 90. */
-static void run_narrow(void)
+/* chassis heading now, 0.1 deg (> 0 left), from the encoders */
+static int32_t  step_phi;
+/* the face straight ahead, from the sensor, mm (0 = no echo) */
+static int32_t  step_face;
+/* stops pinged this scan */
+static uint32_t step_stops;
+/* each side's edge (0 left, 1 right): beam heading, range, the chassis
+ * heading it was pinged at, whether it was found */
+static int32_t  step_edge_psi[2];
+static int32_t  step_edge_r[2];
+static int32_t  step_edge_phi[2];
+static bool     step_edge_ok[2];
+
+/* atan(y / x) in 0.1 deg, x > 0, y >= 0: a binary search on the sine
+ * table (no maths library, no FPU). */
+static int32_t iatan_ddeg(int32_t y, int32_t x)
 {
-    int16_t a;
+    int32_t lo = 0, hi = 900;
 
-    n_points = 0U;
-    for (a = (int16_t)(90 - NARROW_HALF_DEG); a <= (int16_t)(90 + NARROW_HALF_DEG);
-         a = (int16_t)(a + NARROW_STEP_DEG)) {
-        state = S_COARSE_MOVE;
-        if (!step_to(a)) {
+    while (lo < hi) {
+        int32_t m = (lo + hi) / 2;
+
+        if (((int64_t)isin(m) * x) < ((int64_t)y * isin(900 - m))) {
+            lo = m + 1;
+        } else {
+            hi = m;
+        }
+    }
+    return lo;
+}
+
+/* Turns the chassis in place to heading `to` (0.1 deg, > 0 left), stops
+ * and settles. step_phi is then the heading the encoders say it reached
+ * (an overshoot is measured, not corrected). False if aborted or the
+ * wheels did not get there within ~2 s. */
+static bool chassis_to(int32_t to)
+{
+    uint32_t i;
+    bool     ok = false;
+
+    if (to == step_phi) {
+        return true;
+    }
+    spin_from = step_phi;
+    spin_dir  = (to > step_phi) ? 1 : -1;
+    spin_l0   = drv_encoder_count(RC_SIDE_LEFT);
+    spin_r0   = drv_encoder_count(RC_SIDE_RIGHT);
+    /* sub_motion steer > 0 turns right; spin_dir > 0 is left */
+    (void)sub_motion_drive_speed(0, (int16_t)(-spin_dir * STEP_TURN_MM_S));
+    for (i = 0U; i < 200U; i++) {               /* 10 ms each */
+        if ((spin_dir * (spin_heading() - to)) >= 0) {
+            ok = true;
+            break;
+        }
+        if (spin_aborted()) {
+            break;
+        }
+    }
+    (void)sub_motion_stop(true);
+    (void)tk_dly_tsk((RELTIM)STEP_SETTLE_MS);
+    step_phi = spin_heading();
+    return ok;
+}
+
+/* STEP_PINGS pings at servo angle `servo` (90 = ahead, > 90 left): the
+ * nearest valid range, 0 if none echoed, -1 if aborted. */
+static int32_t step_ping(int16_t servo)
+{
+    uint32_t k;
+    int32_t  best = 0;
+
+    for (k = 0U; k < STEP_PINGS; k++) {
+        if (!step_to(servo)) {                  /* settles, then pings */
             continue;
         }
-        state = S_COARSE_PING;
         if (!wait_result()) {
-            break;                              /* aborted */
+            return -1;
+        }
+        if (last_valid && ((best == 0) || ((int32_t)last_range_mm < best))) {
+            best = (int32_t)last_range_mm;
+        }
+        (void)tk_dly_tsk(RC_PERIOD_SCAN_MS);    /* no ghost echoes */
+    }
+    step_stops++;
+    return best;
+}
+
+/* True if range r, pinged from chassis heading phi along beam heading
+ * psi, is the face and not something behind it: no further than the
+ * face's plane along the beam's nearer edge, plus SPIN_DEPTH_BAND_MM. */
+static bool step_on_face(int32_t phi, int32_t psi, int32_t r)
+{
+    int32_t ys  = (SPIN_SENSOR_AHEAD_MM * isin(900 - iabs(phi))) / 10000;
+    int32_t off = iabs(psi) - SPIN_BEAM_HALF_DDEG;
+    int32_t c;
+
+    if (r <= 0) {
+        return false;
+    }
+    if (off < 0) {
+        off = 0;
+    }
+    c = isin(900 - off);
+    return (c > 0)
+           && (r <= (((((SPIN_SENSOR_AHEAD_MM + step_face) - ys) * 10000) / c)
+                     + SPIN_DEPTH_BAND_MM));
+}
+
+/* True once the beam's inner edge (psi - side * beta) points past where
+ * the corner of the longest allowed obstacle could be: OBSTACLE_MAX_MM
+ * out from the line on that side, on the face's plane. */
+static bool step_past_max(int32_t side, int32_t phi, int32_t psi)
+{
+    int32_t xs = -(SPIN_SENSOR_AHEAD_MM * isin(phi)) / 10000;
+    int32_t ys = (SPIN_SENSOR_AHEAD_MM * isin(900 - iabs(phi))) / 10000;
+    int32_t dx = OBSTACLE_MAX_MM + (side * xs);     /* sensor to corner, sideways */
+    int32_t dy = (SPIN_SENSOR_AHEAD_MM + step_face) - ys;
+
+    if ((dx <= 0) || (dy <= 0)) {
+        return true;
+    }
+    return ((side * psi) - SPIN_BEAM_HALF_DDEG)
+           > (iatan_ddeg(dx, dy) + STEP_CHASSIS_DDEG);
+}
+
+/* One side (+1 left, -1 right), see "Step scan". Leaves the chassis
+ * where the edge was found. False if aborted. */
+static bool step_side(int32_t side)
+{
+    uint32_t k = (side > 0) ? 0U : 1U;
+    int16_t  servo_out = (int16_t)(90 + (side * RC_SERVO_HALF_SWING));
+    /* the last reading on the face: straight ahead to begin with */
+    int32_t  last_psi = 0, last_r = step_face, last_phi = 0;
+    int32_t  r, psi, clear_psi, s, p;
+    uint32_t guard;
+
+    step_edge_ok[k] = false;
+    for (guard = 0U; guard < 20U; guard++) {
+        psi = step_phi + (side * RC_SERVO_HALF_SWING * 10);
+        r   = step_ping(servo_out);
+        if (r < 0) {
+            return false;
+        }
+        if (step_on_face(step_phi, psi, r)) {
+            last_psi = psi;
+            last_r   = r;
+            last_phi = step_phi;
+            if (step_past_max(side, step_phi, psi)) {
+                tm_printf((UB *)"[step] %s: still on it at %d (0.1 deg),"
+                          " longer than allowed\n",
+                          (side > 0) ? "left" : "right", (INT)psi);
+                return true;
+            }
+            if (!chassis_to(step_phi + (side * STEP_CHASSIS_DDEG))) {
+                return false;
+            }
+            continue;
+        }
+        /* off the face here: walk the servo back to where it echoes */
+        clear_psi = psi;
+        for (s = RC_SERVO_HALF_SWING - STEP_FINE_DEG; s >= -RC_SERVO_HALF_SWING;
+             s -= STEP_FINE_DEG) {
+            p = step_phi + (side * s * 10);
+            if ((side * (p - last_psi)) <= 0) {
+                break;                  /* back at the last face reading */
+            }
+            r = step_ping((int16_t)(90 + (side * s)));
+            if (r < 0) {
+                return false;
+            }
+            if (step_on_face(step_phi, p, r)) {
+                last_psi = p;
+                last_r   = r;
+                last_phi = step_phi;
+                break;
+            }
+            clear_psi = p;
+        }
+        step_edge_psi[k] = (last_psi + clear_psi) / 2;
+        step_edge_r[k]   = last_r;
+        step_edge_phi[k] = last_phi;
+        step_edge_ok[k]  = true;
+        return true;
+    }
+    return true;
+}
+
+/* The whole step scan: face, left side, back, right side, back. Leaves
+ * the servo ahead and the motors stopped. */
+static void run_step(void)
+{
+    int32_t side, r;
+
+    n_points        = 0U;
+    step_stops      = 0U;
+    step_phi        = 0;
+    step_face       = 0;
+    step_edge_ok[0] = false;
+    step_edge_ok[1] = false;
+    state           = S_COARSE_PING;
+
+    r = step_ping(90);
+    if ((r > 0) && (r <= (int32_t)OBSTACLE_MM)) {
+        step_face = r;
+        for (side = 1; side >= -1; side -= 2) {
+            if (!step_side(side) || !chassis_to(0)) {
+                break;
+            }
         }
     }
     cur_angle = 90;
     (void)drv_servo_set_angle(90);
+    (void)sub_motion_stop(true);
 }
 
-/* One side of the narrow sweep, walked out from straight ahead: the edge
- * is the midpoint between the last face reading and the first of
- * SPIN_GAP_PINGS clear ones (as pass_edge, but servo angles and the
- * sensor as the pivot). Returns false if the beam never left the face. */
-static bool narrow_edge(int32_t side, int32_t face, int32_t *ddeg_out,
-                        int32_t *r_out)
+/* Profile from the step scan, in spin_profile's form (spin_plan and
+ * car/01/spin unchanged): closest = the face, width = length between
+ * the corners when both were found, clearance_left/right = each corner's
+ * distance from the line (at least 1), 0 when that edge was not found. */
+static void step_profile(rc_pl_profile_t *p)
 {
-    int32_t  b, last = -1, first_clear = -1;
-    uint32_t i, run = 0U;
+    int32_t  side, x;
+    uint32_t k, slot;
 
-    for (b = 0; b <= NARROW_HALF_DEG; b++) {
-        int32_t ang = 90 + (side * b);
-
-        for (i = 0U; i < n_points; i++) {
-            bool obst;
-
-            if (points[i].angle != ang) {
-                continue;
-            }
-            obst = points[i].valid
-                   && ((int32_t)points[i].range_mm
-                       <= (face_at(face, b * 10) + SPIN_DEPTH_BAND_MM));
-            if (obst) {
-                last = (int32_t)i;
-                run  = 0U;
-            } else {
-                if (run == 0U) {
-                    first_clear = (int32_t)i;
-                }
-                run++;
-                if ((run >= SPIN_GAP_PINGS) && (last >= 0)) {
-                    *ddeg_out = (((int32_t)points[last].angle - 90)
-                                 + ((int32_t)points[first_clear].angle - 90)) * 5;
-                    *r_out    = (int32_t)points[last].range_mm;
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-/* Profile from the narrow sweep, in the same form as spin_profile (so
- * spin_plan and car/01/spin work unchanged): closest = face straight
- * ahead, width = length if both edges were seen (else 0), clearances =
- * each edge's distance from the line, a side not seen being placed
- * NARROW_ASSUME_MM from the other edge (or centred on the closest echo
- * when neither was seen). */
-static void narrow_profile(rc_pl_profile_t *p)
-{
-    uint32_t i;
-    int32_t  face = 0x7FFFFFFF, face_ang = 90, side, h, r, xc;
-    int32_t  x[2] = { 0, 0 };
-    bool     seen[2] = { false, false };
-
-    p->n_points           = (uint8_t)n_points;
+    p->n_points           = (uint8_t)((step_stops > 255U) ? 255U : step_stops);
     p->closest_angle_deg  = 90;
     p->closest_mm         = 0U;
     p->width_mm           = 0U;
@@ -1056,59 +1248,45 @@ static void narrow_profile(rc_pl_profile_t *p)
     spin_has_l = false;
     spin_has_r = false;
 
-    for (i = 0U; i < n_points; i++) {
-        if (points[i].valid && ((int32_t)points[i].range_mm < face)
-            && (iabs((int32_t)points[i].angle - 90) <= 5)) {
-            face     = (int32_t)points[i].range_mm;
-            face_ang = points[i].angle;
-        }
+    if (step_face <= 0) {
+        return;                         /* nothing ahead: closest 0 */
     }
-    if ((face == 0x7FFFFFFF) || (face > (int32_t)OBSTACLE_MM)) {
-        return;
-    }
-    p->closest_mm        = (uint16_t)face;
-    p->closest_angle_deg = (int16_t)face_ang;
-    spin_dbg.face_mm     = (uint16_t)face;
+    p->closest_mm    = (uint16_t)step_face;
+    spin_dbg.face_mm = (uint16_t)step_face;
 
     for (side = 1; side >= -1; side -= 2) {
-        uint32_t k = (side > 0) ? 0U : 1U;
-
-        if (narrow_edge(side, face, &h, &r)) {
-            uint32_t slot = (side > 0) ? 0U : 2U;
-
-            /* the servo turns the sensor about itself: no arm */
-            x[k]    = -(r * isin(h - (side * SPIN_BEAM_HALF_DDEG))) / 10000;
-            seen[k] = true;
-            spin_dbg.ddeg[slot]  = (int16_t)h;
-            spin_dbg.r_2mm[slot] = (uint8_t)((r > 510) ? 255 : (r / 2));
-            spin_dbg.found      |= (uint8_t)(1U << slot);
-            tm_printf((UB *)"[narrow] %s edge %d (0.1 deg) at %d mm, x %d\n",
-                      (side > 0) ? "left" : "right", (INT)h, (INT)r,
-                      (INT)x[k]);
+        k = (side > 0) ? 0U : 1U;
+        if (!step_edge_ok[k]) {
+            continue;
+        }
+        x = -((SPIN_SENSOR_AHEAD_MM * isin(step_edge_phi[k]))
+              + (step_edge_r[k]
+                 * isin(step_edge_psi[k] - (side * SPIN_BEAM_HALF_DDEG))))
+            / 10000;
+        slot = (side > 0) ? 0U : 2U;
+        spin_dbg.ddeg[slot]  = (int16_t)step_edge_psi[k];
+        spin_dbg.r_2mm[slot] = (uint8_t)((step_edge_r[k] > 510) ? 255
+                                         : (step_edge_r[k] / 2));
+        spin_dbg.found      |= (uint8_t)(1U << slot);
+        tm_printf((UB *)"[step] %s edge: beam %d, chassis %d (0.1 deg),"
+                  " %d mm -> corner x %d\n", (side > 0) ? "left" : "right",
+                  (INT)step_edge_psi[k], (INT)step_edge_phi[k],
+                  (INT)step_edge_r[k], (INT)x);
+        if (side > 0) {
+            spin_xl    = x;
+            spin_has_l = true;
+            p->clearance_left_mm  = (uint16_t)((x < -1) ? -x : 1);
+        } else {
+            spin_xr    = x;
+            spin_has_r = true;
+            p->clearance_right_mm = (uint16_t)((x > 1) ? x : 1);
         }
     }
-    if (seen[0] && seen[1]) {
-        if (x[1] > x[0]) {
-            p->width_mm = (uint16_t)(x[1] - x[0]);
-        }
-    } else if (seen[0]) {
-        x[1] = x[0] + NARROW_ASSUME_MM;
-    } else if (seen[1]) {
-        x[0] = x[1] - NARROW_ASSUME_MM;
-    } else {
-        xc   = -(face * isin(((int32_t)face_ang - 90) * 10)) / 10000;
-        x[0] = xc - (NARROW_ASSUME_MM / 2);
-        x[1] = xc + (NARROW_ASSUME_MM / 2);
+    if (spin_has_l && spin_has_r && (spin_xr > spin_xl)) {
+        p->width_mm = (uint16_t)(spin_xr - spin_xl);
     }
-    spin_xl    = x[0];
-    spin_xr    = x[1];
-    spin_has_l = true;          /* placed, seen or not: spin_plan uses */
-    spin_has_r = true;          /* the centre to pick the side         */
-    p->clearance_left_mm  = (uint16_t)((x[0] < -1) ? -x[0] : 1);
-    p->clearance_right_mm = (uint16_t)((x[1] > 1) ? x[1] : 1);
-    tm_printf((UB *)"[narrow] face %d mm, edges L %d%s R %d%s, length %d\n",
-              (INT)face, (INT)x[0], seen[0] ? "" : "(assumed)",
-              (INT)x[1], seen[1] ? "" : "(assumed)", (INT)p->width_mm);
+    tm_printf((UB *)"[step] face %d mm, %d stops, length %d mm\n",
+              (INT)step_face, (INT)step_stops, (INT)p->width_mm);
 }
 
 /* The coarse sweep: steps the servo from RC_SCAN_COARSE_START to
@@ -1248,12 +1426,12 @@ static void scan_task(INT stacd, void *exinf)
 
         /* The actual scan: sweep broadly (coarse), then if something was
          * found, zoom in on it (fine), then report the result. */
-        spin_mode   = spin_req;
-        narrow_mode = narrow_req;
-        spin_req    = false;
-        narrow_req  = false;
-        if (narrow_mode) {
-            run_narrow();
+        spin_mode = spin_req;
+        step_mode = step_req;
+        spin_req  = false;
+        step_req  = false;
+        if (step_mode) {
+            run_step();
         } else if (spin_mode) {
             run_spin();
         } else {
@@ -1336,22 +1514,23 @@ rc_result_t sub_scan_start(void)
     if ((state != S_IDLE) && (state != S_WATCH)) {
         return RC_ERR_BUSY;
     }
-    state      = S_IDLE;
-    spin_req   = false;
-    narrow_req = false;
+    state    = S_IDLE;
+    spin_req = false;
+    step_req = false;
     return (tk_set_flg(scan_flgid, FLG_START) == E_OK) ? RC_OK : RC_ERR_STATE;
 }
 
-/* As sub_scan_start(), but the narrow servo sweep (+-NARROW_HALF_DEG,
- * chassis still): see "Narrow servo scan". */
-rc_result_t sub_scan_start_narrow(void)
+/* As sub_scan_start(), but the step scan (see "Step scan"): servo and
+ * chassis measure the obstacle's length. The motors must be free
+ * (sub_nav AVOIDING); they are stopped when it ends. */
+rc_result_t sub_scan_start_measure(void)
 {
     if ((state != S_IDLE) && (state != S_WATCH)) {
         return RC_ERR_BUSY;
     }
-    state      = S_IDLE;
-    spin_req   = false;
-    narrow_req = true;
+    state    = S_IDLE;
+    spin_req = false;
+    step_req = true;
     return (tk_set_flg(scan_flgid, FLG_START) == E_OK) ? RC_OK : RC_ERR_STATE;
 }
 
@@ -1364,6 +1543,7 @@ rc_result_t sub_scan_start_spin(void)
         return RC_ERR_BUSY;
     }
     state    = S_IDLE;
+    step_req = false;
     spin_req = true;
     return (tk_set_flg(scan_flgid, FLG_START) == E_OK) ? RC_OK : RC_ERR_STATE;
 }

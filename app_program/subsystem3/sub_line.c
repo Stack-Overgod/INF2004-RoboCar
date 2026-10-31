@@ -186,6 +186,11 @@
  * tried and stalled the inner wheel (0-4 mm/s, 17:03): the car pivoted on
  * it, so back to 75. */
 #define ARC_TURN_RADIUS_MM  (75)
+/* Right curves only: the right (inner) wheel's speed x this, permille,
+ * the left (outer) wheel unchanged (2026-10-31 17:15, Buddy 5's track
+ * call: right turns on the 140 mm curves need the right motor ~5 %
+ * faster). */
+#define ARC_RIGHT_INNER_PERMILLE (1050)
 /* Per direction, permille: the motors differ at low duty. 2026-10-19
  * 19:05-19:14 arcs at 150 inner: right turns ran 275 / 130 mm/s (ratio
  * 2.1), left turns 275 / 160 (ratio 1.8, R ~190 mm: left turns missed
@@ -348,8 +353,18 @@ static void drive_arc(int16_t dir)
 {
     int32_t base  = base_permille;
     int32_t steer = (base * ((int32_t)RC_WHEEL_BASE_MM / 2)) / ARC_TURN_RADIUS_MM;
+    int32_t left, right;
 
-    line_drive(base, (dir < 0) ? -steer : steer);
+    if (dir < 0) {
+        line_drive(base, -steer);
+    } else {
+        /* left wheel base + steer as before, right wheel scaled by
+         * ARC_RIGHT_INNER_PERMILLE (line_drive: left = base + steer,
+         * right = base - steer) */
+        left  = base + steer;
+        right = ((base - steer) * ARC_RIGHT_INNER_PERMILLE) / 1000;
+        line_drive((left + right) / 2, (left - right) / 2);
+    }
 }
 #else
 /* Near spin toward `dir` (+1 right, -1 left), see TURN_SPEED. */

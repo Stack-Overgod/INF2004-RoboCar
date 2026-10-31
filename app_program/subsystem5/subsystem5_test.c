@@ -403,9 +403,9 @@ EXPORT void subsystem5_test(void)
 	/* S5-N04: the scan finishes and its plan is acted on: FOLLOWING
 	 * (nothing close), STOPPED (no gap, or bypass refused) or
 	 * RECOVERING (bypass driven, once sub_motion is wired). */
-	got = wait_nav(RC_NAV_AVOIDING, false, 15000);	/* creep + spin ~8 s */
+	got = wait_nav(RC_NAV_AVOIDING, false, 20000);	/* step scan ~6-10 s */
 	TEST_CHECK("S5-N04", got,
-		   "scan plan handled: nav leaves AVOIDING within 15 s");
+		   "scan plan handled: nav leaves AVOIDING within 20 s");
 	tm_printf((UB*)"[INFO] S5 nav after plan: %s\n",
 		  sub_nav_state_name(sub_nav_state()));
 
