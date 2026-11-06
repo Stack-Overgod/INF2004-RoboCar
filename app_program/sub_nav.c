@@ -28,43 +28,41 @@
 #include "sub_nav.h"
 #include "rc_config.h"
 #include "rc_event.h"
+#include "rc_fault.h"
 #include "subsystem2/sub_motion.h"
 #include "subsystem2/drv_encoder.h"
 #include "subsystem3/sub_line.h"
 #include "subsystem3/sub_barcode.h"
 #include "subsystem5/sub_scan.h"
 
-/* FR6: a watch ping at or under this range starts avoidance. 150 mm
- * after the 19 Oct track runs (300 stopped too early; the car rolled
- * ~60 mm at 250 mm/s). 2026-10-29, Buddy 5: obstacles are placed 10-20 cm
- * ahead and anything at 20 cm or closer is bypassed, so 200 mm. At the
- * ~30 mm/s line speed the car stops within ~5 mm of the trigger (one
- * RC_PERIOD_SCAN_MS ping period plus the brake). */
+/* FR6: a watch ping at or under this range starts avoidance. Obstacles
+ * are placed 10-20 cm ahead and anything at 20 cm or closer is bypassed.
+ * At the ~30 mm/s line speed the car stops within ~5 mm of the trigger
+ * (one RC_PERIOD_SCAN_MS ping period plus the brake). */
 #define NAV_WATCH_TRIGGER_MM    (200U)
-/* After the trigger the car creeps up to this range before the spin scan
- * measures the obstacle. 150 was tried (2026-10-29 19:03-19:07); Buddy 5
- * set it back to the trigger range, so the scan runs where the car
- * stopped (the creep only runs if the car stopped further out). */
+/* After the trigger the car creeps up to this range before the scan
+ * measures the obstacle. Equal to the trigger, so the scan runs where the
+ * car stopped (the creep only runs if the car stopped further out). */
 #define NAV_MEASURE_MM          (NAV_WATCH_TRIGGER_MM)
 
 /* The forward watch always pings straight ahead (sub_scan.c, S_WATCH). */
 #define NAV_WATCH_ANGLE_DEG     (90)
 
-/* Bypass and barcode turns, spin in place. Open loop until Buddy 2's
- * turn calibration (TURN_SLIP_PERMILLE) is done. */
+/* Bypass and barcode turns, spin in place, in degrees asked of
+ * sub_motion (which applies its TURN_SLIP_PERMILLE). */
 #define NAV_TURN_DEG            (90)
-/* +10: U-turns came up short on the track (2026-10-29, Buddy 5) */
+/* +10: a 180 degree request comes up short on the foam */
 #define NAV_UTURN_DEG           (190)
-/* Barcode left turns: +5 degrees, they came up short on the track
- * (2026-10-29, Buddy 5). Right turns and bypass turns stay at 90. */
+/* Barcode left turns: +5 degrees, because they come up short on the
+ * foam. Right turns and bypass turns stay at 90. */
 #define NAV_TURN_LEFT_DEG       (NAV_TURN_DEG + 5)
 /* After a junction turn the branch line is just ahead: sweep only this
- * far each side to find it (2026-10-29, Buddy 5; a lost line still
- * sweeps sub_line's full SEARCH_SWEEP_DEG). */
+ * far each side to find it (a lost line still sweeps sub_line's full
+ * SEARCH_SWEEP_DEG). */
 #define NAV_JUNCTION_SWEEP_DEG  (35)
 
-/* Obstacle bypass shape (see "Obstacle bypass" below), 2026-10-31
- * (Buddy 5): the car leaves the line at NAV_BYPASS_OUT_DEG, runs
+/* Obstacle bypass shape (see "Obstacle bypass" below): the car leaves
+ * the line at NAV_BYPASS_OUT_DEG, runs
  * parallel past the obstacle and comes back in at NAV_BYPASS_IN_DEG,
  * both 45 deg. The distances come from the measured obstacle (sub_scan
  * spin_plan: lateral_mm, forward_mm); nothing about its size is fixed
@@ -83,34 +81,31 @@
 #define NAV_BYPASS_OUT_COS_PERMILLE     (707U)
 #define NAV_BYPASS_IN_DEG               (45)
 /* Detour spin turns slip on the foam: at NAV_DETOUR_MM_S (turns run at
- * sub_motion's 60 mm/s floor) a turn the encoders count as 45 deg turned
- * only ~30 deg (2026-10-31 17:01-17:04, wheels 44-46 mm = 45 deg every
- * time), so every bypass turn is asked for 1.5x. sub_motion's
- * TURN_SLIP_PERMILLE was calibrated on the floor at cruise speed. */
+ * sub_motion's 60 mm/s floor) a turn the encoders count as 45 deg turns
+ * the car only ~30 deg, so every bypass turn is asked for 1.5x.
+ * sub_motion's TURN_SLIP_PERMILLE was calibrated on the floor at cruise
+ * speed. */
 #define NAV_DETOUR_TURN_PERMILLE        (1500)
-/* Bypass turns to the left are scaled by this on top (the left motor
- * is ~15 % weaker than the right, which sub_motion's per-wheel
- * feedforward FF_GAIN_L_PERMILLE also allows for). History: 1056 (95 /
- * 90, barcode turns 2026-10-29); 1150 (2026-10-31 17:07, "left is
- * worse"); at 1150 the left turn out looked ~60 deg while the right
- * turn back looked 45 (17:14), so 1150 x 45 / 60 = 862. */
+/* Bypass turns to the left are scaled by this on top of
+ * NAV_DETOUR_TURN_PERMILLE, so that left and right detour turns reach the
+ * same real angle on the foam. An eyeball estimate: re-check with tape
+ * marks if the detour drifts. */
 #define NAV_LEFT_TURN_PERMILLE          (862)
 /* Extra sideways step beyond the plan's lateral_mm (which already holds
  * the obstacle edge + CAR_WIDTH_MM / 2, 20 mm a side of margin). */
 #define NAV_BYPASS_EXTRA_ASIDE_MM       (10U)
 
-/* Rejoining the line (2026-10-31, Buddy 5). The car drives in at
+/* Rejoining the line. The car drives in at
  * NAV_BYPASS_IN_DEG, line steering off, until either line sensor sees
  * the line; then NAV_LINE_SENSOR_AHEAD_MM further, which puts the axle
  * where the sensors crossed it; then LINE SCAN: it spins in place toward
  * the plan side, noting the heading at which each sensor goes on to and
  * off the line. The line runs midway between those four headings (the
  * pair then straddles it, which straddle mode reads as centred), so it
- * turns there and follows. The crossing angle is measured, not assumed:
- * on 2026-10-31 16:42 turn errors over the detour made it much shallower
- * than 45, and the old fixed "85 mm on, turn 45, sweep +-35" ended with
- * both sensors off the line. */
-#define NAV_LINE_SENSOR_AHEAD_MM        (80U)   /* measured 2026-10-29 */
+ * turns there and follows. The crossing angle is measured, not assumed,
+ * because turn errors over the detour can make it much shallower than
+ * 45 degrees. */
+#define NAV_LINE_SENSOR_AHEAD_MM        (80U)   /* sensors ahead of the axle */
 /* The first sweep goes NAV_LINESCAN_SPARE_DEG past the planned re-entry
  * angle; if it misses, the second sweep goes back the other way to the
  * same amount past the heading the scan began at. */
@@ -135,13 +130,13 @@
 /* A junction is seen by the line sensors at the front, ahead of the drive
  * wheels, as they reach the near edge of the crossing line. Before a
  * junction turn the car drives this far forward so the wheels (the spin
- * centre) sit over the junction: 80 mm sensors-to-wheels (Buddy 5's
- * measurement, 2026-10-29) + 9 mm, half the 18 mm crossing line. */
+ * centre) sit over the junction: 80 mm sensors-to-wheels + 9 mm, half
+ * the 18 mm crossing line. */
 #define NAV_JUNCTION_FWD_MM     (80U + 9U)
 
 /* Duty while RECOVERING: sub_line does not steer while SEARCHING, so nav
  * keeps the car rolling forward until it crosses the line.
- * TODO Buddy 2/3: tune on the track. 188 = 250 less 25 % (2026-10-19). */
+ * TODO Buddy 2/3: tune on the track. */
 #define NAV_RECOVER_PERMILLE    (188)
 
 /* State timeouts, ms (RELTIM).
@@ -151,9 +146,8 @@
  *            + RECOVERY_FAILED.
  *   BARCODE  G10: start character seen but no data character -> back to
  *            FOLLOWING. At the ~30 mm/s line speed one character takes
- *            ~2.5 s to pass the sensor (2026-10-29 16:50: narrow ~156 ms,
- *            wide ~460 ms; a whole *X* ~7 s), so the 2 s placeholder
- *            expired before the letter and it was ignored. 6 s = 2.4x.
+ *            ~2.5 s to pass the sensor (narrow ~156 ms, wide ~460 ms; a
+ *            whole *X* ~7 s), so 6 s = 2.4x one character.
  *   CMD      Backstop for EXECUTING_CMD, report §8 risk "nav could miss a
  *            MOTION_DONE and stall in EXECUTING_CMD": a 180 degree spin
  *            takes about 2 s at cruise speed, so 5 s means it was lost. */
@@ -164,7 +158,7 @@
 
 /* The obstacle detour (AVOIDING's turns and moves, and RECOVERING's
  * drive back to the line) runs at the line-following speed, not the
- * cruise speed (2026-10-29, Buddy 5): sub_line's closed-loop base, 175
+ * cruise speed: sub_line's closed-loop base, 175
  * permille x LINE_MM_S_AT_175 63 x LINE_SPEED_PCT 50 % = ~32 mm/s. The
  * cruise speed is put back when the detour ends. */
 #define NAV_DETOUR_MM_S         (32U)
@@ -209,15 +203,15 @@ static rc_pl_plan_t plan;           /* copy of the plan being executed */
 static uint32_t     bypass_step;    /* index into the bypass legs below */
 static uint32_t     bypass_move;    /* id of the sub_motion move in flight */
 static uint32_t     cmd_move;       /* id of the EXECUTING_CMD move */
-/* Barcode command stored until the next junction (2026-10-29, Buddy 5):
- * a barcode is read ahead of the junction it applies to. A junction is
+/* Barcode command stored until the next junction: a barcode is read
+ * ahead of the junction it applies to. A junction is
  * NAV_JUNCTION_CONFIRM samples of 1/1 on the line pair (both black: the
  * pair straddles the line just outside its edges, so only a crossing line
  * darkens both). Cleared on START and in STOPPED / IDLE. */
 static rc_nav_cmd_t pending_cmd = RC_CMD_NONE;
 static uint32_t     junction_count; /* 1/1 samples in a row, pending set */
 /* the EXECUTING_CMD move is a junction turn: find the line with
- * sub_line's sweep when it ends (2026-10-29, Buddy 5) */
+ * sub_line's sweep when it ends */
 static bool         cmd_at_junction;
 /* the turn to make once the NAV_JUNCTION_FWD_MM approach move is done */
 static rc_nav_cmd_t junction_turn;
@@ -582,10 +576,9 @@ static void enter(rc_nav_state_t next)
 
     case RC_NAV_AVOIDING:
         /* FR7a allows "slow to <= 150 mm/s or stop". Stop: the profile
-         * is taken from a stationary car, and closed-loop speed needs
-         * Buddy 2's encoder calibration (RC_ENC_TICKS_PER_REV is still a
-         * placeholder). Line steering must be off first, or sub_line
-         * would restart the motors on its next sample. */
+         * is taken from a stationary car. Line steering must be off
+         * first, or sub_line would restart the motors on its next
+         * sample. */
         (void)sub_line_enable(false);
         (void)sub_barcode_arm(false);
         (void)sub_scan_set_watch(false, 0U);
@@ -610,7 +603,7 @@ static void enter(rc_nav_state_t next)
         (void)sub_barcode_arm(false);
         /* The watch keeps pinging straight ahead while the car stands
          * still, so the range can be checked against a ruler on the
-         * dashboard (2026-10-29, Buddy 5). on_ultra ignores it: only
+         * dashboard. on_ultra ignores it: only
          * FOLLOWING / READING_BARCODE start avoidance. Not in a TEST
          * build: its pings would collide with the S5 tests' own. */
         (void)sub_scan_set_watch(!APP_TEST, NAV_WATCH_TRIGGER_MM);
@@ -636,8 +629,8 @@ static void enter(rc_nav_state_t next)
  * on_plan. */
 static void start_measure(void)
 {
-    /* servo and chassis, stopped per ping (sub_scan "Step scan",
-     * 2026-10-31); the continuous chassis spin is sub_scan_start_spin() */
+    /* servo and chassis, stopped per ping (sub_scan "Step scan"); the
+     * continuous chassis spin is sub_scan_start_spin() */
     if (sub_scan_start_measure() == RC_OK) {
         scan_pending = true;
     } else {
@@ -670,7 +663,7 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
     if ((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE)) {
         return;     /* scan pings during AVOIDING land here too */
     }
-    if (!evt->u.ultra.valid
+    if (!RC_ULTRA_VALID(&evt->u.ultra)
         || (evt->u.ultra.angle_deg != NAV_WATCH_ANGLE_DEG)
         || (evt->u.ultra.range_mm > NAV_WATCH_TRIGGER_MM)) {
         return;
@@ -913,7 +906,7 @@ static void rejoin_done(uint32_t move_id, bool completed,
 
 /* FR3 / report §6.5: '*' (start or stop character) opens READING_BARCODE;
  * a data character while reading is STORED (pending_cmd) and run at the
- * next junction (on_line_sample), not at once (2026-10-29, Buddy 5). A
+ * next junction (on_line_sample), not at once. A
  * data character seen in FOLLOWING without a start character is ignored,
  * as the report enters READING_BARCODE only on a start character. */
 static void on_barcode(const rc_event_t *evt, void *ctx)
@@ -923,7 +916,7 @@ static void on_barcode(const rc_event_t *evt, void *ctx)
     (void)ctx;
 
     if (state == RC_NAV_FOLLOWING) {
-        if (b->symbol == '*') {
+        if (b->sym == RC_SYM_STAR) {
             enter(RC_NAV_READING_BARCODE);
         }
     } else if (state == RC_NAV_READING_BARCODE) {
@@ -931,7 +924,7 @@ static void on_barcode(const rc_event_t *evt, void *ctx)
             pending_cmd    = b->command;    /* a newer barcode replaces it */
             junction_count = 0U;
             tm_printf((UB *)"[nav] barcode '%c': command %d stored for the"
-                      " next junction\n", (INT)b->symbol, (INT)b->command);
+                      " next junction\n", (INT)rc_sym_char(b->sym), (INT)b->command);
             enter(RC_NAV_FOLLOWING);
         }
         /* '*' again (the stop character) or an unmapped symbol: keep
@@ -1013,6 +1006,7 @@ static void on_command_rx(const rc_event_t *evt, void *ctx)
     if (cmd == RC_CMD_START) {
         if (state == RC_NAV_STOPPED) {
             tm_printf((UB *)"[nav] START command\n");
+            rc_fault_clear(RC_FAULT_IMPACT);    /* START acknowledges it */
             (void)sub_nav_start();
         } else {
             tm_printf((UB *)"[nav] START ignored in %s\n",
@@ -1024,7 +1018,7 @@ static void on_command_rx(const rc_event_t *evt, void *ctx)
 }
 
 /* FR9 / FR12: sub_line gave up after a sustained line loss during normal
- * following (its own 3 s search timeout + brake, Buddy 3's sub_line) and
+ * following (its search sweep found nothing and it braked) and
  * published RECOVERY_FAILED. Bring nav to STOPPED so the mission state
  * matches the stopped car, with line following, the barcode decoder and
  * the forward watch all turned off (enter(STOPPED) does that). We also

@@ -14,6 +14,7 @@
 #include "../rc_config.h"
 #include "../rc_gpioirq.h"
 #include "../rc_event.h"
+#include "../rc_fault.h"
 #include "../rc_defer.h"
 #include "../rc_time.h"
 
@@ -90,6 +91,8 @@ static volatile uint32_t      t_rise;
 /* servo angle this ping was taken at, so the result can be matched back to a
  * bearing */
 static volatile int16_t       tag_angle;
+/* last reading had an echo; RC_FAULT_NO_ECHO is its inverse (defer task) */
+static bool                   echo_ok = true;
 /* optional direct callback registered via drv_ultrasonic_on_result() */
 static drv_ultra_cb_t         user_cb;
 /* the free-form context pointer handed back unchanged to user_cb */
@@ -211,10 +214,23 @@ static void ultra_drain(void *ctx)
      * subscriber — sub_scan.c's on_range(), and anything else that cares
      * — finds out a measurement completed, tagged with the angle it was
      * taken at. */
+    /* 12-bit range, 0 = no echo (no separate valid flag); 8-bit servo
+     * angle. The NO_ECHO fault follows the latest reading. */
     evt.id = RC_EVT_ULTRA_RESULT;
-    evt.u.ultra.angle_deg = tag_angle;
-    evt.u.ultra.range_mm  = (uint16_t)mm;
-    evt.u.ultra.valid     = valid;
+    evt.u.ultra.angle_deg = RC_SAT_U((tag_angle < 0) ? 0 : tag_angle,
+                                     RC_BITS_ANGLE);
+    evt.u.ultra.range_mm  = valid ? RC_SAT_U(mm, RC_BITS_MM) : 0U;
+    if (valid && (evt.u.ultra.range_mm == 0U)) {
+        evt.u.ultra.range_mm = 1U;      /* keep 0 meaning "no echo" */
+    }
+    if (valid != echo_ok) {
+        if (valid) {
+            rc_fault_clear(RC_FAULT_NO_ECHO);
+        } else {
+            rc_fault_set(RC_FAULT_NO_ECHO);
+        }
+        echo_ok = valid;
+    }
     (void)rc_event_publish(&evt);
 
     /* Also call the optional direct callback, if one was registered via

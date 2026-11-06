@@ -96,7 +96,7 @@ rc_result_t drv_servo_set_angle(int16_t deg)
     /* Linear interpolation: RC_SERVO_ANGLE_MIN -> PULSE_MIN_US,
      * RC_SERVO_ANGLE_MAX -> PULSE_MAX_US, everything else proportional in
      * between. The angle is measured from RC_SERVO_ANGLE_MIN (not from 0),
-     * since the swing no longer starts at 0 deg. All integer arithmetic
+     * since the swing does not start at 0 deg. All integer arithmetic
      * (multiply before divide, to keep as much precision as possible
      * without ever using a fractional/float type — see TEAM_GUIDE.md §5,
      * \"No floating point anywhere\"). */

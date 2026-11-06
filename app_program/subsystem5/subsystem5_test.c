@@ -83,7 +83,7 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
 	(void)ctx;
 	ultra_angle = evt->u.ultra.angle_deg;
 	ultra_range = evt->u.ultra.range_mm;
-	ultra_valid = evt->u.ultra.valid;
+	ultra_valid = RC_ULTRA_VALID(&evt->u.ultra);
 	S5_BARRIER();
 	ultra_count++;
 }
@@ -146,9 +146,9 @@ static void fake_barcode(char symbol, rc_nav_cmd_t cmd)
 	rc_event_t e = { 0 };
 
 	e.id                 = RC_EVT_BARCODE_DECODED;
-	e.u.barcode.symbol   = symbol;
+	e.u.barcode.sym      = rc_sym_code(symbol);
 	e.u.barcode.command  = cmd;
-	e.u.barcode.reversed = false;
+	e.u.barcode.reversed = 0U;
 	(void)rc_event_publish(&e);
 }
 
@@ -160,9 +160,8 @@ static void fake_junction(void)
 	int        i;
 
 	e.id                = RC_EVT_LINE_SAMPLE;
-	e.u.line.on_line_l  = true;
-	e.u.line.on_line_r  = true;
-	e.u.line.position   = 0;
+	e.u.line.on_line_l  = 1U;
+	e.u.line.on_line_r  = 1U;
 	for (i = 0; i < 5; i++) {
 		(void)rc_event_publish(&e);
 	}
@@ -248,8 +247,8 @@ EXPORT void subsystem5_test(void)
 	TEST_INIT();
 
 #if S5_TEST_STANDALONE
-	/* S5-U01: the shared core our drivers sit on starts cleanly.
-	 * Same order as the old app_main.c. */
+	/* S5-U01: the shared core our drivers sit on starts cleanly, in the
+	 * same order as app_main.c. */
 	TEST_CHECK("S5-U01",
 		   (rc_defer_init() == RC_OK)
 		   && (rc_event_init() == RC_OK)
@@ -372,8 +371,8 @@ EXPORT void subsystem5_test(void)
 	/* ---- S5-N01..N06: sub_nav skeleton, obstacle path -------------
 	 * usermain() ran sub_nav_init() but, in a TEST=1 build, NOT
 	 * sub_nav_start(), so nav is still IDLE here.  Works on a bare board:
-	 * with Buddy 2's sub_motion not wired yet, a bypass is refused and
-	 * nav goes to STOPPED, which is a valid end of the obstacle path. */
+	 * if sub_motion refuses the bypass, nav goes to STOPPED, which is a
+	 * valid end of the obstacle path. */
 
 	/* S5-N01: nav ignores events before the run starts (S1's tests
 	 * published fake IMPACT and STOP events earlier in this run). */
@@ -394,7 +393,6 @@ EXPORT void subsystem5_test(void)
 		e.id              = RC_EVT_ULTRA_RESULT;
 		e.u.ultra.angle_deg = 90;
 		e.u.ultra.range_mm  = 200U;
-		e.u.ultra.valid     = true;
 		(void)rc_event_publish(&e);
 	}
 	TEST_CHECK("S5-N03", wait_nav(RC_NAV_AVOIDING, true, 200),
@@ -426,7 +424,6 @@ EXPORT void subsystem5_test(void)
 		e.id              = RC_EVT_ULTRA_RESULT;
 		e.u.ultra.angle_deg = 90;
 		e.u.ultra.range_mm  = 200U;
-		e.u.ultra.valid     = true;
 		(void)rc_event_publish(&e);
 	}
 	(void)tk_dly_tsk(200);
@@ -448,7 +445,7 @@ EXPORT void subsystem5_test(void)
 		   (r1 == RC_OK) && wait_nav(RC_NAV_READING_BARCODE, true, 200),
 		   "start character while FOLLOWING -> READING_BARCODE");
 
-	/* S5-N09: the data character 'A' is stored, not run (2026-10-29):
+	/* S5-N09: the data character 'A' is stored, not run:
 	 * nav goes back to FOLLOWING, and at the next junction (line pair
 	 * 1/1) runs the left turn (FR3): EXECUTING_CMD, or STOPPED if
 	 * sub_motion refuses the move.  Real line samples are held, so what
