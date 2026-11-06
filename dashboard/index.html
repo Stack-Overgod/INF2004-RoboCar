@@ -7,175 +7,236 @@
 <style>
 :root {
   color-scheme: light;
-  --bg: #f3f3f1;
-  --surface-1: #fcfcfb;
-  --surface-2: #efeeeb;
-  --border: #dcdbd6;
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #7a7974;
-  --grid: #e6e5e1;
-  --series-1: #2a78d6;   /* left wheel */
-  --series-2: #eb6834;   /* right wheel */
-  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
-  --accent: #2a78d6;
-  --black-tile: #1b1b1a; --white-tile: #ffffff;
+  --bg: #eef0f3;
+  --surface-1: #ffffff;
+  --surface-2: #f4f5f7;
+  --surface-3: #e9ebef;
+  --border: #e2e5ea;
+  --text-primary: #1a1d23;
+  --text-secondary: #4f5663;
+  --text-muted: #8b919c;
+  --grid: #e6e8ec;
+  --series-1: #4f7cff;   /* left wheel */
+  --series-2: #ff8a4c;   /* right wheel */
+  --good: #22a861; --warning: #e3a524; --serious: #e8844f; --critical: #e5484d;
+  --accent: #4f7cff;
+  --black-tile: #20232a; --white-tile: #ffffff;
+  --shadow: 0 1px 2px rgba(20, 24, 33, .04), 0 2px 8px rgba(20, 24, 33, .05);
+  --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --bg: #111110; --surface-1: #1a1a19; --surface-2: #232321; --border: #33332f;
-    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
-    --grid: #2a2a27; --series-1: #3987e5; --series-2: #d95926; --accent: #3987e5;
-    --black-tile: #050505; --white-tile: #e9e8e4;
+    --bg: #0d0f13; --surface-1: #161920; --surface-2: #1d2129; --surface-3: #262b35; --border: #272c36;
+    --text-primary: #e9ebef; --text-secondary: #aeb4bf; --text-muted: #767e8b;
+    --grid: #232832; --series-1: #6b91ff; --series-2: #ff9a62; --accent: #6b91ff;
+    --black-tile: #050608; --white-tile: #e8eaee; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #111110; --surface-1: #1a1a19; --surface-2: #232321; --border: #33332f;
-  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
-  --grid: #2a2a27; --series-1: #3987e5; --series-2: #d95926; --accent: #3987e5;
-  --black-tile: #050505; --white-tile: #e9e8e4;
+  --bg: #0d0f13; --surface-1: #161920; --surface-2: #1d2129; --surface-3: #262b35; --border: #272c36;
+  --text-primary: #e9ebef; --text-secondary: #aeb4bf; --text-muted: #767e8b;
+  --grid: #232832; --series-1: #6b91ff; --series-2: #ff9a62; --accent: #6b91ff;
+  --black-tile: #050608; --white-tile: #e8eaee; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--text-primary);
-  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+  font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-.num, code, .mono { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+/* numbers: same face as the text, fixed-width digits */
+.num { font-variant-numeric: tabular-nums; }
+code, .mono, .log { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+
+/* header */
 header {
-  position: sticky; top: 0; z-index: 5; background: var(--surface-1);
-  border-bottom: 1px solid var(--border); padding: 10px 16px;
-  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+  position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(8px); padding: 10px 16px 4px;
+  display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
 }
-header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .02em; }
+@media (max-width: 900px) { header { flex-wrap: wrap; } }
+header h1 { font-size: 15px; font-weight: 650; margin: 0 8px 0 0; display: flex; align-items: center; gap: 9px; white-space: nowrap; letter-spacing: -.01em; }
+header h1::before { content: ""; width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), #8aa7ff); box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent); }
+header button { padding: 4px 11px; font-size: 12px; white-space: nowrap; flex: none; }
+header .pill, header h1 { flex: none; }
+#flags { flex: 0 1 auto; min-width: 60px; overflow: hidden; text-overflow: ellipsis; }
+#logPath { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill {
-  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
-  border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); font-size: 13px;
+  display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; white-space: nowrap;
+  border-radius: 999px; background: var(--surface-1); box-shadow: var(--shadow); color: var(--text-secondary); font-size: 12px;
 }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: none; }
-.dot.good { background: var(--good); } .dot.warning { background: var(--warning); }
-.dot.critical { background: var(--critical); }
-.grow { flex: 1; }
+.pill.mono { font-family: inherit; font-variant-numeric: tabular-nums; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex: none; }
+.dot.good { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 18%, transparent); }
+.dot.warning { background: var(--warning); }
+.dot.critical { background: var(--critical); box-shadow: 0 0 0 3px color-mix(in srgb, var(--critical) 18%, transparent); }
+
 button {
-  font: inherit; border: 1px solid var(--border); background: var(--surface-2);
-  color: var(--text-primary); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  font: inherit; font-weight: 550; border: 0; background: var(--surface-2);
+  color: var(--text-primary); border-radius: 10px; padding: 6px 12px; cursor: pointer;
+  transition: background .12s, transform .06s, filter .12s;
 }
-button:hover { border-color: var(--text-muted); }
-button:disabled { opacity: .45; cursor: default; }
-button.primary { background: var(--good); border-color: var(--good); color: #fff; }
-button.danger { background: var(--critical); border-color: var(--critical); color: #fff; }
+button:hover { background: var(--surface-3); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--good); color: #fff; }
+button.danger { background: var(--critical); color: #fff; }
+button.primary:hover, button.danger:hover { filter: brightness(1.06); }
+header button { background: var(--surface-1); box-shadow: var(--shadow); }
+header button.primary { background: var(--good); }
+
+/* layout: row 1 drive / car / commands, row 2 five panels, row 3 log */
 main {
-  display: grid; gap: 14px; padding: 14px 16px 40px;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  display: grid; gap: 12px; padding: 10px 16px 18px;
+  grid-template-columns: repeat(60, minmax(0, 1fr));
 }
 .card {
-  background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
-  padding: 14px; min-width: 0;
+  background: var(--surface-1); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 12px 14px; min-width: 0;
+  display: flex; flex-direction: column; grid-column: span 12;
 }
-.card h2 {
-  margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
-  color: var(--text-secondary); display: flex; justify-content: space-between; gap: 8px;
-}
-.card h2 small { text-transform: none; letter-spacing: 0; color: var(--text-muted); font-weight: 400; }
+.c-drive, .c-cmd { grid-column: span 16; }
+.c-car { grid-column: span 28; }
 .wide { grid-column: 1 / -1; }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 13px; }
-.kv dt { color: var(--text-muted); } .kv dd { margin: 0; }
-.stat { font-size: 30px; font-weight: 600; line-height: 1.1; }
-.stat small { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 4px; }
-.label { font-size: 12px; color: var(--text-muted); }
-.row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+@media (max-width: 1100px) {
+  main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card, .c-drive, .c-cmd { grid-column: auto; }
+  .c-car, .wide { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+.card h2 {
+  margin: 0 0 10px; font-size: 13px; font-weight: 650; letter-spacing: -.005em;
+  color: var(--text-primary); display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.card h2 small { color: var(--text-muted); font-weight: 400; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { margin: 6px 0 0; font-size: 11px; color: var(--text-muted); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0; }
+.kv dt { color: var(--text-muted); } .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.stats.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stats.four { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.stats.three, .stats.four { gap: 6px; }
+.stats.three > div, .stats.four > div { padding: 5px 7px; }
+.stats.three .stat, .stats.four .stat { font-size: 15px; }
+.stats.three .stat small, .stats.four .stat small { font-size: 10px; margin-left: 2px; }
+.stats > div { background: var(--surface-2); border-radius: 10px; padding: 5px 9px; min-width: 0; }
+.stat { font-size: 17px; font-weight: 650; line-height: 1.2; white-space: nowrap; font-variant-numeric: tabular-nums; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; }
+.stat small { font-size: 11px; font-weight: 450; color: var(--text-muted); margin-left: 3px; }
+.label { font-size: 11px; color: var(--text-muted); }
+.row { display: flex; gap: 6px 12px; align-items: flex-end; flex-wrap: wrap; }
+.grow { flex: 1; }
 
 /* commands */
 .cmds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.cmds button { padding: 12px 6px; font-weight: 600; }
-.cmds .go, .cmds .stop { grid-column: span 3; font-size: 17px; padding: 14px; }
-.hint { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
-kbd { font: 11px Consolas, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+.cmds button { padding: 11px 4px; font-weight: 600; }
+.cmds .go, .cmds .stop { grid-column: span 3; font-size: 15px; padding: 13px; letter-spacing: .02em; border-radius: 12px; }
+.cmds .go { box-shadow: 0 4px 12px color-mix(in srgb, var(--good) 30%, transparent); }
+.cmds .stop { box-shadow: 0 4px 12px color-mix(in srgb, var(--critical) 30%, transparent); }
+.cmds .go .label, .cmds .stop .label { color: rgba(255, 255, 255, .75); margin-left: 4px; }
+.hint { font-size: 11px; color: var(--text-muted); margin-top: auto; padding-top: 10px; }
+details.hint summary { cursor: pointer; }
+kbd { font: 10px "Segoe UI", sans-serif; border-radius: 4px; padding: 0 5px; background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--border); }
 
 /* line sensors */
-.sensors { display: flex; gap: 10px; }
+.sensors { display: flex; gap: 8px; margin-bottom: 12px; }
 .tile {
-  flex: 1; border-radius: 10px; padding: 12px; text-align: center; border: 1px solid var(--border);
-  background: var(--white-tile); color: #222; transition: background .1s;
+  flex: 1; border-radius: 10px; padding: 6px 10px; display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface-2); color: var(--text-primary); transition: background .12s, color .12s;
 }
-.tile.black { background: var(--black-tile); color: #eee; }
-.tile b { display: block; font-size: 20px; }
+.tile .label { color: inherit; opacity: .65; }
+.tile b { font-size: 13px; font-weight: 650; text-transform: lowercase; }
+.tile b::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--white-tile); box-shadow: inset 0 0 0 1.5px var(--text-muted); vertical-align: 0; }
+.tile.black { background: var(--black-tile); color: #eef0f3; }
+.tile.black b::before { background: #000; box-shadow: inset 0 0 0 1.5px #6c727d; }
 
 /* duty bars */
-.duty { display: grid; grid-template-columns: 18px 1fr 52px; gap: 6px 8px; align-items: center; font-size: 13px; }
-.bar { position: relative; height: 10px; background: var(--surface-2); border-radius: 5px; }
-.bar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-.bar::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--text-muted); }
-.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; }
+.duty { display: grid; grid-template-columns: 14px 1fr 42px; gap: 7px 8px; align-items: center; font-size: 12px; }
+.bar { position: relative; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.duty .num { text-align: right; font-weight: 500; }
+.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: 0; }
 
-/* charts */
-.chart { position: relative; }
-.chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
-.legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+/* charts: fill the card's spare height */
+.chart { position: relative; flex: 1 1 auto; min-height: 100px; }
+.chart svg { display: block; width: 100%; height: 100%; min-height: 100px; overflow: visible; }
+#hChart { flex: none; margin-top: 2px; min-height: 0; }
+#hChart svg { height: 70px; min-height: 0; }
+.legend { display: flex; gap: 12px; font-size: 11px; color: var(--text-secondary); margin: -4px 0 4px; }
 .tip {
-  position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
-  border-radius: 8px; padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.15);
-  display: none; white-space: nowrap; z-index: 3;
+  position: absolute; pointer-events: none; background: var(--surface-1); border-radius: 10px; padding: 6px 9px;
+  font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.14); display: none; white-space: nowrap; z-index: 3;
 }
 
 /* obstacle sketch */
-.polar svg { width: 100%; height: 170px; display: block; }
+.polar svg { width: 100%; height: 92px; display: block; }
+
+/* tables: no rules, zebra rows */
+.tbl { max-height: 58px; overflow-y: auto; margin-top: 6px; scrollbar-width: thin; }
+.stats .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table { border-collapse: collapse; width: 100%; font-size: 11px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 2px 5px; white-space: nowrap; }
+th { color: var(--text-muted); font-weight: 500; position: sticky; top: 0; background: var(--surface-1); }
+tbody tr:nth-child(odd) td { background: var(--surface-2); }
+tbody tr td:first-child { border-radius: 6px 0 0 6px; } tbody tr td:last-child { border-radius: 0 6px 6px 0; }
 
 /* events */
 .toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
-.chip { padding: 2px 9px; border-radius: 999px; font-size: 12px; }
-.chip.off { opacity: .4; }
+.chip { padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.chip:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.chip.off { background: var(--surface-2); color: var(--text-muted); }
 .log {
-  height: 320px; overflow: auto; font: 12px/1.5 "Cascadia Mono", Consolas, monospace;
-  background: var(--surface-2); border-radius: 8px; padding: 6px 8px;
+  height: 200px; overflow: auto; font-size: 12px; line-height: 1.55;
+  background: var(--surface-2); border-radius: 10px; padding: 8px 10px;
 }
 .log div { white-space: pre-wrap; word-break: break-all; }
 .log .t { color: var(--text-muted); }
 .log .k { font-weight: 600; }
 .log .bad { color: var(--critical); }
 .banner {
-  display: none; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; font-weight: 600;
-  background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--text-primary);
+  display: none; padding: 5px 10px; border-radius: 8px; margin-bottom: 6px; font-weight: 600;
+  background: color-mix(in srgb, var(--critical) 14%, transparent); color: var(--critical);
 }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--grid); }
-th { color: var(--text-muted); font-weight: 500; }
 .toast {
   position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text-primary);
-  color: var(--surface-1); padding: 8px 14px; border-radius: 8px; font-size: 13px; display: none; z-index: 9;
+  color: var(--surface-1); padding: 8px 14px; border-radius: 10px; font-size: 13px; display: none; z-index: 9;
 }
+
 /* car view */
-:root { --ground: #d9d4c7; --car-body: #f7f6f2; --car-edge: #8a877d; --wheel: #2b2b29; --sensor: #9fb3c8; --car-label: #5b5952; }
+:root { --ground: #f1f2f4; --car-body: #ffffff; --car-edge: #b5bac3; --wheel: #2a2d33; --sensor: #8fb0e8; --car-label: #6b717c; }
 @media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) { --ground: #3a372f; --car-body: #2c2c29; --car-edge: #77746a; --wheel: #0d0d0c; --sensor: #6b86a3; --car-label: #b9b6aa; }
+  :root:where(:not([data-theme="light"])) { --ground: #1d2129; --car-body: #2a2f39; --car-edge: #5d6470; --wheel: #08090b; --sensor: #6b91ff; --car-label: #aeb4bf; }
 }
-:root[data-theme="dark"] { --ground: #3a372f; --car-body: #2c2c29; --car-edge: #77746a; --wheel: #0d0d0c; --sensor: #6b86a3; --car-label: #b9b6aa; }
-.carview { position: relative; max-width: 300px; margin: 0 auto; }
-.carview svg { width: 100%; display: block; }
+:root[data-theme="dark"] { --ground: #1d2129; --car-body: #2a2f39; --car-edge: #5d6470; --wheel: #08090b; --sensor: #6b91ff; --car-label: #aeb4bf; }
+.carview { position: relative; flex: 1 1 auto; display: flex; justify-content: center; min-height: 0; }
+.carview svg { height: min(250px, 31vh); width: auto; max-width: 100%; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.04)); }
 .mode {
-  position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-flex; gap: 6px; align-items: center;
-  background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 13px; font-weight: 600;
+  position: absolute; top: 2px; left: 0; z-index: 2; display: inline-flex; gap: 7px; align-items: center;
+  background: var(--surface-2); border-radius: 999px; padding: 4px 11px; font-size: 12px; font-weight: 600;
 }
 .mode .dot { background: var(--text-muted); }
 .mode.good .dot { background: var(--good); } .mode.warning .dot { background: var(--warning); }
 .mode.critical .dot { background: var(--critical); } .mode.info .dot { background: var(--accent); }
 
 /* barcode scans */
-.scan { border-top: 1px solid var(--grid); padding: 10px 0; }
-.scan-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; margin-bottom: 6px; }
+.scan { padding: 6px 0 2px; }
+.scan-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; margin-bottom: 4px; }
 .scan-head .res { font-weight: 600; }
 .scan-head .res.ok { color: var(--good); } .scan-head .res.fail { color: var(--critical); }
-.sym { display: inline-block; padding: 1px 8px; border-radius: 6px; background: var(--surface-2); font: 600 14px "Cascadia Mono", Consolas, monospace; }
+.sym { display: inline-block; padding: 0 7px; border-radius: 6px; background: var(--surface-2); font: 600 13px "Cascadia Mono", Consolas, monospace; }
 .strip { overflow-x: auto; padding-bottom: 4px; }
 .strip svg { display: block; }
 .strip.fit { overflow: hidden; }
-.strip.fit svg { width: 100%; height: auto; max-height: 90px; }
-details.more { margin-top: 8px; border-top: 1px solid var(--grid); padding-top: 6px; }
-details.more summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); padding: 4px 0; }
+.strip.fit svg { width: 100%; height: auto; max-height: 56px; }
+#scans .scan-head .label:last-child { display: none; }
+details.more { margin-top: auto; padding-top: 6px; }
+details.more summary { cursor: pointer; font-size: 12px; color: var(--accent); padding: 2px 0; font-weight: 500; }
 details.more[open] summary { margin-bottom: 4px; }
 #scansAll { max-height: 60vh; overflow-y: auto; }
-@media (max-width: 520px) { header { gap: 8px; } .stat { font-size: 24px; } }
+#scansAll .scan + .scan { margin-top: 6px; }
+@media (max-width: 520px) { header { gap: 6px; } .stat { font-size: 17px; } }
 </style>
 </head>
 <body>
@@ -187,29 +248,33 @@ details.more[open] summary { margin-bottom: 4px; }
   <span class="pill" title="Car's MQTT session"><span class="dot" id="carDot"></span><span id="carText">Car: no data</span></span>
   <span class="pill mono" id="flags" title="WiFi / MQTT flags and link counters from car/01/status">wifi - · mqtt - · tx - · fail -</span>
   <span class="pill mono" id="live" title="Streams heard in the last second: odometry, line, IMU, ultrasonic">live ----</span>
-  <span class="grow"></span>
   <span class="label mono" id="logPath"></span>
 </header>
 
 <main>
-  <!-- Commands -->
-  <section class="card">
-    <h2>Commands <small id="ack">no ack yet</small></h2>
-    <div class="cmds">
-      <button class="go primary" data-c="G">GO <span class="label" style="color:#fff">(G)</span></button>
-      <button data-c="L">↰ Left</button>
-      <button data-c="S">↑ Straight</button>
-      <button data-c="R">↱ Right</button>
-      <span></span>
-      <button data-c="U">↶ U-turn</button>
-      <span></span>
-      <button class="stop danger" data-c="X">STOP (X)</button>
+  <!-- Row 1: drive | car | commands -->
+  <section class="card c-drive">
+    <h2>Drive <small id="stateAge">-</small></h2>
+    <div class="sensors">
+      <div class="tile" id="senL"><span class="label">Left IR</span><b>-</b></div>
+      <div class="tile" id="senR"><span class="label">Right IR</span><b>-</b></div>
     </div>
-    <div class="hint">Keys: <kbd>Space</kbd> stop · <kbd>G</kbd> go · <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd> left / straight / right / U-turn. Turns run once, then line following resumes.</div>
+    <div class="duty">
+      <span>L</span><div class="bar"><i id="dutyL"></i></div><span class="num" id="dutyLt">-</span>
+      <span>R</span><div class="bar"><i id="dutyR"></i></div><span class="num" id="dutyRt">-</span>
+    </div>
+    <div class="sub">Motor duty, permille (−1000 … 1000)</div>
+    <dl class="kv" style="margin-top:6px">
+      <dt>Distance</dt><dd class="num" id="dist">-</dd>
+      <dt>Encoders L / R</dt><dd class="num" id="enc">-</dd>
+      <dt>Motion class</dt><dd id="cls">-</dd>
+      <dt>Nav state</dt><dd id="nav">-</dd>
+      <dt>Faults</dt><dd id="flt">-</dd>
+      <dt>State frame</dt><dd class="num" id="fbytes">-</dd>
+    </dl>
   </section>
 
-  <!-- Car view -->
-  <section class="card">
+  <section class="card c-car">
     <h2>Car <small>top-down, inferred from telemetry</small></h2>
     <div class="carview">
       <div class="mode" id="mode"><span class="dot"></span><span id="modeText">No data</span></div>
@@ -250,31 +315,87 @@ details.more[open] summary { margin-bottom: 4px; }
         <g id="bypassMap" style="display:none"></g>
       </svg>
     </div>
-    <div class="hint">The car doesn't send its nav state, so the mode is inferred: wheel speeds → driving / turning / spinning; a barcode decode → reading; range ≤ 20 cm while stopped → obstacle; impact event → stopped. During a bypass the view switches to a map of the planned legs (dashed) and the driven path, with each turn's angle: planned, and measured from the encoders once done.</div>
+    <details class="hint"><summary>How the mode is inferred</summary>The car doesn't send its nav state, so the mode is inferred: wheel speeds → driving / turning / spinning; a barcode decode → reading; range ≤ 20 cm while stopped → obstacle; impact event → stopped. During a bypass the view switches to a map of the planned legs (dashed) and the driven path, with each turn's angle: planned, and measured from the encoders once done.</details>
   </section>
 
-  <!-- Drive -->
+  <section class="card c-cmd">
+    <h2>Commands <small id="ack">no ack yet</small></h2>
+    <div class="cmds">
+      <button class="go primary" data-c="G">GO <span class="label">G</span></button>
+      <button data-c="L">↰ Left</button>
+      <button data-c="S">↑ Straight</button>
+      <button data-c="R">↱ Right</button>
+      <span></span>
+      <button data-c="U">↶ U-turn</button>
+      <span></span>
+      <button class="stop danger" data-c="X">STOP <span class="label">Space / X</span></button>
+    </div>
+    <div class="hint">Keys: <kbd>G</kbd> go · <kbd>Space</kbd> stop · <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd> left / straight / right / U-turn. Turns run once, then line following resumes.</div>
+  </section>
+
+  <!-- Row 2: obstacle | ultrasonic | barcode | IMU | wheel speed -->
   <section class="card">
-    <h2>Drive <small id="stateAge">-</small></h2>
-    <div class="sensors">
-      <div class="tile" id="senL"><span class="label">Left IR</span><b>-</b></div>
-      <div class="tile" id="senR"><span class="label">Right IR</span><b>-</b></div>
+    <h2>Obstacle <small id="obsAge">no scan yet</small></h2>
+    <div class="stats three">
+      <div><div class="label">Ahead</div><div class="stat num" id="rng">-<small>cm</small></div></div>
+      <div><div class="label">Nearest</div><div class="stat num" id="near">-<small>cm</small></div></div>
+      <div><div class="label" title="Width across the car's path, from the servo scan">Length</div><div class="stat num" id="width">-<small>cm</small></div></div>
     </div>
-    <div style="height:12px"></div>
-    <div class="duty">
-      <span>L</span><div class="bar"><i id="dutyL"></i></div><span class="num" id="dutyLt">-</span>
-      <span>R</span><div class="bar"><i id="dutyR"></i></div><span class="num" id="dutyRt">-</span>
-    </div>
-    <div class="label" style="margin-top:4px">Motor duty, permille (−1000 … 1000)</div>
-    <div style="height:10px"></div>
+    <div class="polar" id="polar"></div>
     <dl class="kv">
-      <dt>Distance</dt><dd class="num" id="dist">-</dd>
-      <dt>Encoders L / R</dt><dd class="num" id="enc">-</dd>
-      <dt>Motion class</dt><dd id="cls">-</dd>
+      <dt title="Spin scan: each edge's distance from the line; - = edge not found">Edges L / R</dt><dd class="num" id="clear">-</dd>
+      <dt>Scan points</dt><dd class="num" id="npts">-</dd>
+      <dt>Avoid plan</dt><dd id="plan">-</dd>
+      <dt title="car/01/spin: where each pass of the spin scan lost the obstacle, heading (deg, + = left) @ range; - = edge not found">Spin passes</dt><dd class="num" id="spinp">-</dd>
     </dl>
   </section>
 
-  <!-- Wheel speed chart -->
+  <section class="card">
+    <h2>Ultrasonic range <small>cm, last 60 s</small></h2>
+    <div class="chart" id="rngChart"><svg></svg><div class="tip"></div></div>
+  </section>
+
+  <section class="card">
+    <h2>Barcode <small id="bcAge">no scan yet</small></h2>
+    <div class="stats">
+      <div><div class="label">Last symbol</div><div class="stat num" id="bcSym">-</div></div>
+      <div><div class="label">Last scan</div><div class="stat num" id="bcRes">-</div></div>
+      <div><div class="label">Edges / ratio fails</div><div class="stat num" id="bcEdges">-</div></div>
+      <div><div class="label">Element times</div><div class="stat num" id="bcWidths" style="font-size:13px">-</div></div>
+    </div>
+    <div id="scans"><div class="label">The latest scan: decoded letters and the sensor bits, scaled to fit (black = bar, 1 = wide).</div></div>
+    <details class="more" id="bcMore">
+      <summary id="bcMoreSum">All scans, bits to scale</summary>
+      <div class="label">Each scan: decoded letters, the sensor bits at 2 px/mm, and what each 9-element group decodes to on its own. Scroll sideways for long scans.</div>
+      <div id="scansAll"></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>IMU / terrain <small id="imuAge"></small></h2>
+    <div class="banner" id="impactBanner">⚠ IMPACT</div>
+    <div class="stats four">
+      <div><div class="label" title="Height above the start level now">Height</div><div class="stat num" id="hNow">-<small>mm</small></div></div>
+      <div><div class="label" title="Highest ramp so far">Ramp</div><div class="stat num" id="rampMax">-<small>mm</small></div></div>
+      <div><div class="label" title="Pitch of the last hump">Pitch</div><div class="stat num" id="pitch">-<small>°</small></div></div>
+      <div><div class="label" title="Tallest hump so far">Hump</div><div class="stat num" id="peak">-<small>mm</small></div></div>
+    </div>
+    <div class="label" title="Height = Σ ds·sin θ: wheel distance times the slope from the accelerometer (car's own acceleration removed). Rise = highest point above where the slope began, Net = where it ended.">Height above start level, mm, last 60 s ⓘ</div>
+    <div class="chart" id="hChart"><svg></svg><div class="tip"></div></div>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Hump at</th><th>Peak mm</th><th>Pitch °</th><th>Lasted</th></tr></thead>
+        <tbody id="humps"><tr><td colspan="4" class="label">No humps yet</td></tr></tbody>
+      </table>
+    </div>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Ramp at</th><th>Rise</th><th>Net</th><th>Slope °</th><th>cm</th></tr></thead>
+        <tbody id="ramps"><tr><td colspan="5" class="label">No ramps yet</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="card">
     <h2>Wheel speed <small>mm/s, last 60 s</small></h2>
     <div class="legend">
@@ -284,69 +405,13 @@ details.more[open] summary { margin-bottom: 4px; }
     <div class="chart" id="spdChart"><svg></svg><div class="tip"></div></div>
   </section>
 
-  <!-- Obstacle -->
-  <section class="card">
-    <h2>Obstacle <small id="obsAge">no scan yet</small></h2>
-    <div class="row">
-      <div><div class="label">Range ahead</div><div class="stat num" id="rng">-<small>cm</small></div></div>
-      <div><div class="label">Nearest (last scan)</div><div class="stat num" id="near">-<small>cm</small></div></div>
-      <div><div class="label" title="Width across the car's path, from the servo scan">Obstacle length</div><div class="stat num" id="width">-<small>cm</small></div></div>
-    </div>
-    <div class="polar" id="polar"></div>
-    <dl class="kv">
-      <dt title="Spin scan: each edge's distance from the line; - = edge not found">Edges L / R from line</dt><dd class="num" id="clear">-</dd>
-      <dt>Scan points</dt><dd class="num" id="npts">-</dd>
-      <dt>Avoid plan</dt><dd id="plan">-</dd>
-      <dt title="car/01/spin: where each pass of the spin scan lost the obstacle, heading (deg, + = left) @ range; - = edge not found">Spin passes</dt><dd class="num" id="spinp">-</dd>
-    </dl>
-  </section>
-
-  <!-- Range chart -->
-  <section class="card">
-    <h2>Ultrasonic range <small>cm, last 60 s</small></h2>
-    <div class="chart" id="rngChart"><svg></svg><div class="tip"></div></div>
-  </section>
-
-  <!-- IMU / terrain -->
-  <section class="card">
-    <h2>IMU / terrain <small id="imuAge"></small></h2>
-    <div class="banner" id="impactBanner">⚠ IMPACT</div>
-    <div class="row">
-      <div><div class="label">Last hump pitch</div><div class="stat num" id="pitch">-<small>°</small></div></div>
-      <div><div class="label">Tallest hump</div><div class="stat num" id="peak">-<small>mm</small></div></div>
-    </div>
-    <div style="height:8px"></div>
-    <table>
-      <thead><tr><th>Time</th><th>Peak mm</th><th>Pitch °</th><th>Duration</th></tr></thead>
-      <tbody id="humps"><tr><td colspan="4" class="label">No humps yet</td></tr></tbody>
-    </table>
-    <div class="hint">The car only sends tilt per hump (max pitch) and the motion class; there is no continuous pitch/roll stream in the firmware yet.</div>
-  </section>
-
-  <!-- Barcode -->
-  <section class="card">
-    <h2>Barcode scans <small id="bcAge">no scan yet</small></h2>
-    <div class="row" style="margin-bottom:10px">
-      <div><div class="label">Last symbol</div><div class="stat num" id="bcSym">-</div></div>
-      <div><div class="label">Last scan</div><div class="stat num" id="bcRes" style="font-size:20px">-</div></div>
-      <div><div class="label">Edges / ratio fails</div><div class="stat num" id="bcEdges" style="font-size:20px">-</div></div>
-      <div><div class="label">Element times</div><div class="stat num" id="bcWidths" style="font-size:20px">-</div></div>
-    </div>
-    <div id="scans"><div class="label">The latest scan: the letters the car decoded and the sensor bits, scaled to fit (black = bar, 1 = wide).</div></div>
-    <details class="more" id="bcMore">
-      <summary id="bcMoreSum">Expanded view: all scans, bits to scale</summary>
-      <div class="label">Each scan: decoded letters, the sensor bits at 2 px/mm, and what each 9-element group decodes to on its own. Scroll sideways for long scans.</div>
-      <div id="scansAll"></div>
-    </details>
-  </section>
-
-  <!-- Event log -->
+  <!-- Row 3: event log -->
   <section class="card wide">
     <h2>Event log <small>everything except car/01/state</small></h2>
     <div class="toolbar" id="chips"></div>
     <div class="toolbar">
       <button id="pause">Pause</button>
-      <button id="clear">Clear view</button>
+      <button id="clearLog">Clear view</button>
       <label class="label"><input type="checkbox" id="showState"> include state</label>
     </div>
     <div class="log" id="log"></div>
@@ -364,7 +429,7 @@ const WINDOW_S = 60;
 let car = { connected: false, last_rx: null };
 let status = null;           // latest car/01/status payload
 let lastRx = 0;              // browser time of the last car message
-const spd = [], rng = [];    // {t, l, r} / {t, v}
+const spd = [], rng = [], hgt = [];    // {t, l, r} / {t, v} / {t, v}
 const hidden = new Set();
 let paused = false;
 
@@ -396,7 +461,7 @@ function setBroker(b) {
   $("brText").textContent = "Broker: " + (b.running ? "running" : "stopped");
   $("brStart").disabled = b.running;
   $("brStop").disabled = !b.running;
-  $("logPath").textContent = b.log ? b.log.replace(/^.*[\\/]test[\\/]/, "test/") : "";
+  $("logPath").textContent = $("logPath").title = b.log ? b.log.replace(/^.*[\\/]test[\\/]/, "test/") : "";
   document.querySelectorAll(".cmds button").forEach(x => x.disabled = !b.running);
 }
 async function post(url) {
@@ -420,6 +485,11 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------- telemetry handlers ---------- */
+// state frame: nav = rc_nav_state_t (sub_nav.h), flt = rc_fault.h bits
+const NAV = ["IDLE", "FOLLOWING", "READING_BARCODE", "EXECUTING_CMD",
+             "AVOIDING", "RECOVERING", "STOPPED"];
+const FAULTS = ["MOTOR_STALL", "ENCODER", "IMU", "NO_ECHO", "WIFI_LOSS",
+                "IMPACT", "BARCODE_ADC"];
 function onState(d, t, epoch) {
   const L = d.line?.[0] === "1", R = d.line?.[1] === "1";
   setTile("senL", L); setTile("senR", R);
@@ -428,12 +498,20 @@ function onState(d, t, epoch) {
   $("dist").textContent = `${(d.dist / 1000).toFixed(2)} m`;
   $("enc").textContent = `${d.enc_l} / ${d.enc_r}`;
   $("cls").textContent = CLS[d.cls] ?? d.cls;
+  $("nav").textContent = NAV[d.nav] ?? (d.nav ?? "-");
+  $("flt").textContent = d.flt === undefined ? "-" :
+    (FAULTS.filter((_, i) => d.flt >> i & 1).join(", ") || "none");
+  $("fbytes").textContent = d._bytes ? `${d._bytes} B (binary, CR1)` : "-";
   $("rng").innerHTML = (d.rng ? cm(d.rng) : "-") + "<small>cm</small>";
   const now = epoch ?? Date.now() / 1000;
   spd.push({ t: now, l: d.spd_l, r: d.spd_r, ts: t });
   rng.push({ t: now, v: d.rng / 10, ts: t });
-  trim(spd, now); trim(rng, now);
-  drawSpeed(); drawRange();
+  if (d.h !== undefined) {
+    hgt.push({ t: now, v: d.h, ts: t });
+    $("hNow").innerHTML = d.h + "<small>mm</small>";
+  }
+  trim(spd, now); trim(rng, now); trim(hgt, now);
+  drawSpeed(); drawRange(); drawHeight();
   Object.assign(view, { l: d.spd_l, r: d.spd_r, line: d.line, rng: d.rng, lastState: now * 1000, enc: [d.enc_l, d.enc_r] });
 }
 function setTile(id, black) {
@@ -483,6 +561,12 @@ function onHump(d, t) {
   $("pitch").innerHTML = d.pitch + "<small>°</small>";
   $("peak").innerHTML = Math.max(...humps.map(h => h.peak_mm)) + "<small>mm</small>";
   $("humps").innerHTML = humps.map(h => `<tr><td class="num">${h.t}</td><td class="num">${h.peak_mm}</td><td class="num">${h.pitch}</td><td class="num">${h.ms} ms</td></tr>`).join("");
+}
+const ramps = [];
+function onRamp(d, t) {
+  ramps.unshift({ t, ...d }); ramps.length = Math.min(ramps.length, 8);
+  $("rampMax").innerHTML = Math.max(...ramps.map(r => r.rise_mm)) + "<small>mm</small>";
+  $("ramps").innerHTML = ramps.map(r => `<tr><td class="num">${r.t}</td><td class="num">${r.rise_mm}</td><td class="num">${r.net_mm}</td><td class="num">${r.deg}</td><td class="num">${cm(r.len_mm)}</td></tr>`).join("");
 }
 function onImpact(t) {
   const b = $("impactBanner");
@@ -586,8 +670,8 @@ let offG = 0, offL = 0, offR = 0, lastFrame = performance.now();
 (function buildCar() {
   let t = "";
   for (let row = -1; row < 13; row++) {
-    for (const x of [24, 66, 174, 216]) {
-      t += `<line x1="${x - 6}" x2="${x + 6}" y1="${row * 25}" y2="${row * 25}" stroke="var(--car-edge)" stroke-opacity=".5" stroke-width="2"/>`;
+    for (const x of [36, 204]) {
+      t += `<circle cx="${x}" cy="${row * 25}" r="1.6" fill="var(--car-edge)" fill-opacity=".55"/>`;
     }
   }
   $("ticks").innerHTML = t;
@@ -823,16 +907,16 @@ function bypassEnded(b, nowMs) {
 function trim(arr, now) { while (arr.length && arr[0].t < now - WINDOW_S) arr.shift(); }
 function chartFrame(el) {
   const svg = el.querySelector("svg");
-  const W = svg.clientWidth || 300, H = 150, P = { l: 36, r: 34, t: 6, b: 18 };
+  const W = svg.clientWidth || 300, H = svg.clientHeight || 110, P = { l: 30, r: 8, t: 8, b: 16 };
   return { svg, W, H, P, iw: W - P.l - P.r, ih: H - P.t - P.b };
 }
 function niceMax(v) { const m = Math.max(v, 1); const p = 10 ** Math.floor(Math.log10(m)); return Math.ceil(m / p) * p; }
 function axes(f, ymin, ymax, now) {
   let g = "";
-  for (let i = 0; i <= 4; i++) {
-    const v = ymin + (ymax - ymin) * i / 4, y = f.P.t + f.ih - f.ih * i / 4;
-    g += `<line x1="${f.P.l}" x2="${f.W - f.P.r}" y1="${y}" y2="${y}" stroke="var(--grid)"/>`;
-    g += `<text x="${f.P.l - 6}" y="${y + 4}" text-anchor="end" font-size="10" fill="var(--text-muted)">${Math.round(v)}</text>`;
+  for (let i = 0; i <= 2; i++) {
+    const v = ymin + (ymax - ymin) * i / 2, y = f.P.t + f.ih - f.ih * i / 2;
+    g += `<line x1="${f.P.l}" x2="${f.W - f.P.r}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-dasharray="${i ? "3 4" : ""}"/>`;
+    g += `<text x="${f.P.l - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="var(--text-muted)">${Math.round(v)}</text>`;
   }
   [-60, -30, 0].forEach(s => {
     const x = f.P.l + f.iw * (s + WINDOW_S) / WINDOW_S;
@@ -845,6 +929,13 @@ const yOf = (f, v, ymin, ymax) => f.P.t + f.ih - f.ih * (v - ymin) / (ymax - ymi
 function path(f, pts, key, ymin, ymax, now) {
   return pts.map((p, i) => `${i ? "L" : "M"}${xOf(f, p.t, now).toFixed(1)},${yOf(f, p[key], ymin, ymax).toFixed(1)}`).join("");
 }
+// one series: a line with a faint fill down to the baseline
+function series(f, pts, key, ymin, ymax, now, color) {
+  const d = path(f, pts, key, ymin, ymax, now), y0 = yOf(f, Math.max(ymin, 0), ymin, ymax);
+  const x0 = xOf(f, pts[0].t, now).toFixed(1), x1 = xOf(f, pts[pts.length - 1].t, now).toFixed(1);
+  return `<path d="${d}L${x1},${y0}L${x0},${y0}Z" fill="var(${color})" fill-opacity=".08"/>` +
+         `<path d="${d}" fill="none" stroke="var(${color})" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>`;
+}
 function drawSpeed() {
   const el = $("spdChart"), f = chartFrame(el), now = Date.now() / 1000;
   const vals = spd.flatMap(p => [p.l, p.r]);
@@ -852,9 +943,7 @@ function drawSpeed() {
   let g = axes(f, ymin, ymax, now);
   for (const [k, c, name] of [["l", "--series-1", "L"], ["r", "--series-2", "R"]]) {
     if (!spd.length) continue;
-    g += `<path d="${path(f, spd, k, ymin, ymax, now)}" fill="none" stroke="var(${c})" stroke-width="2" stroke-linejoin="round"/>`;
-    const last = spd[spd.length - 1];
-    g += `<text x="${f.W - f.P.r + 4}" y="${yOf(f, last[k], ymin, ymax) + (k === "l" ? -2 : 10)}" font-size="11" fill="var(--text-secondary)">${name} ${last[k]}</text>`;
+    g += `<path d="${path(f, spd, k, ymin, ymax, now)}" fill="none" stroke="var(${c})" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
   f.svg.innerHTML = g;
   hover(el, f, spd, p => `<b>${p.ts}</b><br><span class="swatch" style="background:var(--series-1)"></span> L ${p.l} mm/s<br><span class="swatch" style="background:var(--series-2)"></span> R ${p.r} mm/s`, ymin, ymax, ["l", "r"], ["--series-1", "--series-2"]);
@@ -867,12 +956,23 @@ function drawRange() {
   const trig = TRIGGER_MM / 10;
   if (trig < ymax) {
     const y = yOf(f, trig, 0, ymax);
-    g += `<line x1="${f.P.l}" x2="${f.W - f.P.r}" y1="${y}" y2="${y}" stroke="var(--critical)" stroke-dasharray="4 4"/>`;
-    g += `<text x="${f.W - f.P.r + 4}" y="${y + 4}" font-size="10" fill="var(--text-secondary)">trigger</text>`;
+    g += `<line x1="${f.P.l}" x2="${f.W - f.P.r}" y1="${y}" y2="${y}" stroke="var(--critical)" stroke-opacity=".6" stroke-dasharray="4 4"/>`;
+    g += `<text x="${f.P.l + 4}" y="${y - 4}" font-size="10" fill="var(--critical)">trigger ${trig} cm</text>`;
   }
-  if (pts.length) g += `<path d="${path(f, pts, "v", 0, ymax, now)}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>`;
+  if (pts.length) g += series(f, pts, "v", 0, ymax, now, "--series-1");
   f.svg.innerHTML = g;
   hover(el, f, pts, p => `<b>${p.ts}</b><br>${p.v.toFixed(1)} cm`, 0, ymax, ["v"], ["--series-1"]);
+}
+function drawHeight() {
+  const el = $("hChart"), f = chartFrame(el), now = Date.now() / 1000;
+  const vals = hgt.map(p => p.v);
+  const ymin = Math.min(0, ...vals), ymax = niceMax(Math.max(20, ...vals));
+  let g = axes(f, ymin, ymax, now);
+  if (hgt.length) {
+    g += series(f, hgt, "v", ymin, ymax, now, "--series-1");
+  }
+  f.svg.innerHTML = g;
+  hover(el, f, hgt, p => `<b>${p.ts}</b><br>${p.v} mm`, ymin, ymax, ["v"], ["--series-1"]);
 }
 function hover(el, f, pts, fmt, ymin, ymax, keys, colors) {
   const tip = el.querySelector(".tip");
@@ -904,8 +1004,8 @@ function drawPolar(d) {
   const off = d.at_deg - 90, side = off > 0 ? `${off}° L` : off < 0 ? `${-off}° R` : "ahead";
   const ox = cx + r * Math.cos(a), oy = cy - r * Math.sin(a);
   const halfW = Math.max(d.w_mm / maxMm * R / 2, 3);
-  let g = `<path d="M${cx - R},${cy} A${R},${R} 0 0 1 ${cx + R},${cy}" fill="none" stroke="var(--grid)"/>`;
-  g += `<path d="M${cx - R / 2},${cy} A${R / 2},${R / 2} 0 0 1 ${cx + R / 2},${cy}" fill="none" stroke="var(--grid)"/>`;
+  let g = `<path d="M${cx - R},${cy} A${R},${R} 0 0 1 ${cx + R},${cy}" fill="var(--surface-2)" stroke="var(--grid)"/>`;
+  g += `<path d="M${cx - R / 2},${cy} A${R / 2},${R / 2} 0 0 1 ${cx + R / 2},${cy}" fill="none" stroke="var(--car-edge)" stroke-opacity=".5" stroke-dasharray="3 4"/>`;
   g += `<text x="${cx + R / 2 + 3}" y="${cy - 2}" font-size="10" fill="var(--text-muted)">30</text><text x="${cx + R + 3}" y="${cy - 2}" font-size="10" fill="var(--text-muted)">60 cm</text>`;
   g += `<line x1="${cx}" y1="${cy}" x2="${ox}" y2="${oy}" stroke="var(--text-muted)" stroke-dasharray="3 3"/>`;
   g += `<line x1="${ox - halfW * Math.sin(a)}" y1="${oy - halfW * Math.cos(a)}" x2="${ox + halfW * Math.sin(a)}" y2="${oy + halfW * Math.cos(a)}" stroke="var(--critical)" stroke-width="5" stroke-linecap="round"/>`;
@@ -915,7 +1015,7 @@ function drawPolar(d) {
 }
 
 /* ---------- event log ---------- */
-const CHIP_TOPICS = ["link", "ack", "barcode", "bcscan", "bcbits", "obstacle", "avoid", "spin", "hump", "impact", "motion", "line", "move", "status", "cmd"];
+const CHIP_TOPICS = ["link", "ack", "barcode", "bcscan", "bcbits", "obstacle", "avoid", "spin", "hump", "ramp", "impact", "motion", "line", "move", "status", "cmd"];
 CHIP_TOPICS.forEach(k => {
   const b = document.createElement("button");
   b.className = "chip"; b.textContent = k;
@@ -923,7 +1023,7 @@ CHIP_TOPICS.forEach(k => {
   $("chips").appendChild(b);
 });
 $("pause").onclick = () => { paused = !paused; $("pause").textContent = paused ? "Resume" : "Pause"; };
-$("clear").onclick = () => $("log").innerHTML = "";
+$("clearLog").onclick = () => $("log").innerHTML = "";
 function logLine(t, key, text, bad) {
   if (paused || hidden.has(key)) return;
   const el = $("log"), atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
@@ -967,6 +1067,7 @@ function handle(ev, replay) {
     case "line": if (!replay && bp && d.lost === 0) bp.lineFound = Date.now(); break;
     case "impact": if (!replay && bp) bp.failed = "impact"; onImpact(t); break;
     case "hump": onHump(d, t); break;
+    case "ramp": onRamp(d, t); break;
     case "barcode": onBarcode(d, t, replay); break;
     case "bcscan": onScan(d, t, replay); break;
     case "bcbits": onBits(d); break;
@@ -999,7 +1100,7 @@ function toast(msg, kind) {
   t.style.color = kind === "bad" ? "#fff" : "";
   clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", kind === "bad" ? 4000 : 2200);
 }
-window.addEventListener("resize", () => { drawSpeed(); drawRange(); });
+window.addEventListener("resize", () => { drawSpeed(); drawRange(); drawHeight(); });
 setBroker({ running: false });
 connect();
 </script>
