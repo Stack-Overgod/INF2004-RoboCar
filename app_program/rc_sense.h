@@ -46,6 +46,9 @@ uint32_t rc_sense_ticks(void);
 /* TEST BUILD ONLY: longest single line sample and IMU sample since boot,
  * in microseconds. Either near RC_PERIOD_LINE_MS x 1000 explains overruns. */
 void rc_sense_max_us(uint32_t *line_us, uint32_t *imu_us);
+
+/* Longest drv_ir_sample_barcode() (one ADC read + threshold), in us. */
+uint32_t rc_sense_bar_max_us(void);
 #endif
 
 #endif /* RC_SENSE_H */

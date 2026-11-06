@@ -12,7 +12,9 @@ python -I dashboard\dashboard.py --start-broker   # also start the broker at lau
 - **Commands**: G go, X stop, L/S/R/U = left / straight / right / U-turn (same letters
   as `scripts/send_cmd.py`). Keys: Space stop, G go, arrows for the turns.
 - **Telemetry**: everything the broker prints (all `car/01/*` topics + connects).
-  Live tilt is not in the firmware: only per-hump max pitch and the motion class.
+  Payloads are binary frames, decoded by `scripts/tm_frames.py`. The IMU card shows the
+  per-hump max pitch, the motion class, the live height above the start level (state `h`)
+  and each finished ramp (`car/01/ramp`).
 - The HTTP server binds 127.0.0.1 only; the broker binds 0.0.0.0 so the car can reach it.
 
 ## For Claude / troubleshooting (while the dashboard runs)

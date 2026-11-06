@@ -59,6 +59,7 @@ class Hub:
         self.raw = collections.deque(maxlen=2000)       # raw broker lines
         self.events = collections.deque(maxlen=500)     # parsed non-state events
         self.latest = {}                                # topic leaf -> {t, data}
+        self.last_enc = None                            # (l, r) from the long state frame
         self.states = collections.deque(maxlen=240)     # last ~60 s of car/01/state, with epoch
         self.car = {"connected": False, "ip": None, "since": None, "last_rx": None}
         # Open broker connections, oldest first: {"ip", "port", "cid"}. The broker
@@ -127,10 +128,20 @@ class Hub:
             return
         topic, _, payload = rest.partition(" ")
         leaf = topic.split("/", 2)[-1] if topic.startswith("car/") else topic
+        # the broker logs a binary frame as "<decoded JSON>\t<hex>"
+        payload, _, frame_hex = payload.partition("\t")
         try:
             data = json.loads(payload)
         except ValueError:
             data = payload
+        if isinstance(data, dict) and frame_hex:
+            data["_bytes"] = len(frame_hex) // 2        # size on the wire
+        if leaf == "state" and isinstance(data, dict):
+            # encoder counts ride in every 4th state frame; carry the last
+            if "enc_l" in data:
+                self.last_enc = (data["enc_l"], data["enc_r"])
+            elif self.last_enc:
+                data["enc_l"], data["enc_r"] = self.last_enc
         if leaf != "cmd":
             self.car["last_rx"] = time.time()
         if leaf == "ack" and isinstance(data, dict):
@@ -329,7 +340,7 @@ def main():
     if a.start_broker:
         print(hub.start_broker()[1])
     # No SO_REUSEADDR: on Windows it lets a second dashboard bind the same
-    # port and requests then land on either one (2026-10-29).
+    # port and requests then land on either one.
     ThreadingHTTPServer.allow_reuse_address = False
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)

@@ -66,8 +66,8 @@ One owner per pin. Source of truth: report §2 (TABLE 7) and `rc_config.h`.
 | GP20 | | free |
 | GP21 | | free |
 | GP22 | | free |
-| GP26 | S3 (Buddy 3) | Barcode analogue AO (Grove 6) is wired here but **not read**; ADC disabled (DEVCNF_USE_ADC 0). Keep it free of other signals |
-| GP27 | S3 (Buddy 3) | `IR_BARCODE_D` barcode digital DO (Grove 6), both-edge IRQ |
+| GP26 | S3 (Buddy 3) | `IR_BARCODE_A` barcode analogue AO (Grove 6), ADC0, read by the Sense task every 10 ms; midpoint auto-threshold, no trim pot (2026-11-06, CR1 branch) |
+| GP27 | S3 (Buddy 3) | Barcode digital DO (Grove 6) is wired but **deliberately not configured, no IRQ** since the ADC change. Keep it free of other signals |
 | GP28 | S2 (Buddy 2) | `ENC_R_B` right encoder B (Grove 7) |
 
 ## 3. Peripherals
@@ -82,7 +82,8 @@ report §2/§9 (TABLE 7, TABLE 8).
 | PWM slice 5 (motors L) | S2 (Buddy 2) | Motion task | GP10/GP11 |
 | PWM slice 7 ch B (servo) | S5 (Buddy 5) | Scan task | GP15 |
 | TIMER alarms 1 & 2 | S5 (Buddy 5) | drv_ultrasonic (ISR) | — (HC-SR04 trig end + echo timeout) |
-| IO_BANK0 GPIO IRQ (shared) | *shared core* `rc_gpioirq` | demuxed to S2 encoders, S3 barcode, S5 echo | GP0/1/7/27/3 |
+| ADC (channel 0) | S3 (Buddy 3) | Sense task (`drv_ir_sample_barcode`) | GP26 |
+| IO_BANK0 GPIO IRQ (shared) | *shared core* `rc_gpioirq` | demuxed to S2 encoders, S5 echo | GP0/1/7/3 |
 | WiFi radio, TCP/IP, MQTT | *kernel* | `cyw43_utk_task` (built in) | GP23–25, GP29 |
 
 PWM slice 6 is used by the kernel physical-timer option when `USE_PTMR=1`;
@@ -147,11 +148,11 @@ API calls noted below (sub_nav/sub_line → sub_motion; sub_nav → sub_scan).
 | IF-09 | sub_nav → S5 | direct API | `sub_scan_set_watch(on, trigger_mm)` | enable forward watch during FOLLOWING | team |
 | IF-10 | S1 ← all | subsystem getters + subscribed events | — | telemetry snapshot of every subsystem's latest state | team |
 | IF-11 | S1 → sub_nav | event (FAST for sub_nav) | `COMMAND_RX` | remote command (e.g. STOP), honoured from any state (FR10b); FAST so a STOP never queues behind telemetry | team |
-| IF-12 | S1 → MQTT service | message buffer, `TMO_POL` | `s1_mbf_tx` (in `subsystem1.h`) | outbound JSON drained by `mqtt_utk.c` every 50 ms. **Instructor-approval item** | team + instructor |
+| IF-12 | S1 → MQTT service | message buffer, `TMO_POL` | `s1_mbf_tx` (in `subsystem1.h`) | outbound binary frames (`subsystem1/tm_frame.h`, 3-28 B) drained by `mqtt_utk.c` every 50 ms. **Instructor-approval item** | team + instructor |
 | IF-13 | MQTT service → S1 | message buffer, `TMO_POL` | `s1_mbf_rx` (in `subsystem1.h`) | inbound `car/01/cmd` payload | team + instructor |
 | IF-14 | sub_nav → S3 | direct API | `sub_line_enable()`, `sub_line_begin_search()`, `sub_barcode_arm()` | line steering on in FOLLOWING/RECOVERING, off while avoiding; barcode armed during FOLLOWING | team |
 | IF-15 | S3 → sub_nav | event (FAST) | `RC_EVT_LINE_REACQUIRED` | line found after a bypass: RECOVERING → FOLLOWING (FR9) | team |
-| IF-16 | S3 → sub_nav | event (FAST) | `RC_EVT_BARCODE_DECODED` | `'*'` while FOLLOWING → READING_BARCODE; then `command` A/B/C/D → EXECUTING_CMD (FR3). sub_nav relies on `symbol` and `command` as filled by `sub_barcode.c` | team |
+| IF-16 | S3 → sub_nav | event (FAST) | `RC_EVT_BARCODE_DECODED` | `'*'` while FOLLOWING → READING_BARCODE; then `command` A/B/C/D → EXECUTING_CMD (FR3). sub_nav relies on `sym` (5-bit code, `rc_sym_char()`; CR1) and `command` as filled by `sub_barcode.c` | team |
 | IF-17 | sub_nav → all | event (FAST) | `RC_EVT_RECOVERY_FAILED` | line not found within 3 s after a bypass; nav is STOPPED (FR9, FR12). For telemetry | team |
 
 Each interface is tested by at least one integration test

@@ -42,14 +42,14 @@ rc_result_t sub_scan_start(void);
  * idle. */
 rc_result_t sub_scan_abort(void);
 
-/* As sub_scan_start(), but the car spins in place (+-40 deg, encoders
- * for the heading) with the servo straight ahead, to measure the
- * obstacle's length and where its edges are (2026-10-29, Buddy 5). The
+/* As sub_scan_start(), but the car spins in place (+-SPIN_EDGE_DEG,
+ * encoders for the heading) with the servo straight ahead, to measure the
+ * obstacle's length and where its edges are. The
  * profile's clearance_left/right_mm are then each edge's distance from
  * the line (0 = edge not found). Takes ~5 s; motors stopped at the end. */
 rc_result_t sub_scan_start_spin(void);
 
-/* As sub_scan_start(), but the step scan (2026-10-31, Buddy 5): the
+/* As sub_scan_start(), but the step scan: the
  * servo swings fully out and the chassis steps, stopped for each ping,
  * until the beam leaves the obstacle on each side; length from the two
  * corners (0 if one was not found). The motors must be free. */

@@ -26,11 +26,11 @@
  */
 
 #define DEVCNF_USE_SER		1		// Serial communication device 
-#define DEVCNF_USE_ADC		0		// A/D conversion device
-		/* Off: no subsystem reads an analogue pin (the barcode
-		   sensor uses only its digital DOUT on GP27).  With it on,
-		   the driver also turns GP26 into an analogue input at
-		   boot.  Set back to 1 to use the "adca" device. */
+#define DEVCNF_USE_ADC		1		// A/D conversion device
+		/* On (2026-11-06): the barcode sensor's AOUT on GP26 is read
+		   through "adca" channel 0 (Buddy 3, drv_ir.c).  Only GP26 is
+		   turned into an analogue input (adc_cnf_sysdep.h
+		   DEVCONF_ADC_PIN_INIT_0). */
 #define DEVCNF_USE_IIC		1		// I2C communication device
 		/* Off by default so no pins are claimed at boot.  To use I2C,
 		   set this to 1 and choose the pins in

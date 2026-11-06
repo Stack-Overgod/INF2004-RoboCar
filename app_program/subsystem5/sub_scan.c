@@ -29,9 +29,9 @@
 
 /* Minimum gap the car needs to fit through, plus margin. Measure your
  * car's widest point and add 40 mm. Used by build_plan() to size the
- * sideways step of the bypass. (It is no longer compared against the
- * clearance figures: the ±20 deg servo cannot see far enough sideways to
- * measure a whole car width.)
+ * sideways step of the bypass. It is not compared against the clearance
+ * figures: the +-20 deg servo cannot see far enough sideways to measure a
+ * whole car width.
  * "How to get started" step 4. */
 #define CAR_WIDTH_MM        (150U)
 
@@ -123,13 +123,12 @@ static void        *user_ctx;
 #define FLG_ABORT       (1U << 2)
 
 /* ------------------------------------------------------------------ *
- *  Spin scan (2026-10-29, Buddy 5)
+ *  Spin scan
  *
  *  The servo swings only +-20 deg and the HC-SR04 beam is ~+-15 deg
  *  wide, so a 10-20 cm obstacle at ~20 cm echoes across the whole servo
- *  sweep: its edges can't be seen and the old scan reported the sweep
- *  width (~14 cm at 20 cm) and "no safe gap". For the bypass, sub_nav
- *  asks for a spin scan instead: the servo stays straight ahead and the
+ *  sweep and a servo-only scan can't see its edges. The spin scan keeps
+ *  the servo straight ahead and the
  *  CAR spins in place, SPIN_EDGE_DEG left, then right, then back to
  *  straight, pinging every RC_PERIOD_SCAN_MS while it turns slowly. The
  *  heading comes from the encoders (as sub_line's search sweep).
@@ -152,57 +151,49 @@ static void        *user_ctx;
  *  length: +1 deg of beta makes a ~20 cm-away object read ~6 mm
  *  shorter.
  * ------------------------------------------------------------------ */
-/* Ultrasonic face ahead of the wheel axle, measured 2026-10-29. */
+/* Ultrasonic face ahead of the wheel axle, mm. */
 #define SPIN_SENSOR_AHEAD_MM    (85)
 /* Car heading swing each side of straight, degrees. Measured from
  * 15 cm (sub_nav approaches first), a 20 cm obstacle's corners are ~23
  * deg off the axle and the beam keeps seeing them ~12 deg further, plus
- * the SPIN_GAP_PINGS clear readings that close an edge: +-50 (was 40,
- * from 20 cm). */
+ * the SPIN_GAP_PINGS clear readings that close an edge. */
 #define SPIN_EDGE_DEG           (50)
 /* Wheel speed while pinging: ~26 deg/s, ~1.5 deg between pings. */
 #define SPIN_SCAN_MM_S          (25)
 /* Wheel speed for the last leg back to straight (no pings). */
 #define SPIN_RETURN_MM_S        (70)
-/* Effective beam half-angle, 0.1 deg. Calibrated 2026-10-29 17:47 on a
- * 10.4 cm object ~19 cm ahead: at 15 deg (the HC-SR04's nominal) it read
- * 13.5 cm (edges 3.2 cm left / 10.3 cm right of the line); a model of a
- * 20 deg beam reproduces that within 1 mm and, read at 20, gives
- * 10.1 cm. TODO Buddy 5: confirm with a second object length. */
+/* Effective beam half-angle, 0.1 deg, calibrated on a 10.4 cm object
+ * ~19 cm ahead: the HC-SR04's nominal 15 deg reads it 13.5 cm, 20 deg
+ * reads it 10.1 cm. TODO Buddy 5: confirm with a second object length. */
 #define SPIN_BEAM_HALF_DDEG     (200)
 /* Readings within this of straight ahead (0.1 deg) give the face
  * distance. */
 #define SPIN_FACE_DDEG          (100)
 /* An echo is the obstacle's FACE if it is no further from the axle than
  * a flat face would be at that heading, face / cos(heading), plus this;
- * further is its sides or background. History (2026-10-29): a fixed 80
- * mm band let echoes from the obstacle's sides (4-6 cm behind the face)
- * stretch both edges (10.4 cm read 15.5-17.3); a fixed 35 mm band cut
- * the face itself off at 25-30 deg from 15 cm, where face / cos is
- * already +23..34 mm (10.4 cm read 5.0-5.7). */
+ * further is its sides or background. A wide band lets echoes from the
+ * obstacle's sides (4-6 cm behind the face) stretch both edges. */
 #define SPIN_DEPTH_BAND_MM      (25)
 /* This many clear pings in a row (in one pass, walking out from the
  * centre) end the obstacle; a single clear ping inside it is a dropout. */
 #define SPIN_GAP_PINGS          (2)
-/* The longest obstacle on the course, mm (2026-10-31: the brief, 10-20
- * cm, square). The step scan looks this far out from the line for an
- * edge; a longer measured length is planned as this; with one edge unseen the obstacle is taken
- * to be this long. */
+/* The longest obstacle on the course, mm (the brief: 10-20 cm, square).
+ * The step scan looks this far out from the line for an edge; a longer
+ * measured length is planned as this; with one edge unseen the obstacle
+ * is taken to be this long. */
 #define OBSTACLE_MAX_MM         (200)
 #define SPIN_MAX_POINTS         (128U)
-/* The obstacle is square (2026-10-31, Buddy 5): its depth (front to
+/* The obstacle is square: its depth (front to
  * back) is its measured length, so its far side is SPIN_SENSOR_AHEAD_MM
  * + closest + length ahead of the axle. The bypass runs on until the
- * car's rear (SPIN_REAR_MM behind the axle) is SPIN_PAST_MARGIN_MM past
- * that. Axle to rear bumper measured 2026-10-29. */
+ * car's rear (SPIN_REAR_MM, axle to rear bumper) is SPIN_PAST_MARGIN_MM
+ * past that. */
 #define SPIN_REAR_MM            (55)
 #define SPIN_PAST_MARGIN_MM     (30)
 /* How much of the encoders' spin the chassis really turns, permille:
- * the wheels slip on the foam. The step scan read a 10.4 cm object as
- * 13.5 / 12.6 cm (2026-10-31 17:01, 17:02) and a model of the scan with
- * 0.8 reproduces that (test/scripts/sim_step_slip.py); 45 deg detour
- * turns lose more (~0.67, sub_nav NAV_DETOUR_TURN_PERMILLE). Calibrate:
- * a known object reading long -> lower this. */
+ * the wheels slip on the foam. 45 deg detour turns lose more (~0.67,
+ * sub_nav NAV_DETOUR_TURN_PERMILLE). Calibrate on a known object: if it
+ * reads long, lower this. */
 #define SPIN_TURN_EFF_PERMILLE  (800)
 /* Each wheel's travel per degree of spin in place, um: (W/2) * pi/180 */
 #define SPIN_UM_PER_DEG         ((uint32_t)RC_WHEEL_BASE_MM * 1000UL * 31416UL \
@@ -294,7 +285,7 @@ static void build_profile(rc_pl_profile_t *p)
     p->width_mm          = 0U;
     p->clearance_left_mm = 0U;
     p->clearance_right_mm = 0U;
-    p->n_points = (uint8_t)n_points;
+    p->n_points = RC_SAT_U(n_points, RC_BITS_NPOINTS);
 
     /* `for (i = 0; i < n_points; i++)` walks the array of collected
      * points from index 0 up to (but not including) n_points — the
@@ -347,8 +338,8 @@ static void build_profile(rc_pl_profile_t *p)
         return;
     }
 
-    p->closest_mm        = closest;
-    p->closest_angle_deg = closest_angle;
+    p->closest_mm        = RC_SAT_U(closest, RC_BITS_MM);
+    p->closest_angle_deg = RC_SAT_U(closest_angle, RC_BITS_ANGLE);
 
     /*
      *  Estimating obstacle width from the angular span at the measured
@@ -397,7 +388,7 @@ static void build_profile(rc_pl_profile_t *p)
     if ((first_hit >= 0) && (last_hit >= first_hit)) {
         int32_t span_ddeg = ((int32_t)last_hit - (int32_t)first_hit) * 10;
         int32_t span_mrad = (span_ddeg * 1745) / 1000;
-        p->width_mm = (uint16_t)(((int32_t)closest * span_mrad) / 1000);
+        p->width_mm = RC_SAT_U(((int32_t)closest * span_mrad) / 1000, RC_BITS_MM);
     }
 
     /* Clearance isn't measured as an actual gap width — it's how far
@@ -407,10 +398,12 @@ static void build_profile(rc_pl_profile_t *p)
      * only ±20 deg of servo travel this is at most ~0.35 x closest_mm, so
      * it is a "this side is open" indicator, not proof that a whole car
      * width fits (see build_plan). */
-    p->clearance_left_mm  =
-        (uint16_t)(((int32_t)closest * ((clear_l_deg * 17453) / 1000)) / 1000);
-    p->clearance_right_mm =
-        (uint16_t)(((int32_t)closest * ((clear_r_deg * 17453) / 1000)) / 1000);
+    p->clearance_left_mm  = RC_SAT_U(
+        ((int32_t)closest * ((clear_l_deg * 17453) / 1000)) / 1000,
+        RC_BITS_CLEAR);
+    p->clearance_right_mm = RC_SAT_U(
+        ((int32_t)closest * ((clear_r_deg * 17453) / 1000)) / 1000,
+        RC_BITS_CLEAR);
 
 }
 
@@ -482,8 +475,8 @@ static void build_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan)
      * past it before straightening out again. These are simple geometric
      * estimates, not a measured path — sub_motion.c (Buddy 2's module)
      * is what actually executes the resulting turn/distance commands. */
-    plan->lateral_mm = (uint16_t)((CAR_WIDTH_MM / 2U) + (p->width_mm / 2U));
-    plan->forward_mm = (uint16_t)(p->width_mm + 100U);
+    plan->lateral_mm = RC_SAT_U((CAR_WIDTH_MM / 2U) + (p->width_mm / 2U), RC_BITS_MM);
+    plan->forward_mm = RC_SAT_U(p->width_mm + 100U, RC_BITS_MM);
 }
 
 /* ------------------------------------------------------------------ *
@@ -828,10 +821,10 @@ static void spin_profile(rc_pl_profile_t *p)
     uint32_t i;
     int32_t  face = 0x7FFFFFFF, face_ddeg = 0, side;
 
-    p->n_points           = (uint8_t)((n_spin > 255U) ? 255U : n_spin);
+    p->n_points           = RC_SAT_U(n_spin, RC_BITS_NPOINTS);
     spin_dbg.face_mm  = 0U;
     spin_dbg.found    = 0U;
-    spin_dbg.n_points = p->n_points;
+    spin_dbg.n_points = (uint8_t)((n_spin > 255U) ? 255U : n_spin);
     p->closest_angle_deg  = 90;
     p->closest_mm         = 0U;
     p->width_mm           = 0U;
@@ -853,8 +846,8 @@ static void spin_profile(rc_pl_profile_t *p)
         || ((face - SPIN_SENSOR_AHEAD_MM) > (int32_t)OBSTACLE_MM)) {
         return;                         /* nothing ahead: closest 0 */
     }
-    p->closest_mm        = (uint16_t)(face - SPIN_SENSOR_AHEAD_MM);
-    p->closest_angle_deg = (int16_t)(90 + (face_ddeg / 10));
+    p->closest_mm        = RC_SAT_U(face - SPIN_SENSOR_AHEAD_MM, RC_BITS_MM);
+    p->closest_angle_deg = RC_SAT_U(90 + (face_ddeg / 10), RC_BITS_ANGLE);
     spin_dbg.face_mm     = (uint16_t)face;
 
     /* raw readings on the console, heading (0.1 deg, > 0 left):range mm
@@ -902,21 +895,21 @@ static void spin_profile(rc_pl_profile_t *p)
             if (side > 0) {
                 spin_xl    = x;
                 spin_has_l = true;
-                p->clearance_left_mm  = (uint16_t)((x < -1) ? -x : 1);
+                p->clearance_left_mm  = RC_SAT_U((x < -1) ? -x : 1, RC_BITS_CLEAR);
             } else {
                 spin_xr    = x;
                 spin_has_r = true;
-                p->clearance_right_mm = (uint16_t)((x > 1) ? x : 1);
+                p->clearance_right_mm = RC_SAT_U((x > 1) ? x : 1, RC_BITS_CLEAR);
             }
         }
     }
     if (spin_has_l && spin_has_r && (spin_xr > spin_xl)) {
-        p->width_mm = (uint16_t)(spin_xr - spin_xl);
+        p->width_mm = RC_SAT_U(spin_xr - spin_xl, RC_BITS_MM);
     }
 }
 
 /* Plan from the spin / step profile: go round on the side AWAY from the
- * obstacle (2026-10-29, Buddy 5): with both edges seen, its centre
+ * obstacle: with both edges seen, its centre
  * (xl + xr) / 2 right of the line (or on it) -> left, left of it ->
  * right; with one edge unseen, the obstacle reaches past the scan on
  * that side -> the other side. No edge seen on either side: stop. */
@@ -948,10 +941,10 @@ static void spin_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan)
               (INT)((spin_xl + spin_xr) / 2), go_left ? "left" : "right");
     if (go_left) {
         plan->action     = RC_CMD_TURN_LEFT;
-        plan->lateral_mm = (uint16_t)(p->clearance_left_mm + (CAR_WIDTH_MM / 2U));
+        plan->lateral_mm = RC_SAT_U(p->clearance_left_mm + (CAR_WIDTH_MM / 2U), RC_BITS_MM);
     } else {
         plan->action     = RC_CMD_TURN_RIGHT;
-        plan->lateral_mm = (uint16_t)(p->clearance_right_mm + (CAR_WIDTH_MM / 2U));
+        plan->lateral_mm = RC_SAT_U(p->clearance_right_mm + (CAR_WIDTH_MM / 2U), RC_BITS_MM);
     }
     /* square: depth = length, the measured one up to OBSTACLE_MAX_MM (the
      * longest allowed when one edge was not seen). forward_mm = how far
@@ -961,19 +954,19 @@ static void spin_plan(const rc_pl_profile_t *p, rc_pl_plan_t *plan)
     if ((len == 0U) || (len > (uint32_t)OBSTACLE_MAX_MM)) {
         len = (uint32_t)OBSTACLE_MAX_MM;
     }
-    plan->forward_mm = (uint16_t)(SPIN_SENSOR_AHEAD_MM + p->closest_mm
-                                  + len + SPIN_REAR_MM
-                                  + SPIN_PAST_MARGIN_MM);
+    plan->forward_mm = RC_SAT_U(SPIN_SENSOR_AHEAD_MM + p->closest_mm
+                                + len + SPIN_REAR_MM
+                                + SPIN_PAST_MARGIN_MM, RC_BITS_MM);
 }
 
 /* ------------------------------------------------------------------ *
- *  Step scan (2026-10-31, Buddy 5): the obstacle's length from the servo
+ *  Step scan: the obstacle's length from the servo
  *  AND the chassis, stopped for every ping.
  *
  *  The servo swings only RC_SERVO_HALF_SWING (20 deg) each side and the
  *  beam is ~SPIN_BEAM_HALF_DDEG wide, so from the 20 cm trigger the beam
- *  never gets off a 10-20 cm face with the chassis still (2026-10-31
- *  16:41, servo +-15: no edge in either run). For each side in turn:
+ *  never gets off a 10-20 cm face with the chassis still. For each side
+ *  in turn:
  *
  *    1. servo fully to that side, chassis straight: ping;
  *    2. while that echoes off the face, turn the chassis
@@ -1236,7 +1229,7 @@ static void step_profile(rc_pl_profile_t *p)
     int32_t  side, x;
     uint32_t k, slot;
 
-    p->n_points           = (uint8_t)((step_stops > 255U) ? 255U : step_stops);
+    p->n_points           = RC_SAT_U(step_stops, RC_BITS_NPOINTS);
     p->closest_angle_deg  = 90;
     p->closest_mm         = 0U;
     p->width_mm           = 0U;
@@ -1244,14 +1237,14 @@ static void step_profile(rc_pl_profile_t *p)
     p->clearance_right_mm = 0U;
     spin_dbg.face_mm  = 0U;
     spin_dbg.found    = 0U;
-    spin_dbg.n_points = p->n_points;
+    spin_dbg.n_points = (uint8_t)((step_stops > 255U) ? 255U : step_stops);
     spin_has_l = false;
     spin_has_r = false;
 
     if (step_face <= 0) {
         return;                         /* nothing ahead: closest 0 */
     }
-    p->closest_mm    = (uint16_t)step_face;
+    p->closest_mm    = RC_SAT_U(step_face, RC_BITS_MM);
     spin_dbg.face_mm = (uint16_t)step_face;
 
     for (side = 1; side >= -1; side -= 2) {
@@ -1275,15 +1268,15 @@ static void step_profile(rc_pl_profile_t *p)
         if (side > 0) {
             spin_xl    = x;
             spin_has_l = true;
-            p->clearance_left_mm  = (uint16_t)((x < -1) ? -x : 1);
+            p->clearance_left_mm  = RC_SAT_U((x < -1) ? -x : 1, RC_BITS_CLEAR);
         } else {
             spin_xr    = x;
             spin_has_r = true;
-            p->clearance_right_mm = (uint16_t)((x > 1) ? x : 1);
+            p->clearance_right_mm = RC_SAT_U((x > 1) ? x : 1, RC_BITS_CLEAR);
         }
     }
     if (spin_has_l && spin_has_r && (spin_xr > spin_xl)) {
-        p->width_mm = (uint16_t)(spin_xr - spin_xl);
+        p->width_mm = RC_SAT_U(spin_xr - spin_xl, RC_BITS_MM);
     }
     tm_printf((UB *)"[step] face %d mm, %d stops, length %d mm\n",
               (INT)step_face, (INT)step_stops, (INT)p->width_mm);

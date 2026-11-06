@@ -3,9 +3,9 @@
  *
  *  Per-pin edge callbacks on top of the single IO_IRQ_BANK0 vector.
  *
- *  The RP2040 gives all 30 GPIOs one interrupt line. Three drivers need
- *  edges (two encoders, the ultrasonic echo, the barcode sensor), so
- *  something has to demultiplex. This module owns the vector and hands
+ *  The RP2040 gives all 30 GPIOs one interrupt line. Two drivers need
+ *  edges (two encoders, the ultrasonic echo), so something has to
+ *  demultiplex. This module owns the vector and hands
  *  each pin to its registered handler.
  *
  *  Handler contract
