@@ -57,6 +57,7 @@
 #include "rc_defer.h"		/* shared layer: interrupt bottom halves */
 #include "rc_event.h"		/* shared layer: the event bus */
 #include "rc_gpioirq.h"		/* shared layer: one GPIO interrupt, many pins */
+#include "rc_fault.h"		/* shared layer: fault bitmask (event flag) */
 #include "sub_nav.h"		/* shared layer: mission state machine (report §6.5) */
 #include "rc_sense.h"		/* shared layer: the one Sense task (report §3) */
 #include "rc_config.h"		/* shared layer: RC_RISK1_SOAK_SECS */
@@ -126,6 +127,9 @@ EXPORT INT usermain(void)
 	if (rc_gpioirq_init() != RC_OK) {
 		tm_printf((UB*)"ERROR rc_gpioirq_init\n");
 	}
+	if (rc_fault_init() != RC_OK) {		/* before any driver sets a fault */
+		tm_printf((UB*)"ERROR rc_fault_init\n");
+	}
 
 	/* Phase 1: every subsystem creates its kernel objects */
 	CHECK(subsystem1_init(), "subsystem1_init");
@@ -148,8 +152,8 @@ EXPORT INT usermain(void)
 	CHECK(subsystem4_start(), "subsystem4_start");
 	CHECK(subsystem5_start(), "subsystem5_start");
 
-	/* Phase 2b: the shared Sense task polls the IR line pair (S3, 10 ms)
-	   and the IMU (S4, 10 ms).  After every subsystemN_start(), so S4's
+	/* Phase 2b: the shared Sense task polls the IR line pair and the
+	   barcode sensor (S3, 10 ms) and the IMU (S4, 10 ms).  After every subsystemN_start(), so S4's
 	   boot calibration has finished before the first IMU sample. */
 	if (rc_sense_start() != RC_OK) {
 		tm_printf((UB*)"ERROR rc_sense_start\n");
@@ -164,8 +168,8 @@ EXPORT INT usermain(void)
 	   starts and stops nav itself (S5-N02..N05). */
 #if TM_MQTT
 	/* MQTT build: stay in IDLE, motors off, until START (G) arrives on
-	   the cmd topic (sub_nav on_command_rx).  2026-10-29, Buddy 5: the
-	   car drove off ~13 s after every boot or flash. */
+	   the cmd topic (sub_nav on_command_rx), so the car never drives off
+	   on its own after a boot or flash. */
 	tm_printf((UB*)"start: IDLE, waiting for START (G) over MQTT\n");
 #else
 	/* No MQTT: nothing can send START, so start the run now. */
@@ -185,6 +189,7 @@ EXPORT INT usermain(void)
 	subsystem3_test();
 	subsystem4_test();
 	subsystem5_test();
+	rc_fault_test();		/* fault bitmask, Sense timing */
 
 #if RC_RISK1_SOAK_SECS > 0
 	/* Risk 1 soak: run the control path under worst-case load and print

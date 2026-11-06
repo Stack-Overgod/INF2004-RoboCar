@@ -71,10 +71,23 @@
 #define RC_PIN_IR_LINE_L        (16U)
 #define RC_PIN_IR_LINE_R        (6U)
 
-/* IR barcode sensor on Grove 6 (GP26/GP27). Only DOUT (GP27) is used, on
- * an edge interrupt for decoding. AOUT (GP26) is not read, so the ADC is
- * off (config/config_device.h DEVCNF_USE_ADC 0). */
-#define RC_PIN_IR_BARCODE_D     (27U)
+/* IR barcode sensor on Grove 6 (GP26/GP27). Only AOUT (GP26, ADC0) is
+ * read, by the Sense task (needs config_device.h DEVCNF_USE_ADC 1). DOUT
+ * (GP27) is wired but deliberately not configured and has no IRQ, so its
+ * trim pot does not matter. */
+#define RC_PIN_IR_BARCODE_A     (26U)
+#define RC_ADC_CH_IR_BARCODE    (0U)
+
+/* Barcode ADC edge detector (drv_ir.c), in ADC counts (0..4095).
+ * PROM: how far the reading must come back from a bar's peak or a space's
+ * valley to end that element. Narrow spaces between bars dip ~700-1700
+ * counts at track speed; sensor noise is ~20.
+ * MIN_BAR: a bar's peak must be this far above the white level (running
+ * minimum), so mat texture is not read as bars.
+ * BLACK_HIGH: 1 if AO reads higher over black (verified on the car). */
+#define RC_BAR_ADC_PROM         (400U)
+#define RC_BAR_ADC_MIN_BAR      (800U)
+#define RC_BAR_ADC_BLACK_HIGH   (1)
 
 /* Liveness LED on the GPIO breakout header. The port defaults
  * BOARD_LED_PIN to GP16, which is line sensor 1 above, so override it in
@@ -141,15 +154,15 @@
  * bench and, in phase 3 (motors off), turn one wheel exactly 10 turns by
  * hand in one direction. The count change divided by 10 is this number.
  *
- * Measured 2026-10-18 on the car, 10 hand turns per wheel: left 6350,
- * right 6419 counts (635 / 642 per turn, within hand-counting error).
+ * Measured on the car, 10 hand turns per wheel: left 6350, right 6419
+ * counts (635 / 642 per turn, within hand-counting error).
  * Cross-check: 35% duty gave ~900 counts/s = ~280 mm/s. Buddy 2 to confirm. */
 #define RC_ENC_TICKS_PER_REV    (640U)
-/* Effective rolling diameter: 2026-10-18 roll test, one wheel turn on
- * paper = 211, 208, 217 mm, mean 212 mm / pi = 67.5 mm. 68 rather than 67
+/* Effective rolling diameter: roll test, one wheel turn on paper = 211,
+ * 208, 217 mm, mean 212 mm / pi = 67.5 mm. 68 rather than 67
  * because it keeps RC_ENC_UM_PER_TICK closest to 212000 / 640 = 331 um. */
 #define RC_WHEEL_DIAM_MM        (68U)
-#define RC_WHEEL_BASE_MM        (112U)  /* tread centre to tread centre, measured 2026-10-18 */
+#define RC_WHEEL_BASE_MM        (112U)  /* tread centre to tread centre, measured */
 
 /* Distance per encoder edge, in micrometres, to stay in integer maths.
  * There is no FPU on the RP2040, so everything downstream is fixed point. */

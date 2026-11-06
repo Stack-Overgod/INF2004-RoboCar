@@ -1,11 +1,9 @@
 /*
  *  rc_sense.c  -  the shared Sense task. See rc_sense.h.
  *
- *  Moved out of subsystem3.c (Buddy 3's sense_thread) so that neither
- *  subsystem depends on the other: subsystem3.c no longer includes
- *  Buddy 4's drv_imu.h, and the IMU sampling no longer lives in Buddy 3's
- *  file. Line and IMU are both sampled every 10 ms (NFR1, revised from
- *  5 ms by the team to fit the 10 ms kernel tick).
+ *  Shared so that neither subsystem 3 nor 4 depends on the other. The
+ *  line pair, the barcode sensor and the IMU are all sampled every 10 ms
+ *  (NFR1, one 10 ms kernel tick).
  */
 #include "rc_prelude.h"
 #include "rc_config.h"
@@ -31,6 +29,7 @@ static volatile bool test_hold;
 static volatile uint32_t sense_ticks;      /* loop passes, for S3-U05 */
 static volatile uint32_t line_max_us;      /* longest drv_ir_sample_line() */
 static volatile uint32_t imu_max_us;       /* longest drv_imu_sample() */
+static volatile uint32_t bar_max_us;       /* longest drv_ir_sample_barcode() */
 
 void rc_sense_test_hold(bool hold)
 {
@@ -48,6 +47,11 @@ void rc_sense_max_us(uint32_t *line_us, uint32_t *imu_us)
     *imu_us  = imu_max_us;
 }
 
+uint32_t rc_sense_bar_max_us(void)
+{
+    return bar_max_us;
+}
+
 /* Run fn and keep the longest time it took in *max_us. */
 static void timed(void (*fn)(void), volatile uint32_t *max_us)
 {
@@ -62,9 +66,11 @@ static void timed(void (*fn)(void), volatile uint32_t *max_us)
 }
 #define SENSE_LINE()  timed(drv_ir_sample_line, &line_max_us)
 #define SENSE_IMU()   timed(drv_imu_sample, &imu_max_us)
+#define SENSE_BAR()   timed(drv_ir_sample_barcode, &bar_max_us)
 #else
 #define SENSE_LINE()  drv_ir_sample_line()
 #define SENSE_IMU()   drv_imu_sample()
+#define SENSE_BAR()   drv_ir_sample_barcode()
 #endif
 
 /*
@@ -85,6 +91,10 @@ static void sense_task(INT stacd, void *exinf)
     for (;;) {
         sense_overruns += rc_period_wait();
         tick++;
+
+        /* Barcode AO, before the test hold: it only queues edges while
+         * armed, and the S3 hand test reads its level. */
+        SENSE_BAR();
 #if APP_TEST
         sense_ticks++;
         if (test_hold) {

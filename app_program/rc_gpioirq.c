@@ -205,11 +205,9 @@ static rc_result_t gpioirq_init_once(void)
     return RC_OK;
 }
 
-/* Safe to call more than once. A second call used to wipe
- * every registration made so far (and, for rc_event, start a second set of
- * dispatcher tasks), which silently disconnected whoever had already
- * subscribed. subsystem5_test.c calls this again after start-up. Now only
- * the first successful call does the work. */
+/* Safe to call more than once: only the first successful call does the
+ * work, so a second call (subsystem5_test.c makes one after start-up)
+ * keeps every registration made so far. */
 rc_result_t rc_gpioirq_init(void)
 {
     static bool done;
