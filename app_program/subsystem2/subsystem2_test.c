@@ -39,8 +39,9 @@
  * turn, so speed and distance are badly off and those checks would fail
  * for a reason that is not a bug. */
 #ifndef S2_CALIBRATED
-/* RC_ENC_TICKS_PER_REV, RC_WHEEL_DIAM_MM, RC_WHEEL_BASE_MM and
- * TURN_SLIP_PERMILLE were all measured on the car on 2026-10-18. */
+/* 1 = RC_ENC_TICKS_PER_REV, RC_WHEEL_DIAM_MM, RC_WHEEL_BASE_MM and
+ * TURN_SLIP_PERMILLE are measured values, so the tests check against
+ * them. */
 #define S2_CALIBRATED		1
 #endif
 

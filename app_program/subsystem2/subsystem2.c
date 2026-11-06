@@ -6,7 +6,7 @@
  *                      bottom half, then sub_motion: PID gains, mutex,
  *                      MOTION_DONE subscriber and the motion task
  *                      (RC_PRI_MOTION, every RC_PERIOD_MOTION_MS).
- *  subsystem2_start(): sets the cruise speed (report §6.5 IDLE, 250 mm/s).
+ *  subsystem2_start(): sets the cruise speed (S2_CRUISE_MM_S).
  *                      The motion task is already running; it idles until
  *                      someone asks for a move.
  *
@@ -22,8 +22,8 @@
 #include "drv_encoder.h"
 #include "sub_motion.h"
 
-/* Report §6.5 IDLE: base speed for distance moves and turns, mm/s.
- * 188 = 250 less 25 % (Buddy 5's track call, 2026-10-19). */
+/* Base speed for distance moves and turns, mm/s: 25 % below the
+ * 250 mm/s of report §6.5 IDLE, to match the slower line following. */
 #define S2_CRUISE_MM_S  (188U)
 
 /* Print the first failing step, return true if r is RC_OK. */

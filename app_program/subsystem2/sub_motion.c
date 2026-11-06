@@ -33,6 +33,7 @@
 #include "drv_encoder.h"
 #include "../rc_config.h"
 #include "../rc_event.h"
+#include "../rc_fault.h"
 
 /* ------------------------------------------------------------------ *
  *  Tuning constants
@@ -74,9 +75,8 @@
 #define FF_START_PERMILLE       (150)
 #define FF_TOP_SPEED_MM_S       (400)
 /* Per-wheel feedforward gain, permille. The left motor is ~15 % weaker
- * than the right (2026-10-29 track, Buddy 5; 2026-10-26 stand 83 vs 97
- * mm/s at equal duty): it gets 15 % more feedforward so it does not have
- * to wait for the integral to catch up at every speed change. */
+ * than the right at equal duty, so it gets 15 % more feedforward and does
+ * not have to wait for the integral to catch up at every speed change. */
 #define FF_GAIN_L_PERMILLE      (1150)
 #define FF_GAIN_R_PERMILLE      (1000)
 
@@ -87,8 +87,8 @@
  * it instead of coasting past. */
 #define MIN_SPEED_MM_S          (60)
 /* A cruise speed set below MIN_SPEED_MM_S (sub_nav's slow detour, at the
- * ~32 mm/s line speed, 2026-10-29) becomes the floor and the turn speed
- * too, down to SLOW_FLOOR_MM_S so a move always finishes. */
+ * ~32 mm/s line speed) becomes the floor and the turn speed too, down to
+ * SLOW_FLOOR_MM_S so a move always finishes. */
 #define SLOW_FLOOR_MM_S         (15)
 #define ACCEL_MM_S_PER_CYCLE    (20)
 #define DECEL_ZONE_MM           (60U)
@@ -102,8 +102,8 @@
  * the geometry. Permille: 1000 = trust the geometry, 1100 = drive each
  * wheel 10 % further. Measure ~10 turns with a protractor, then set
  *     TURN_SLIP_PERMILLE = 1000 * angle asked / average angle measured.
- * Measured 2026-10-18 on the floor: 4 x 90 right and 4 x 90 left each
- * ended ~5 degrees past 360, so 1000 x 360 / 365 = 986. */
+ * On the floor, 4 x 90 right and 4 x 90 left each end ~5 degrees past
+ * 360, so 1000 x 360 / 365 = 986. */
 #define TURN_SLIP_PERMILLE      (986U)
 
 /* Straight-line correction. For every mm one wheel has travelled further
@@ -301,8 +301,8 @@ static int32_t clamp_duty(int32_t v)
 /* The slowest a move runs (start, end of the ramp down): MIN_SPEED_MM_S,
  * or the cruise speed when that is set lower (never below
  * SLOW_FLOOR_MM_S, so a move can always finish). Spin turns never go
- * below MIN_SPEED_MM_S: at 32 mm/s a turn in place stalled on the foam
- * mat (2026-10-29 18:56, both wheels 0 while the duty climbed to 500). */
+ * below MIN_SPEED_MM_S: at 32 mm/s a turn in place stalls on the foam
+ * mat. */
 static int32_t speed_floor(mode_t m)
 {
     int32_t c = (int32_t)cruise_mm_s;
@@ -459,14 +459,28 @@ static void wheels_zero(void)
     }
 }
 
+/* Fault bit for a stalled wheel: if the other wheel is still turning
+ * the car is moving, so the silent side is most likely its encoder;
+ * if neither turns, the car is blocked. */
+static void stall_fault(rc_side_t side)
+{
+    const rc_side_t other = (side == RC_SIDE_LEFT) ? RC_SIDE_RIGHT
+                                                   : RC_SIDE_LEFT;
+
+    rc_fault_set((wheels[other].raw != 0) ? RC_FAULT_ENCODER
+                                          : RC_FAULT_MOTOR_STALL);
+}
+
 /* NULL, or the message for whichever wheel has stalled. */
 static const char *stall_check(void)
 {
     if (wheels[RC_SIDE_LEFT].stall_cycles >= STALL_CYCLES) {
+        stall_fault(RC_SIDE_LEFT);
         return "left wheel not turning (blocked, or its encoder is not"
                " counting) - stopped";
     }
     if (wheels[RC_SIDE_RIGHT].stall_cycles >= STALL_CYCLES) {
+        stall_fault(RC_SIDE_RIGHT);
         return "right wheel not turning (blocked, or its encoder is not"
                " counting) - stopped";
     }
@@ -487,9 +501,10 @@ static void publish_done(void)
 
     while (done_n > 0U) {
         evt.id = RC_EVT_MOTION_DONE;
-        evt.u.motion_done.move_id      = done_q[0].id;
-        evt.u.motion_done.completed    = done_q[0].completed;
-        evt.u.motion_done.travelled_mm = done_q[0].travelled_mm;
+        evt.u.motion_done.move_id      = done_q[0].id;   /* < 2^15, see below */
+        evt.u.motion_done.completed    = done_q[0].completed ? 1U : 0U;
+        evt.u.motion_done.travelled_mm =
+            RC_SAT_U(done_q[0].travelled_mm, RC_BITS_MOVE_MM);
         if (rc_event_publish(&evt) != RC_OK) {
             break;
         }
@@ -599,11 +614,15 @@ static uint32_t start_move(mode_t m, uint64_t goal_um, int8_t sign,
         finish_move(false);
     }
 
+    /* Ids run 1..32767 and wrap (RC_BITS_MOVE_ID), so the id in
+     * RC_EVT_MOTION_DONE always equals the one handed out here. A new move
+     * also clears the stall / encoder fault bits from the last one. */
     id = move_id_next;
-    move_id_next++;
+    move_id_next = (move_id_next + 1U) & RC_FIELD_MAX(RC_BITS_MOVE_ID);
     if (move_id_next == 0U) {
         move_id_next = 1U;          /* 0 means "no move" */
     }
+    rc_fault_clear(RC_FAULT_MOTOR_STALL | RC_FAULT_ENCODER);
     if (cb != NULL) {
         cb_register(id, cb, ctx);
     }
@@ -818,10 +837,14 @@ static void motion_task(INT stacd, void *exinf)
         sp_l = drv_encoder_speed_mm_s(RC_SIDE_LEFT);
         sp_r = drv_encoder_speed_mm_s(RC_SIDE_RIGHT);
         evt.id = RC_EVT_ODOMETRY;
-        evt.u.odometry.speed_l_mm_s = sp_l;
-        evt.u.odometry.speed_r_mm_s = sp_r;
-        evt.u.odometry.dist_l_mm    = drv_encoder_distance_mm(RC_SIDE_LEFT);
-        evt.u.odometry.dist_r_mm    = drv_encoder_distance_mm(RC_SIDE_RIGHT);
+        /* 11-bit signed speeds, clamped; 16-bit odometer (wraps every
+         * 65.5 m, consumers use differences). */
+        evt.u.odometry.speed_l_mm_s = RC_SAT_S(sp_l, RC_BITS_SPEED);
+        evt.u.odometry.speed_r_mm_s = RC_SAT_S(sp_r, RC_BITS_SPEED);
+        evt.u.odometry.dist_l_mm    =
+            (uint16_t)drv_encoder_distance_mm(RC_SIDE_LEFT);
+        evt.u.odometry.dist_r_mm    =
+            (uint16_t)drv_encoder_distance_mm(RC_SIDE_RIGHT);
 #if APP_TEST
         if (!odo_test_hold)
 #endif

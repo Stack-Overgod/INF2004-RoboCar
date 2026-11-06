@@ -27,9 +27,7 @@
  * cleanly through the pin's Schmitt trigger, so this only rejects short
  * electrical glitches (motor PWM noise picked up by the encoder wires).
  * It must stay well below the real gap between ticks at top speed: at
- * 1000 ticks per wheel turn and 200 wheel RPM that gap is 300 us. The old
- * 500 us, chosen for a 20-slot optical disc, would throw away real ticks
- * at speed. */
+ * 1000 ticks per wheel turn and 200 wheel RPM that gap is 300 us. */
 #define DEBOUNCE_US         (50UL)
 
 /* Per-wheel encoder state.
@@ -178,7 +176,7 @@ static void encoder_drain(void *ctx)
         evt.id = RC_EVT_ENCODER_EDGE;
         evt.u.encoder.side     = (i == 0U) ? RC_SIDE_LEFT : RC_SIDE_RIGHT;
         evt.u.encoder.count    = count;
-        evt.u.encoder.delta_us = period;
+        evt.u.encoder.delta_us = RC_SAT_U(period, RC_BITS_ENC_DT);
         (void)rc_event_publish(&evt);
     }
 }
