@@ -379,11 +379,17 @@ EXPORT void subsystem5_test(void)
 	TEST_CHECK("S5-N01", sub_nav_state() == RC_NAV_IDLE,
 		   "sub_nav is IDLE before sub_nav_start()");
 
-	/* S5-N02: start turns on FOLLOWING (line, barcode, watch). */
-	TEST_CHECK("S5-N02",
-		   (sub_nav_start() == RC_OK)
-		   && (sub_nav_state() == RC_NAV_FOLLOWING),
-		   "sub_nav_start(): IDLE -> FOLLOWING");
+	/* S5-N02: START first lines the car up (RECOVERING, line scan in
+	 * place; the wheels turn: use the stand), and STOP ends that.  The
+	 * other nav tests start from FOLLOWING directly (sub_nav_test_force),
+	 * so whatever is under the sensors does not matter. */
+	r1  = sub_nav_start();
+	got = (r1 == RC_OK) && (sub_nav_state() == RC_NAV_RECOVERING);
+	(void)sub_nav_stop();
+	got = got && wait_nav(RC_NAV_STOPPED, true, 200)
+	      && (sub_nav_test_force(RC_NAV_FOLLOWING) == RC_OK);
+	TEST_CHECK("S5-N02", got,
+		   "sub_nav_start(): IDLE -> RECOVERING (line-up scan), STOP ends it");
 
 	/* S5-N03: a close watch reading starts avoidance.  Faked, so it
 	 * passes with or without a sensor. */
@@ -410,7 +416,7 @@ EXPORT void subsystem5_test(void)
 	/* S5-N05: STOP from a running state (FR10b path, via the bus). */
 	(void)sub_nav_stop();
 	(void)wait_nav(RC_NAV_STOPPED, true, 200);
-	r1 = sub_nav_start();				/* back to FOLLOWING */
+	r1 = sub_nav_test_force(RC_NAV_FOLLOWING);
 	r2 = sub_nav_stop();
 	TEST_CHECK("S5-N05",
 		   (r1 == RC_OK) && (r2 == RC_OK)
@@ -439,7 +445,7 @@ EXPORT void subsystem5_test(void)
 
 	/* S5-N08: a Code 39 start character while FOLLOWING opens
 	 * READING_BARCODE (report §6.5). */
-	r1 = sub_nav_start();
+	r1 = sub_nav_test_force(RC_NAV_FOLLOWING);
 	fake_barcode('*', RC_CMD_NONE);
 	TEST_CHECK("S5-N08",
 		   (r1 == RC_OK) && wait_nav(RC_NAV_READING_BARCODE, true, 200),
@@ -467,7 +473,7 @@ EXPORT void subsystem5_test(void)
 
 	/* S5-N10: a start character with no data character times out back
 	 * to FOLLOWING (G10 decode timeout, 2 s). */
-	r1 = sub_nav_start();
+	r1 = sub_nav_test_force(RC_NAV_FOLLOWING);
 	fake_barcode('*', RC_CMD_NONE);
 	got = wait_nav(RC_NAV_READING_BARCODE, true, 200);
 	TEST_CHECK("S5-N10",
@@ -516,7 +522,7 @@ EXPORT void subsystem5_test(void)
 
 	/* S5-N13: a remote turn is executed while following (FR10b), and
 	 * ignored once STOPPED: only STOP is honoured from every state. */
-	r1 = sub_nav_start();
+	r1 = sub_nav_test_force(RC_NAV_FOLLOWING);
 	(void)sub_nav_inject_command(RC_CMD_TURN_RIGHT, 0);
 	got = (r1 == RC_OK) && wait_nav(RC_NAV_FOLLOWING, false, 200)
 	      && nav_took_command();

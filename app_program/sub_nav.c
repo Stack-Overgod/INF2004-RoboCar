@@ -33,6 +33,7 @@
 #include "subsystem2/drv_encoder.h"
 #include "subsystem3/sub_line.h"
 #include "subsystem3/sub_barcode.h"
+#include "subsystem4/sub_terrain.h"
 #include "subsystem5/sub_scan.h"
 
 /* FR6: a watch ping at or under this range starts avoidance. Obstacles
@@ -81,19 +82,24 @@
 #define NAV_BYPASS_OUT_COS_PERMILLE     (707U)
 #define NAV_BYPASS_IN_DEG               (45)
 /* Detour spin turns slip on the foam: at NAV_DETOUR_MM_S (turns run at
- * sub_motion's 60 mm/s floor) a turn the encoders count as 45 deg turns
- * the car only ~30 deg, so every bypass turn is asked for 1.5x.
- * sub_motion's TURN_SLIP_PERMILLE was calibrated on the floor at cruise
- * speed. */
-#define NAV_DETOUR_TURN_PERMILLE        (1500)
+ * sub_motion's 60 mm/s floor) the car turns well short of what the
+ * encoders count, so every bypass turn is asked for 1.35x (at 1.5x a
+ * right turn came out ~50 deg for 45). How much it slips varies with the
+ * mat and the tyres. sub_motion's TURN_SLIP_PERMILLE was calibrated on
+ * the floor at cruise speed. */
+#define NAV_DETOUR_TURN_PERMILLE        (1350)
 /* Bypass turns to the left are scaled by this on top of
  * NAV_DETOUR_TURN_PERMILLE, so that left and right detour turns reach the
- * same real angle on the foam. An eyeball estimate: re-check with tape
- * marks if the detour drifts. */
-#define NAV_LEFT_TURN_PERMILLE          (862)
+ * same real angle on the foam: 958 keeps a left turn at 1.29x, where it
+ * looked right. An eyeball estimate: re-check with tape marks if the
+ * detour drifts. */
+#define NAV_LEFT_TURN_PERMILLE          (958)
 /* Extra sideways step beyond the plan's lateral_mm (which already holds
- * the obstacle edge + CAR_WIDTH_MM / 2, 20 mm a side of margin). */
-#define NAV_BYPASS_EXTRA_ASIDE_MM       (10U)
+ * the obstacle edge + CAR_WIDTH_MM / 2, 20 mm a side of margin). Sized so
+ * that, for lateral_mm up to ~95 mm, the car still clears the obstacle
+ * when the turn out comes up ~15 deg short on the foam (leg 1 x sin 30
+ * still exceeds lateral_mm). */
+#define NAV_BYPASS_EXTRA_ASIDE_MM       (40U)
 
 /* Rejoining the line. The car drives in at
  * NAV_BYPASS_IN_DEG, line steering off, until either line sensor sees
@@ -115,6 +121,14 @@
 #define NAV_LINESCAN_MM_S               (60)
 /* Line samples (10 ms each) to let the car stop before the final turn. */
 #define NAV_LINESCAN_SETTLE             (15U)
+
+/* START (and a restart from STOPPED) lines the car up on the line it was
+ * put on before following: the same line scan, in place, NAV_START_SCAN_DEG
+ * left and then back to NAV_START_SCAN_DEG right, then the turn to the
+ * middle. A line under the car shows up within that sweep at any angle
+ * up to ~90 degrees off. No line found: the old start sweep
+ * (sub_line_find) and FOLLOWING. */
+#define NAV_START_SCAN_DEG              (100)
 /* Each wheel's travel per degree of spin in place, um: (W/2) x pi/180 */
 #define NAV_UM_PER_DEG  ((uint32_t)RC_WHEEL_BASE_MM * 1000UL * 31416UL \
                          / (2UL * 180UL * 10000UL))
@@ -186,6 +200,11 @@ static int32_t  ls_limit;
 static uint32_t ls_l0;
 static uint32_t ls_r0;
 static uint32_t ls_sweep;
+/* how far past the start heading the second sweep goes, degrees */
+static int32_t  ls_back_deg;
+/* this RECOVERING is the START line-up (NAV_START_SCAN_DEG), not a
+ * bypass rejoin; cleared on entry to any other state */
+static bool     rejoin_start;
 /* per sensor (0 left, 1 right): headings where it went on to / off the
  * line, progress (0 not yet, 1 on, 2 on and off), its last sample */
 static int32_t  ls_on[2];
@@ -225,6 +244,7 @@ static ID                tmo_almid;
 static volatile uint32_t tmo_gen;
 
 static void enter(rc_nav_state_t next);
+static void ls_begin(void);
 
 const char *sub_nav_state_name(rc_nav_state_t s)
 {
@@ -524,6 +544,9 @@ static void enter(rc_nav_state_t next)
     }
     state = next;
     tmo_cancel();                   /* every timed state arms its own */
+    if (next != RC_NAV_RECOVERING) {
+        rejoin_start = false;
+    }
     tm_printf((UB *)"[nav] %s -> %s\n",
               sub_nav_state_name(prev), sub_nav_state_name(next));
 
@@ -589,11 +612,16 @@ static void enter(rc_nav_state_t next)
         /* FR9: drive in until a line sensor sees the line, then rejoin
          * (rejoin_sample, "Rejoining the line"); give up after
          * recover_timeout_ms (on_timeout). sub_line stays off: nav steers
-         * the whole rejoin and FOLLOWING turns it back on. */
-        rejoin = RJ_SEEK;
+         * the whole rejoin and FOLLOWING turns it back on. At START it is
+         * only the line scan, in place (NAV_START_SCAN_DEG). */
         (void)sub_line_enable(false);
-        (void)sub_motion_drive_speed((int16_t)NAV_DETOUR_MM_S, 0);
-        tmo_arm(recover_timeout_ms());
+        if (rejoin_start) {
+            ls_begin();
+        } else {
+            rejoin = RJ_SEEK;
+            (void)sub_motion_drive_speed((int16_t)NAV_DETOUR_MM_S, 0);
+            tmo_arm(recover_timeout_ms());
+        }
         break;
 
     case RC_NAV_STOPPED:
@@ -762,20 +790,44 @@ static void ls_sweep_start(int32_t dir, int32_t from, int32_t limit)
     (void)sub_motion_drive_speed(0, (int16_t)(-dir * NAV_LINESCAN_MM_S));
 }
 
-/* The line scan: first toward the plan side (the way that turns the car
- * back along the line), NAV_LINESCAN_SPARE_DEG past the planned
- * re-entry angle. The timeout covers both sweeps. */
+/* The line scan: after a bypass, first toward the plan side (the way
+ * that turns the car back along the line), NAV_LINESCAN_SPARE_DEG past
+ * the planned re-entry angle, then back to NAV_LINESCAN_SPARE_DEG past
+ * the start; at START, NAV_START_SCAN_DEG left then right. The timeout
+ * covers both sweeps. */
 static void ls_begin(void)
 {
-    int32_t  dir = (plan.action == RC_CMD_TURN_LEFT) ? 1 : -1;
-    uint32_t sweep_deg = (2U * NAV_BYPASS_IN_DEG) + (3U * NAV_LINESCAN_SPARE_DEG);
+    int32_t  dir;
+    int32_t  first_deg;
+    uint32_t sweep_deg;
+
+    if (rejoin_start) {
+        dir         = 1;
+        first_deg   = NAV_START_SCAN_DEG;
+        ls_back_deg = NAV_START_SCAN_DEG;
+    } else {
+        dir         = (plan.action == RC_CMD_TURN_LEFT) ? 1 : -1;
+        first_deg   = NAV_BYPASS_IN_DEG + NAV_LINESCAN_SPARE_DEG;
+        ls_back_deg = NAV_LINESCAN_SPARE_DEG;
+    }
+    sweep_deg = (uint32_t)((2 * first_deg) + ls_back_deg);
 
     rejoin   = RJ_SCAN;
     ls_sweep = 0U;
     /* um per degree / (mm per s) = ms per degree */
     tmo_arm((RELTIM)(((sweep_deg * NAV_UM_PER_DEG) / NAV_LINESCAN_MM_S)
                      + NAV_RECOVER_SPARE_MS));
-    ls_sweep_start(dir, 0, dir * (NAV_BYPASS_IN_DEG + NAV_LINESCAN_SPARE_DEG) * 10);
+    ls_sweep_start(dir, 0, dir * first_deg * 10);
+}
+
+/* The START line-up found no line (or never finished): start the run the
+ * old way, with sub_line's sweep, so a car put down off the line still
+ * gets going. */
+static void start_scan_missed(void)
+{
+    tm_printf((UB *)"[nav] start line scan found no line: sweep instead\n");
+    enter(RC_NAV_FOLLOWING);
+    (void)sub_line_find(0);
 }
 
 /* FR9 / FR12: give up, brake, and say so. */
@@ -840,10 +892,14 @@ static void rejoin_sample(const rc_pl_line_t *s)
             if (ls_sweep == 0U) {
                 tm_printf((UB *)"[nav] line scan: sweeping back\n");
                 ls_sweep = 1U;
-                ls_sweep_start(-ls_dir, h, -ls_dir * NAV_LINESCAN_SPARE_DEG * 10);
+                ls_sweep_start(-ls_dir, h, -ls_dir * ls_back_deg * 10);
             } else {
                 (void)sub_motion_stop(true);
-                rejoin_fail("line scan found no line");
+                if (rejoin_start) {
+                    start_scan_missed();
+                } else {
+                    rejoin_fail("line scan found no line");
+                }
             }
         } else {
             /* still sweeping */
@@ -1047,8 +1103,13 @@ static void on_timeout(const rc_event_t *evt, void *ctx)
 
     switch (state) {
     case RC_NAV_RECOVERING:
-        rejoin_fail((rejoin == RJ_SEEK) ? "line not reached"
-                                        : "rejoin step timed out");
+        if (rejoin_start) {
+            (void)sub_motion_stop(true);
+            start_scan_missed();
+        } else {
+            rejoin_fail((rejoin == RJ_SEEK) ? "line not reached"
+                                            : "rejoin step timed out");
+        }
         break;
 
     case RC_NAV_READING_BARCODE:
@@ -1120,8 +1181,11 @@ rc_result_t sub_nav_start(void)
     scan_pending   = false;
     pending_cmd    = RC_CMD_NONE;
     junction_count = 0U;
-    enter(RC_NAV_FOLLOWING);
-    (void)sub_line_find(0);         /* start of a run: full sweep */
+    /* the car stands on the track: that is level for the IMU (Buddy 4) */
+    sub_terrain_level_here();
+    /* line up on the line first (NAV_START_SCAN_DEG), then FOLLOWING */
+    rejoin_start   = true;
+    enter(RC_NAV_RECOVERING);
     return RC_OK;
 }
 

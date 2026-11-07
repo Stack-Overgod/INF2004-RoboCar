@@ -378,9 +378,9 @@ details.more[open] summary { margin-bottom: 4px; }
       <div><div class="label" title="Height above the start level now">Height</div><div class="stat num" id="hNow">-<small>mm</small></div></div>
       <div><div class="label" title="Highest ramp so far">Ramp</div><div class="stat num" id="rampMax">-<small>mm</small></div></div>
       <div><div class="label" title="Pitch of the last hump">Pitch</div><div class="stat num" id="pitch">-<small>°</small></div></div>
-      <div><div class="label" title="Tallest hump so far">Hump</div><div class="stat num" id="peak">-<small>mm</small></div></div>
+      <div><div class="label" title="Height of the last hump (all humps: table below)">Hump</div><div class="stat num" id="peak">-<small>mm</small></div></div>
     </div>
-    <div class="label" title="Height = Σ ds·sin θ: wheel distance times the slope from the accelerometer (car's own acceleration removed). Rise = highest point above where the slope began, Net = where it ended.">Height above start level, mm, last 60 s ⓘ</div>
+    <div class="label" title="Height = Σ ds·sin θ: wheel distance times the slope from the accelerometer (car's own acceleration removed). Rise = highest point above where the slope began, Net = where it ended. Orange stems = humps (peak mm).">Height and humps, mm, last 60 s ⓘ</div>
     <div class="chart" id="hChart"><svg></svg><div class="tip"></div></div>
     <div class="tbl">
       <table>
@@ -556,10 +556,17 @@ function onSpin(d) {
 // mm -> cm text, one decimal (the ultrasonic resolves ~0.2 mm)
 const cm = mm => (mm / 10).toFixed(1);
 const humps = [];
-function onHump(d, t) {
+const humpPts = [];   // live humps for the height chart: { t: epoch s, v: mm }
+function onHump(d, t, replay) {
   humps.unshift({ t, ...d }); humps.length = Math.min(humps.length, 8);
   $("pitch").innerHTML = d.pitch + "<small>°</small>";
-  $("peak").innerHTML = Math.max(...humps.map(h => h.peak_mm)) + "<small>mm</small>";
+  $("peak").innerHTML = d.peak_mm + "<small>mm</small>";
+  if (!replay) {
+    const now = Date.now() / 1000;
+    humpPts.push({ t: now, v: d.peak_mm, ts: t });
+    trim(humpPts, now);
+    drawHeight();
+  }
   $("humps").innerHTML = humps.map(h => `<tr><td class="num">${h.t}</td><td class="num">${h.peak_mm}</td><td class="num">${h.pitch}</td><td class="num">${h.ms} ms</td></tr>`).join("");
 }
 const ramps = [];
@@ -965,11 +972,20 @@ function drawRange() {
 }
 function drawHeight() {
   const el = $("hChart"), f = chartFrame(el), now = Date.now() / 1000;
-  const vals = hgt.map(p => p.v);
+  trim(humpPts, now);
+  const vals = hgt.map(p => p.v).concat(humpPts.map(p => p.v));
   const ymin = Math.min(0, ...vals), ymax = niceMax(Math.max(20, ...vals));
   let g = axes(f, ymin, ymax, now);
   if (hgt.length) {
     g += series(f, hgt, "v", ymin, ymax, now, "--series-1");
+  }
+  // each hump: a stem from 0 to its peak, labelled
+  const y0 = yOf(f, 0, ymin, ymax);
+  for (const p of humpPts) {
+    const x = xOf(f, p.t, now), y = yOf(f, p.v, ymin, ymax);
+    g += `<line x1="${x}" x2="${x}" y1="${y0}" y2="${y}" stroke="var(--series-2)" stroke-width="2"/>` +
+         `<circle cx="${x}" cy="${y}" r="4" fill="var(--series-2)"/>` +
+         `<text x="${x + 6}" y="${y + 4}" font-size="11" fill="var(--series-2)">${p.v} mm</text>`;
   }
   f.svg.innerHTML = g;
   hover(el, f, hgt, p => `<b>${p.ts}</b><br>${p.v} mm`, ymin, ymax, ["v"], ["--series-1"]);
@@ -1066,7 +1082,7 @@ function handle(ev, replay) {
     case "spin": onSpin(d); break;
     case "line": if (!replay && bp && d.lost === 0) bp.lineFound = Date.now(); break;
     case "impact": if (!replay && bp) bp.failed = "impact"; onImpact(t); break;
-    case "hump": onHump(d, t); break;
+    case "hump": onHump(d, t, replay); break;
     case "ramp": onRamp(d, t); break;
     case "barcode": onBarcode(d, t, replay); break;
     case "bcscan": onScan(d, t, replay); break;

@@ -37,3 +37,4 @@ CLAUDE.md
 dashboard/fake_car.py
 dashboard/shot_bcfold.png
 dashboard/shot_bypass.png
+__pycache__/

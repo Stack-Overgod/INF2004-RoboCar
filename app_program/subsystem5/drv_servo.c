@@ -20,16 +20,19 @@
 /* The pulse width (how long the pin stays "on" within each 20 ms frame)
  * sent at each end of our limited swing: PULSE_MIN_US at
  * RC_SERVO_ANGLE_MIN (70 deg) and PULSE_MAX_US at RC_SERVO_ANGLE_MAX
- * (110 deg). A standard hobby servo maps 500 us..2400 us onto 0..180
- * deg, which puts 70 deg at 1239 us, 90 deg at 1450 us and 110 deg at
- * 1661 us. Everything in between is linearly interpolated to an angle
- * (see drv_servo_set_angle below).
+ * (110 deg), centred on PULSE_CENTRE_US for 90 deg (straight ahead). A
+ * hobby servo centres at about 1500 us and turns ~10.6 us per degree, so
+ * the ±20 deg swing is ±211 us. Everything in between is linearly
+ * interpolated to an angle (see drv_servo_set_angle below).
  *
- * Calibrate on the bench: if the servo hits its stop (buzzes) before
- * 70/110, move these two values toward 1450; if it stops short of its
- * real ±20 deg travel, move them away from 1450. */
-#define PULSE_MIN_US        (1239UL)
-#define PULSE_MAX_US        (1661UL)
+ * Calibrate on the bench: if the sensor does not point straight ahead at
+ * rest, move PULSE_CENTRE_US (~10.6 us per degree; the direction depends
+ * on how the servo is mounted). If the servo hits its stop (buzzes)
+ * before 70/110, make PULSE_HALF_US smaller. */
+#define PULSE_CENTRE_US     (1500UL)
+#define PULSE_HALF_US       (211UL)
+#define PULSE_MIN_US        (PULSE_CENTRE_US - PULSE_HALF_US)
+#define PULSE_MAX_US        (PULSE_CENTRE_US + PULSE_HALF_US)
 
 /* Total degrees of travel the servo bracket covers (110 - 70 = 40). Used
  * as the divisor below to turn "degrees requested" into "fraction of the
