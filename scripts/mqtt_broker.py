@@ -5,12 +5,22 @@ DISCONNECT. Every PUBLISH is logged (time, topic, payload) to stdout and to
 --log, and forwarded at QoS 0 to clients whose filter matches (exact, '+'
 and '#'), so a second client can send car/01/cmd to the car.
 
+The car's payloads are binary frames. A frame is logged as the JSON it
+decodes to (scripts/tm_frames.py), a tab, and the raw bytes in hex, so the
+log stays readable and keeps the exact wire bytes; plain-text payloads
+(commands) are logged as text.
+
     python -I mqtt_broker.py --log D:\\...\\test\\wifi\\mqtt.log [--secs 600]
 """
 import argparse
 import asyncio
 import datetime
+import os
 import sys
+
+# -I leaves the script's own folder off sys.path; tm_frames.py lives here.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tm_frames  # noqa: E402
 
 clients = {}  # writer -> list of topic filters
 log_file = None
@@ -100,7 +110,7 @@ async def handle(reader, writer):
                     i += 2
                     writer.write(b"\x40\x02" + pid)          # PUBACK
                 payload = body[i:]
-                log(f"{topic} {payload.decode('utf-8', 'replace')}")
+                log(f"{topic} {tm_frames.log_text(payload)}")
                 await forward(topic, payload, writer)
             elif ptype == 8:                                 # SUBSCRIBE
                 pid, i, granted = body[0:2], 2, bytearray()

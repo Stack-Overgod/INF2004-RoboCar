@@ -16,9 +16,11 @@
 #include "../rc_types.h"
 #include "../rc_time.h"
 #include "../rc_event.h"
+#include "../rc_fault.h"
 #include "drv_imu.h"
 #include "../subsystem2/drv_encoder.h"
 #include "sub_terrain.h"
+#include "terrain_ramp.h"
 
 /* ------------------------------------------------------------------ *
  *  Detection thresholds and timing windows
@@ -59,6 +61,12 @@ static bool                  is_subscribed = false;
 static sub_terrain_hump_cb_t hump_cb;
 static void                 *hump_cb_ctx;
 
+/* Ramp height (terrain_ramp.c). Only on_sample() touches `ramp`; the
+ * height is copied out to one halfword for other tasks to read. */
+static ramp_t                ramp;
+static uint32_t              ramp_cnt[2];   /* encoder counts last sample */
+static volatile int16_t      height_mm;
+
 /* Helper: average distance both wheels have rolled since boot, mm.
  * Built from the raw edge counts, which only ever go up.
  * drv_encoder_distance_mm() is NOT used: sub_motion resets that baseline
@@ -69,6 +77,46 @@ static uint32_t get_distance_mm(void)
                       + (uint64_t)drv_encoder_count(RC_SIDE_RIGHT)) / 2U;
 
     return (uint32_t)((ticks * (uint64_t)RC_ENC_UM_PER_TICK) / 1000U);
+}
+
+/* Signed encoder ticks since the last call, left + right. The counts
+ * only go up, so the sign comes from each wheel's direction. */
+static int32_t ramp_ticks2(void)
+{
+    int32_t  d2 = 0;
+    uint32_t s;
+
+    for (s = 0U; s < 2U; s++) {
+        rc_side_t side = (s == 0U) ? RC_SIDE_LEFT : RC_SIDE_RIGHT;
+        uint32_t  c = drv_encoder_count(side);
+        int32_t   d = (int32_t)(c - ramp_cnt[s]);
+
+        ramp_cnt[s] = c;
+        d2 += (drv_encoder_dir(side) < 0) ? -d : d;
+    }
+    return d2;
+}
+
+/* One IMU sample into the ramp integrator; publishes RC_EVT_RAMP_END
+ * when a slope has just finished. */
+static void ramp_sample(int16_t ax, int16_t az, uint32_t now_ms)
+{
+    ramp_result_t res;
+    int32_t       h;
+
+    if (ramp_step(&ramp, ramp_ticks2(), ax, az, now_ms, &res)) {
+        rc_event_t out_evt = {0};
+
+        out_evt.id = RC_EVT_RAMP_END;
+        out_evt.u.ramp.rise_mm = RC_SAT_U(res.rise_mm, RC_BITS_RAMP_RISE);
+        out_evt.u.ramp.net_mm = RC_SAT_S(res.net_mm, RC_BITS_HEIGHT);
+        out_evt.u.ramp.max_deg = RC_SAT_U(res.max_deg, RC_BITS_RAMP_DEG);
+        out_evt.u.ramp.len_mm = RC_SAT_U(res.len_mm, RC_BITS_RAMP_LEN);
+        (void)rc_event_publish(&out_evt);
+    }
+
+    h = ramp_height_mm(&ramp);
+    height_mm = (int16_t)((h > 511) ? 511 : ((h < -512) ? -512 : h));
 }
 
 /* ------------------------------------------------------------------ *
@@ -253,10 +301,13 @@ static void on_sample(const rc_event_t *evt, void *ctx)
                     /* Broadcast completion event */
                     rc_event_t out_evt = {0};
                     out_evt.id = RC_EVT_HUMP_END;
-                    out_evt.u.hump.peak_mm = final_height;
-                    out_evt.u.hump.duration_ms = duration;
+                    /* 7 / 13 / 8 bits, clamped (not wrapped) */
+                    out_evt.u.hump.peak_mm =
+                        RC_SAT_U(final_height, RC_BITS_HUMP_PEAK);
+                    out_evt.u.hump.duration_ms =
+                        RC_SAT_U(duration, RC_BITS_HUMP_MS);
                     out_evt.u.hump.max_pitch_deg =
-                        (int16_t)(hump_peak_pitch / 10);
+                        RC_SAT_S(hump_peak_pitch / 10, RC_BITS_PITCH);
                     (void)rc_event_publish(&out_evt);
 
                     if (hump_cb != NULL) {
@@ -273,6 +324,9 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         break;
     }
 
+    /* --- Ramp height: h = sum(ds * sin(theta)), terrain_ramp.h --- */
+    ramp_sample(ax, evt->u.imu.acc_z, now_ms);
+
     /* --- Motion Classification --- */
     rc_motion_class_t new_class = classify(ax, ay);
 
@@ -287,6 +341,7 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         /* Publish dedicated impact alert for immediate safety stop */
         if (new_class == RC_MOTION_IMPACT) {
             rc_event_t impact_evt = {0};
+            rc_fault_set(RC_FAULT_IMPACT);  /* cleared by START (sub_nav) */
             impact_evt.id = RC_EVT_IMPACT;
             (void)rc_event_publish(&impact_evt);
         }
@@ -331,6 +386,11 @@ void sub_terrain_reset(void)
     dist_at_hump_start = 0U;
     max_peak_height_mm = 0U;
     current_motion_class = RC_MOTION_STATIONARY;
+
+    ramp_reset(&ramp);
+    ramp_cnt[0] = drv_encoder_count(RC_SIDE_LEFT);
+    ramp_cnt[1] = drv_encoder_count(RC_SIDE_RIGHT);
+    height_mm = 0;
 }
 
 rc_result_t sub_terrain_on_hump(sub_terrain_hump_cb_t cb, void *ctx)
@@ -343,6 +403,11 @@ rc_result_t sub_terrain_on_hump(sub_terrain_hump_cb_t cb, void *ctx)
 uint16_t sub_terrain_max_peak_mm(void)
 {
     return max_peak_height_mm;
+}
+
+int16_t sub_terrain_height_mm(void)
+{
+    return height_mm;
 }
 
 rc_motion_class_t sub_terrain_motion_class(void)

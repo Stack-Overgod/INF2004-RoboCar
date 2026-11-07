@@ -14,10 +14,10 @@
 typedef enum {
     RC_IR_LINE_L = 0,   /* left line sensor */
     RC_IR_LINE_R,       /* right line sensor */
-    RC_IR_BARCODE       /* barcode sensor (digital DOUT only) */
+    RC_IR_BARCODE       /* barcode sensor (analogue AO, ADC threshold) */
 } rc_ir_ch_t;
 
-/* Barcode edge callback. INTERRUPT context. `width_us` is how long the
+/* Barcode edge callback, on the defer task. `width_us` is how long the
  *  level that just ended had been held, which is the bar or space width. */
 typedef void (*drv_ir_edge_cb_t)(bool new_level, uint32_t width_us, void *ctx);
 
@@ -29,6 +29,15 @@ bool drv_ir_on_line(rc_ir_ch_t ch);
 /* Poll both line sensors and publish RC_EVT_LINE_SAMPLE. Called from the
  * sense task at RC_PERIOD_LINE_MS. */
 void drv_ir_sample_line(void);
+
+/* Read the barcode sensor's AO once and update the midpoint threshold;
+ * queues an edge when the level changes while armed. Called from the Sense
+ * task every RC_PERIOD_LINE_MS, armed or not. */
+void drv_ir_sample_barcode(void);
+
+/* Latest ADC reading and the current low / high extremes (0..4095); the
+ * threshold is their midpoint. For tests and calibration. */
+void drv_ir_barcode_adc(uint16_t *raw, uint16_t *lo, uint16_t *hi);
 
 rc_result_t drv_ir_on_barcode_edge(drv_ir_edge_cb_t cb, void *ctx);
 

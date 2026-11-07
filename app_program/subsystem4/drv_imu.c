@@ -7,6 +7,7 @@
 #include "drv_imu.h"
 #include "../rc_config.h"
 #include "../rc_event.h"
+#include "../rc_fault.h"
 
 /* Sensor registers.
  *
@@ -128,9 +129,7 @@ static ER reg_write(UW sadr, UB reg, UB val)
      * EXEC command cannot express that - it rejects rcv_size == 0 with
      * E_PAR, because EXEC is a combined write-then-read (repeated start).
      * So use the plain WRITE path instead: the device "start" argument is
-     * the I2C slave address and the buffer carries [reg, val]. (The old
-     * EXEC form here always returned E_PAR; it only went unnoticed because
-     * no IMU ever ACKed on the DLHC's 0x19/0x1E in the first place.) */
+     * the I2C slave address and the buffer carries [reg, val]. */
     return tk_swri_dev(i2c_dd, (W)sadr, snd, 2, &asz);
 }
 
@@ -273,6 +272,10 @@ rc_result_t drv_imu_read_mag(int16_t *x, int16_t *y, int16_t *z)
     return RC_OK;
 }
 
+/* True while RC_FAULT_IMU is set. Only the Sense task touches it, so the
+ * fault flag is only written when the state changes. */
+static bool imu_fault_on;
+
 /* Called on a timer (every RC_PERIOD_IMU_MS) from the sensing task. Reads
  * one fresh sample from both sensors, removes the calibration bias
  * measured at start-up, and broadcasts the result on the event bus for
@@ -290,7 +293,12 @@ void drv_imu_sample(void)
     int16_t    mz = 0;
 
     if (!imu_ready) {
-        return;     /* not initialised / not calibrated / not fitted */
+        /* not initialised / not calibrated / not fitted (FR15) */
+        if (!imu_fault_on) {
+            rc_fault_set(RC_FAULT_IMU);
+            imu_fault_on = true;
+        }
+        return;
     }
 #if APP_TEST
     if (test_hold) {
@@ -299,7 +307,15 @@ void drv_imu_sample(void)
 #endif
 
     if (drv_imu_read_accel(&ax, &ay, &az) != RC_OK) {
+        if (!imu_fault_on) {
+            rc_fault_set(RC_FAULT_IMU);
+            imu_fault_on = true;
+        }
         return;
+    }
+    if (imu_fault_on) {
+        rc_fault_clear(RC_FAULT_IMU);
+        imu_fault_on = false;
     }
     /* `&mx` etc pass the ADDRESS of each local variable (the `&`
      * "address-of" operator) so drv_imu_read_mag can write its results
@@ -320,12 +336,11 @@ void drv_imu_sample(void)
     last_az = az;
 
     evt.id = RC_EVT_IMU_SAMPLE;
-    evt.u.imu.acc_x = ax;
-    evt.u.imu.acc_y = ay;
-    evt.u.imu.acc_z = az;
-    evt.u.imu.mag_x = mx;
-    evt.u.imu.mag_y = my;
-    evt.u.imu.mag_z = mz;
+    /* 12-bit milli-g (+/-2 g full scale), clamped. The magnetometer is
+     * read above but not put on the bus: nothing subscribes to it. */
+    evt.u.imu.acc_x = RC_SAT_S(ax, RC_BITS_ACC);
+    evt.u.imu.acc_y = RC_SAT_S(ay, RC_BITS_ACC);
+    evt.u.imu.acc_z = RC_SAT_S(az, RC_BITS_ACC);
 
     (void)rc_event_publish(&evt);
 }
