@@ -51,6 +51,17 @@ static void publish_imu(int16_t ax, int16_t ay, int16_t az)
 	(void)tk_dly_tsk(S4_SETTLE_MS);
 }
 
+/* n samples in a row: sub_terrain smooths the pitch over ~16 samples, so
+ * one sample on its own barely moves it. */
+static void publish_imu_n(int16_t ax, int16_t ay, int16_t az, uint32_t n)
+{
+	uint32_t i;
+
+	for (i = 0U; i < n; i++) {
+		publish_imu(ax, ay, az);
+	}
+}
+
 EXPORT void subsystem4_test(void)
 {
 	int16_t  dummy_x = 0, dummy_y = 0, dummy_z = 0;
@@ -92,27 +103,27 @@ EXPORT void subsystem4_test(void)
 		sub_terrain_motion_class() == RC_MOTION_IMPACT,
 		"high acc_x spike triggers RC_MOTION_IMPACT");
 
-	/* S4-U05: Hump climbing state detection (pitch >= 4.0 deg -> ax >= 70 mg) */
+	/* S4-U05: Hump climbing state detection (pitch >= 3.0 deg -> ax >= 53 mg) */
 	publish_imu(0, 0, 1000);	/* back below the impact threshold */
 	sub_terrain_reset();
 	(void)sub_terrain_on_hump(test_hump_cb, NULL);
 	cb_last_peak_mm = 0U;
 	cb_call_count   = 0U;
 
-	publish_imu(150, 0, 1000); /* ~8.5 deg nose-up */
+	publish_imu_n(150, 0, 1000, 20U); /* ~8.5 deg nose-up */
 	TEST_CHECK("S4-U05",
 		sub_terrain_motion_class() == RC_MOTION_CLIMBING,
 		"nose-up pitch enters H_CLIMBING state");
 
 	/* S4-U06: Hump descending state transition */
 	(void)tk_dly_tsk(160);      /* exceed HUMP_MIN_MS (150ms) */
-	publish_imu(-80, 0, 1000);  /* dip below -2.0 deg to enter H_DESCENDING */
+	publish_imu_n(-300, 0, 1000, 12U); /* dip below -2.0 deg: H_DESCENDING */
 	TEST_CHECK("S4-U06",
 		sub_terrain_motion_class() == RC_MOTION_DESCENDING,
 		"nose-down pitch transitions to H_DESCENDING");
 
 	/* S4-U07: Hump completion, peak height calculation, and callback */
-	publish_imu(0, 0, 1000);    /* level out within [-2.0, +2.0] deg */
+	publish_imu_n(0, 0, 1000, 40U); /* level out within [-2.0, +2.0] deg */
 	TEST_CHECK("S4-U07",
 		sub_terrain_max_peak_mm() > 0U &&
 		cb_call_count == 1U &&
@@ -124,11 +135,12 @@ EXPORT void subsystem4_test(void)
 	sub_terrain_reset();
 	cb_last_peak_mm = 0U;
 	cb_call_count   = 0U;
-	publish_imu(120, 0, 1000);  /* brief forward start-up surge */
-	(void)tk_dly_tsk(320);      /* flat cruising > HUMP_FLAT_ABORT_MS (300ms) */
-	publish_imu(0, 0, 1000);    /* flat cruise sample cancels false climb */
-	publish_imu(-90, 0, 1000);  /* subsequent braking dip */
-	publish_imu(0, 0, 1000);    /* stop */
+	publish_imu_n(120, 0, 1000, 15U); /* forward start-up surge: climbing */
+	(void)tk_dly_tsk(320);
+	publish_imu_n(0, 0, 1000, 40U);   /* level > HUMP_FLAT_ABORT_MS, wheels
+					   * still: dropped, not a hump */
+	publish_imu_n(-90, 0, 1000, 5U);  /* subsequent braking dip */
+	publish_imu_n(0, 0, 1000, 40U);   /* stop */
 	TEST_CHECK("S4-U08",
 		cb_call_count == 0U &&
 		sub_terrain_max_peak_mm() == 0U &&

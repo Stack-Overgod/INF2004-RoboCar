@@ -61,6 +61,12 @@
  * multi-byte read would return garbage after the first two bytes. */
 #define AUTO_INC        (0x80U)
 
+/* 1: print raw readings and CTRL1 / STATUS_A to the console once a
+ * second (bench check). Keep 0 in the repo; sub_terrain.c has its own. */
+#ifndef S4_IMU_PRINT
+#define S4_IMU_PRINT    (0)
+#endif
+
 /* unit 0 (GP4/GP5 after the HARDWARE.md patch) - the RTOS's name for the I2C
  * bus device */
 #define I2C_DEVNAME     ((UB *)"iica")
@@ -276,6 +282,14 @@ rc_result_t drv_imu_read_mag(int16_t *x, int16_t *y, int16_t *z)
  * fault flag is only written when the state changes. */
 static bool imu_fault_on;
 
+/* Frozen-output check (drv_imu_sample): the last raw reading and how many
+ * samples in a row have repeated it exactly. 50 = 0.5 s. */
+#define IMU_STUCK_N     (50U)
+static int16_t  prev_ax;
+static int16_t  prev_ay;
+static int16_t  prev_az;
+static uint32_t same_n;
+
 /* Called on a timer (every RC_PERIOD_IMU_MS) from the sensing task. Reads
  * one fresh sample from both sensors, removes the calibration bias
  * measured at start-up, and broadcasts the result on the event bus for
@@ -313,6 +327,34 @@ void drv_imu_sample(void)
         }
         return;
     }
+    /* Frozen output: a converting accelerometer never returns the same
+     * three readings IMU_STUCK_N samples running (its noise alone moves
+     * them by a few mg), yet the chip can stop converting and keep
+     * answering with its last sample. Flag it, restart the accelerometer
+     * (power down, then CTRL2 / CTRL1 again) every IMU_STUCK_N samples
+     * until the readings move, and publish nothing meanwhile. */
+    if ((ax == prev_ax) && (ay == prev_ay) && (az == prev_az)) {
+        if (++same_n >= IMU_STUCK_N) {
+            same_n = 0U;
+            if (!imu_fault_on) {
+                tm_printf((UB *)"[S4] IMU: readings frozen, restarting"
+                          " the accelerometer\n");
+                rc_fault_set(RC_FAULT_IMU);
+                imu_fault_on = true;
+            }
+            (void)reg_write(RC_I2C_ADDR_ACCEL, A_CTRL1, 0x00U);
+            (void)reg_write(RC_I2C_ADDR_ACCEL, A_CTRL2, A_CTRL2_VAL);
+            (void)reg_write(RC_I2C_ADDR_ACCEL, A_CTRL1, A_CTRL1_VAL);
+        }
+        if (imu_fault_on) {
+            return;
+        }
+    } else {
+        same_n = 0U;
+    }
+    prev_ax = ax;
+    prev_ay = ay;
+    prev_az = az;
     if (imu_fault_on) {
         rc_fault_clear(RC_FAULT_IMU);
         imu_fault_on = false;
@@ -324,6 +366,29 @@ void drv_imu_sample(void)
      * aborting the whole sample, since accel/pitch is the feature that
      * matters most and shouldn't be held hostage by a flaky compass. */
     (void)drv_imu_read_mag(&mx, &my, &mz);
+
+#if S4_IMU_PRINT
+    {
+        /* console only, once a second: raw (uncorrected) accel, CTRL1 as
+         * the chip holds it now, and STATUS_A (0x27: low nibble = new
+         * X/Y/Z data ready). A chip that stopped converting keeps its
+         * last sample and shows no new data. */
+        static uint32_t n_print;
+        UB ctrl1 = 0U;
+        UB status = 0U;
+        ER e1;
+        ER e2;
+
+        if (++n_print >= 100U) {
+            n_print = 0U;
+            e1 = reg_read_burst(RC_I2C_ADDR_ACCEL, A_CTRL1, &ctrl1, 1);
+            e2 = reg_read_burst(RC_I2C_ADDR_ACCEL, 0x27U, &status, 1);
+            tm_printf((UB *)"[imu] raw ax %d ay %d az %d mg  ctrl1 0x%02x"
+                      " (%d) status 0x%02x (%d)\n", (INT)ax, (INT)ay,
+                      (INT)az, (INT)ctrl1, (INT)e1, (INT)status, (INT)e2);
+        }
+    }
+#endif
 
     ax -= bias_x;
     ay -= bias_y;

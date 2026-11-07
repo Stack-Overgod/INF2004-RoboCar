@@ -56,4 +56,11 @@ uint32_t sub_terrain_wcet_us(void);
  * the start of a fresh run. */
 void sub_terrain_reset(void);
 
+/* The car is standing on level ground now (sub_nav calls it on START):
+ * take its current tilt as level for the hump detectors and the ramp
+ * integrator, and set the ramp height back to 0. The power-up zero
+ * (drv_imu_calibrate) is often taken while the car is being handled.
+ * Call from the FAST lane (it shares state with the IMU handler). */
+void sub_terrain_level_here(void);
+
 #endif /* SUB_TERRAIN_H */
