@@ -7,7 +7,8 @@
  * (test_report.h); record the results in testing/subsystem3/TEST_LOG.md.
  *
  * Set-up: a Pico W (or the Robo Pico) with the three IR modules only, the
- * trim pots already set. No car: steering stays disabled. You move the
+ * line trim pots already set (the barcode sensor needs none: it is read
+ * through the ADC). No car: steering stays disabled. You move the
  * sensors by hand, 5-10 mm above the paper. Every manual step waits for
  * you to move a sensor, so there is time to open the serial monitor.
  *
@@ -269,7 +270,8 @@ static UB const msg_sweep[] =
 static UB const msg_live_sum[] =
 	"[S3] part 2: %lu edges, %lu letters, %lu overruns\n";
 static UB const msg_hint_no_edge[] =
-	"[S3] hint: no edges - check the DO wire on GP27 and the trim pot\n";
+	"[S3] hint: no edges - check the AO wire on GP26; sweep white AND black\n"
+	"[S3]   so the ADC learns the white level (RC_BAR_ADC_MIN_BAR)\n";
 static UB const msg_hint_no_letter[] =
 	"[S3] hint: edges but no letter - sweep steadily, the whole code\n"
 	"[S3]       in under 3 s, sensor 5-10 mm above the paper\n";
@@ -279,7 +281,7 @@ static UB const name_line_r[]    = "R";
 static UB const name_barcode[]   = "BC";
 static UB const pin_line_l[]     = "GP16";
 static UB const pin_line_r[]     = "GP6";
-static UB const pin_barcode[]    = "GP27";
+static UB const pin_barcode[]    = "GP26 ADC";
 static UB const word_forwards[]  = "forwards";
 static UB const word_backwards[] = "backwards";
 static UB const word_samples[]   = "line samples";
@@ -429,7 +431,7 @@ EXPORT void subsystem3_test (void)
 	TEST_CHECK("S3-U03", sensor_passed(&sensor_rep, CH_LINE_R),
 			   "line sensor R (GP6): off on white, 3 line crossings");
 	TEST_CHECK("S3-U04", sensor_passed(&sensor_rep, CH_BARCODE),
-			   "barcode sensor DO (GP27): off on white, 3 crossings");
+			   "barcode sensor AO (GP26 ADC): off on white, 3 crossings");
 	TEST_CHECK("S3-U05", rate_ok(sensor_rep.rate),
 			   "sense thread publishes line samples at ~100 Hz (NFR1)");
 
@@ -1109,7 +1111,7 @@ static void send_width (uint32_t width_us)
 	rc_event_t edge_evt = { 0 };
 
 	edge_evt.id                    = RC_EVT_BARCODE_EDGE;
-	edge_evt.u.bar_edge.level_high = false;
+	edge_evt.u.bar_edge.level_high = 0U;
 	edge_evt.u.bar_edge.width_us   = width_us;
 
 	if (RC_OK != rc_event_publish(&edge_evt))
@@ -1286,7 +1288,7 @@ static void on_decoded (rc_event_t const * p_evt, void * p_ctx)
 		next = (res_head + 1U) & RES_RING_MASK;
 		if (next != res_tail)
 		{
-			res_ring[res_head].symbol     = p_evt->u.barcode.symbol;
+			res_ring[res_head].symbol     = rc_sym_char(p_evt->u.barcode.sym);
 			res_ring[res_head].command    = p_evt->u.barcode.command;
 			res_ring[res_head].b_reversed = p_evt->u.barcode.reversed;
 			res_head                      = next;

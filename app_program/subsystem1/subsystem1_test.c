@@ -51,6 +51,7 @@
 
 #include "subsystem1.h"
 #include "sub_telemetry.h"
+#include "tm_frame.h"           /* binary frames: tm_to_json(), T1 */
 #include "../rc_config.h"
 #include "../rc_event.h"
 #include "../rc_sense.h"
@@ -68,7 +69,6 @@
 
 #define CAP_TOPIC_MAX       (48)
 #define CAP_PAYLOAD_MAX     (240)
-#define STATE_PAYLOAD_MAX   (224)   /* PAYLOAD_MAX in sub_telemetry.c */
 
 /* --------------------------------------------------------------------
  * Capture sink
@@ -79,12 +79,17 @@
  * because the telemetry task keeps writing state/status/motion in the
  * background while a test runs.
  *
+ * What goes on the wire is a binary frame (tm_frame.h). The slot keeps
+ * the JSON it decodes to (tm_to_json), so the checks below read
+ * "\"spd_l\":77" etc.; raw_len is the frame's real size in bytes.
+ *
  * seq is odd while a slot is being written. A reader copies the slot and
  * only trusts the copy if seq was even and didn't change (see cap_read).
  * -------------------------------------------------------------------- */
 typedef struct
 {
     volatile uint32_t seq;
+    uint32_t raw_len;
     char topic[CAP_TOPIC_MAX];
     char payload[CAP_PAYLOAD_MAX];
 } cap_slot_t;
@@ -103,6 +108,7 @@ static volatile uint32_t cap_publishes;
  * task that runs the tests doesn't have much stack to spare. */
 static char snap_topic[CAP_TOPIC_MAX];
 static char snap_payload[CAP_PAYLOAD_MAX];
+static uint32_t snap_raw_len;
 
 static bool ends_with(const char *s, const char *tail)
 {
@@ -155,17 +161,16 @@ static rc_result_t cap_publish(const char *topic, const char *payload,
         s = &cap_event;
     }
 
-    if (n >= CAP_PAYLOAD_MAX)
-    {
-        n = CAP_PAYLOAD_MAX - 1U;
-    }
-
     s->seq++;                                   /* odd: writing */
     BARRIER();
     (void)strncpy(s->topic, topic, CAP_TOPIC_MAX - 1U);
     s->topic[CAP_TOPIC_MAX - 1U] = '\0';
-    (void)memcpy(s->payload, payload, n);
-    s->payload[n] = '\0';
+    s->raw_len = n;
+    if (!tm_to_json((const uint8_t *)payload, (uint16_t)n, s->payload,
+                    CAP_PAYLOAD_MAX))
+    {
+        (void)strcpy(s->payload, "BAD FRAME");
+    }
     BARRIER();
     s->seq++;                                   /* even: done */
 
@@ -198,6 +203,7 @@ static void cap_read(const cap_slot_t *s)
             BARRIER();
             (void)memcpy(snap_topic, s->topic, CAP_TOPIC_MAX);
             (void)memcpy(snap_payload, s->payload, CAP_PAYLOAD_MAX);
+            snap_raw_len = s->raw_len;
             BARRIER();
             if (s->seq == before)
             {
@@ -514,18 +520,19 @@ static void make_barcode(rc_event_t *e, char sym, rc_nav_cmd_t cmd, bool rev)
 {
     (void)memset(e, 0, sizeof(*e));
     e->id = RC_EVT_BARCODE_DECODED;
-    e->u.barcode.symbol   = sym;
+    e->u.barcode.sym      = rc_sym_code(sym);
     e->u.barcode.command  = cmd;
-    e->u.barcode.reversed = rev;
+    e->u.barcode.reversed = rev ? 1U : 0U;
 }
 
 static void make_hump(rc_event_t *e, uint16_t peak, uint32_t ms, int16_t p)
 {
     (void)memset(e, 0, sizeof(*e));
     e->id = RC_EVT_HUMP_END;
-    e->u.hump.peak_mm       = peak;
-    e->u.hump.duration_ms   = ms;
-    e->u.hump.max_pitch_deg = p;
+    /* clamped the way sub_terrain.c does */
+    e->u.hump.peak_mm       = RC_SAT_U(peak, RC_BITS_HUMP_PEAK);
+    e->u.hump.duration_ms   = RC_SAT_U(ms, RC_BITS_HUMP_MS);
+    e->u.hump.max_pitch_deg = RC_SAT_S(p, RC_BITS_PITCH);
 }
 
 static void make_obstacle(rc_event_t *e, uint8_t n, uint16_t near_mm,
@@ -577,9 +584,9 @@ static void play_ultra(int16_t deg, uint16_t mm, bool valid)
     rc_event_t e;
 
     make_simple(&e, RC_EVT_ULTRA_RESULT);
-    e.u.ultra.angle_deg = deg;
-    e.u.ultra.range_mm  = mm;
-    e.u.ultra.valid     = valid;
+    /* as drv_ultrasonic.c: 0 = no echo, else clamped to 12 bits */
+    e.u.ultra.angle_deg = RC_SAT_U(deg, RC_BITS_ANGLE);
+    e.u.ultra.range_mm  = valid ? RC_SAT_U(mm, RC_BITS_MM) : 0U;
     (void)rc_event_publish(&e);
 }
 
@@ -757,7 +764,7 @@ static void measure_schedule(void)
     cap_read(&cap_state);
 
     sched_msgs      = cap_count(&cap_state) - n_a;
-    sched_seq       = snap_u32("\"seq\":") - seq_a;
+    sched_seq       = (snap_u32("\"seq\":") - seq_a) & 0xFFU; /* 8-bit */
     sched_kernel_ms = t1.lo - t0.lo;
     sched_car_ms    = snap_u32("\"t\":") - car_a;
     sched_ok        = (sched_seq > 0U);
@@ -813,11 +820,24 @@ static bool check_state_fields(void)
     {
         "\"seq\":", "\"t\":", "\"spd_l\":", "\"spd_r\":", "\"dist\":",
         "\"enc_l\":", "\"enc_r\":", "\"m_l\":", "\"m_r\":", "\"line\":",
-        "\"cls\":", "\"peak\":", "\"rng\":", "\"bc\":"
+        "\"cls\":", "\"peak\":", "\"rng\":", "\"bc\":", "\"nav\":",
+        "\"flt\":", "\"h\":"
     };
     uint32_t i;
 
-    cap_read(&cap_state);
+    /* The encoder counts ride in every 4th state frame only (28 B long
+     * form, 20 B otherwise), so wait for one of those. */
+    for (i = 0U; i < 6U; i++)
+    {
+        if (!fresh_state())
+        {
+            return false;
+        }
+        if (snap_has("\"enc_l\":"))
+        {
+            break;
+        }
+    }
     for (i = 0U; i < (sizeof(keys) / sizeof(keys[0])); i++)
     {
         if (!snap_has(keys[i]))
@@ -839,7 +859,7 @@ static bool check_heartbeat(void)
         return false;
     }
     cap_read(&cap_status);
-    return snap_has("\"sink\":\"capture\"") && snap_has("\"tx\":") &&
+    return snap_has("\"sink\":\"other\"") && snap_has("\"tx\":") &&
            snap_has("\"fail\":") && snap_has("\"drop_fast\":") &&
            snap_has("\"drop_slow\":");
 }
@@ -858,7 +878,8 @@ static bool check_heartbeat_link(void)
     }
     cap_read(&cap_status);
     len = strlen(snap_payload);
-    tm_printf((UB *)"[TEST]   status is %lu bytes\n", (unsigned long)len);
+    tm_printf((UB *)"[TEST]   status is %lu bytes on the wire (%lu as JSON)\n",
+              (unsigned long)snap_raw_len, (unsigned long)len);
     return snap_has("\"wifi\":") && snap_has("\"mqtt\":") &&
            snap_has("\"cmds\":") && snap_has("\"retries\":") &&
            snap_has("\"live\":\"") &&
@@ -949,10 +970,11 @@ static void play_sensor_buddies(int32_t spd_l, int32_t spd_r,
     rc_event_t e;
 
     make_simple(&e, RC_EVT_ODOMETRY);
-    e.u.odometry.speed_l_mm_s = spd_l;
-    e.u.odometry.speed_r_mm_s = spd_r;
-    e.u.odometry.dist_l_mm    = dist_l;
-    e.u.odometry.dist_r_mm    = dist_r;
+    /* as sub_motion.c: clamped speeds, 16-bit odometer */
+    e.u.odometry.speed_l_mm_s = RC_SAT_S(spd_l, RC_BITS_SPEED);
+    e.u.odometry.speed_r_mm_s = RC_SAT_S(spd_r, RC_BITS_SPEED);
+    e.u.odometry.dist_l_mm    = (uint16_t)dist_l;
+    e.u.odometry.dist_r_mm    = (uint16_t)dist_r;
     (void)rc_event_publish(&e);
 
     make_simple(&e, RC_EVT_LINE_SAMPLE);
@@ -991,6 +1013,22 @@ static bool check_bus_hump(void)
         return false;
     }
     return fresh_state() && snap_has("\"peak\":55");
+}
+
+static bool check_bus_ramp(void)
+{
+    rc_event_t e;
+
+    (void)memset(&e, 0, sizeof(e));
+    e.id = RC_EVT_RAMP_END;
+    e.u.ramp.rise_mm = 52U;
+    e.u.ramp.net_mm  = -3;
+    e.u.ramp.max_deg = 15U;
+    e.u.ramp.len_mm  = 252U;
+    return bus_event(&e) &&
+           snap_is(RC_TOPIC_BASE "/ramp",
+                   "{\"rise_mm\":52,\"net_mm\":-3,\"deg\":15,"
+                   "\"len_mm\":252}");
 }
 
 static bool check_bus_impact(void)
@@ -1179,44 +1217,21 @@ static bool check_link_events(void)
     return ok && link_matches(1000);
 }
 
-/* How many characters the value after `key` takes up in snap_payload
- * (up to the next ',' or '}'). */
-static uint32_t field_len(const char *key)
-{
-    const char *p = strstr(snap_payload, key);
-    uint32_t n = 0U;
-
-    if (p == NULL)
-    {
-        return 0U;
-    }
-    for (p += strlen(key); (*p != ',') && (*p != '}') && (*p != '\0'); p++)
-    {
-        n++;
-    }
-    return n;
-}
-
-/* The longest state line possible. The test drives everything it can to
- * its longest: most negative speeds, 4,000 km on both wheels, both line
- * sensors on, the highest motion class, the tallest hump, the longest
- * range. Some numbers it can't drive (seq, t, encoder counts, motor
- * duty), so it adds the digits those would need at their longest. The
- * result must fit the telemetry buffer and one MQTT message, and the real
- * message must end in '}' and report the right distance (no overflow in
- * the average). */
+/* Every state field driven past its range must arrive clamped to
+ * the end of its range, not wrapped: most negative speeds (-> -1024),
+ * odometer 65535, both line sensors, the highest motion class, a hump
+ * taller than 127 mm (-> 127), a range past 4095 mm (-> 4095). The frame
+ * on the wire must be the 20 or 28 bytes the schema says. */
 static bool check_worst_case_state(void)
 {
     rc_event_t e;
-    size_t len;
-    size_t worst;
     bool ok;
 
     hold_real_sensors(true);
     make_hump(&e, 65535U, 1U, 0);
     (void)rc_event_publish(&e);
     play_ultra(90, 65535U, true);
-    play_sensor_buddies(INT32_MIN, INT32_MIN, 4000000000U, 4000000000U,
+    play_sensor_buddies(INT32_MIN, INT32_MIN, 65535U, 65535U,
                         true, true, RC_MOTION_IMPACT);
     if (!fresh_state())
     {
@@ -1224,27 +1239,138 @@ static bool check_worst_case_state(void)
         return false;
     }
 
-    len   = strlen(snap_payload);
-    worst = len
-          + (10U - field_len("\"seq\":"))   + (10U - field_len("\"t\":"))
-          + (10U - field_len("\"enc_l\":")) + (10U - field_len("\"enc_r\":"))
-          + (5U - field_len("\"m_l\":"))    + (5U - field_len("\"m_r\":"));
-    tm_printf((UB *)"[TEST]   state is %lu bytes now, %lu at worst "
-              "(limit %d)\n", (unsigned long)len, (unsigned long)worst,
-              STATE_PAYLOAD_MAX - 1);
-    ok = (len > 0U) && (worst < STATE_PAYLOAD_MAX) &&
-         (snap_payload[len - 1U] == '}') &&
-         ((strlen(snap_topic) + 1U + worst) <= S1_MSG_MAX) &&
-         snap_has("\"spd_l\":-2147483648") &&
-         snap_has("\"dist\":4000000000") &&
+    tm_printf((UB *)"[TEST]   state frame %lu bytes: %s\n",
+              (unsigned long)snap_raw_len, snap_payload);
+    ok = ((snap_raw_len == 20U) || (snap_raw_len == 28U)) &&
+         snap_has("\"spd_l\":-1024") && snap_has("\"spd_r\":-1024") &&
+         snap_has("\"dist\":65535") &&
          snap_has("\"line\":\"11\"") && snap_has("\"cls\":7") &&
-         snap_has("\"peak\":65535") && snap_has("\"rng\":65535");
+         snap_has("\"peak\":127") && snap_has("\"rng\":4095");
 
     /* Put the sensors back to something sane for whatever runs next. */
     play_ultra(90, 0U, false);
     play_sensor_buddies(0, 0, 0U, 0U, false, false, RC_MOTION_STATIONARY);
     hold_real_sensors(false);
     return ok;
+}
+
+/* Test T1: every frame type round-trips through tm_pack / tm_unpack,
+ * fields at their minimum and maximum come back unchanged, one past
+ * either end comes back clamped, and each frame is the documented size.
+ * Values are in schema order (subsystem1/tm_frame.c). */
+typedef struct
+{
+    tm_type_t type;
+    uint8_t   n;
+    uint8_t   bytes;
+    int32_t   in[TM_FIELDS_MAX];
+    int32_t   out[TM_FIELDS_MAX];
+} t1_case_t;
+
+static const t1_case_t t1_cases[] =
+{
+    /* state: max, then min, then past both ends */
+    { TM_T_STATE, 14, 20,
+      { -1, 1023, 1023, 65535, 1023, 1023, 3, 7, 127, 4095, 31, 7, 255,
+        511 },
+      { -1, 1023, 1023, 65535, 1023, 1023, 3, 7, 127, 4095, 31, 7, 255,
+        511 } },
+    { TM_T_STATE, 14, 20,
+      { 0, -1024, -1024, 0, -1024, -1024, 0, 0, 0, 0, 0, 0, 0, -512 },
+      { 0, -1024, -1024, 0, -1024, -1024, 0, 0, 0, 0, 0, 0, 0, -512 } },
+    { TM_T_STATE, 14, 20,
+      { 5, 1024, -1025, 65536, 1000, -1000, 4, 8, 128, 4096, 32, 8, 256,
+        512 },
+      { 5, 1023, -1024, 65535, 1000, -1000, 3, 7, 127, 4095, 31, 7, 255,
+        511 } },
+    { TM_T_STATE_ENC, 16, 28,
+      { 1, 2, -3, 4, 5, -6, 1, 2, 3, 4, 5, 6, 7, -513, -1, 123456789 },
+      { 1, 2, -3, 4, 5, -6, 1, 2, 3, 4, 5, 6, 7, -512, -1, 123456789 } },
+    { TM_T_STATUS, 11, 20,
+      { 7, 16777216, 65536, 65535, 0, 2, 1, 1, 70000, -5, 15 },
+      { 7, 16777215, 65535, 65535, 0, 2, 1, 1, 65535, 0, 15 } },
+    { TM_T_BARCODE, 3, 4, { 27, 6, 1 }, { 27, 6, 1 } },
+    { TM_T_BARCODE, 3, 4, { 28, 7, 2 }, { 28, 7, 1 } },
+    { TM_T_HUMP, 3, 6, { 127, 8191, -128 }, { 127, 8191, -128 } },
+    { TM_T_HUMP, 3, 6, { 128, 8192, 128 }, { 127, 8191, 127 } },
+    { TM_T_HUMP, 3, 6, { -1, -1, -129 }, { 0, 0, -128 } },
+    { TM_T_OBSTACLE, 6, 10, { 63, 4095, 180, 4095, 1023, 1023 },
+      { 63, 4095, 180, 4095, 1023, 1023 } },
+    { TM_T_OBSTACLE, 6, 10, { 64, 4096, 256, 5000, 1024, 2000 },
+      { 63, 4095, 255, 4095, 1023, 1023 } },
+    { TM_T_AVOID, 3, 6, { 6, 4095, 4095 }, { 6, 4095, 4095 } },
+    { TM_T_IMPACT, 1, 3, { 1 }, { 1 } },
+    { TM_T_MOTION, 1, 3, { 7 }, { 7 } },
+    { TM_T_LINE, 1, 3, { 1 }, { 1 } },
+    { TM_T_MOVE, 3, 6, { 32767, 1, 65535 }, { 32767, 1, 65535 } },
+    { TM_T_MOVE, 3, 6, { 32768, 1, 65536 }, { 32767, 1, 65535 } },
+    { TM_T_ACK, 2, 4, { 'L', 1 }, { 'L', 1 } },
+    { TM_T_RAMP, 4, 7, { 511, 511, 63, 4095 }, { 511, 511, 63, 4095 } },
+    { TM_T_RAMP, 4, 7, { 512, -513, 64, 4096 }, { 511, -512, 63, 4095 } },
+    { TM_T_BCSCAN, 10, 15,
+      { 0x7FFF, 255, 255, 255, 255, 255, 255, 511, 65535, 65535 },
+      { 0x7FFF, 255, 255, 255, 255, 255, 255, 511, 65535, 65535 } },
+    { TM_T_BCBITS, 13, 16,
+      { 64, 1, 255, 0, 1, 2, 4, 8, 16, 128, 65535, 1, 255 },
+      { 64, 1, 255, 0, 1, 2, 4, 8, 16, 128, 65535, 1, 255 } },
+    { TM_T_SPIN, 11, 15,
+      { 4095, 255, 15, -2048, 255, 2047, 0, -1, 1, 0, 0 },
+      { 4095, 255, 15, -2048, 255, 2047, 0, -1, 1, 0, 0 } }
+};
+
+static bool check_t1_round_trip(void)
+{
+    uint8_t   buf[TM_FRAME_MAX];
+    int32_t   got[TM_FIELDS_MAX];
+    tm_type_t type;
+    uint8_t   seq;
+    uint32_t  c;
+    uint32_t  i;
+    uint32_t  fails = 0U;
+
+    for (c = 0U; c < (sizeof(t1_cases) / sizeof(t1_cases[0])); c++)
+    {
+        const t1_case_t *k = &t1_cases[c];
+        uint16_t len = tm_pack(k->type, (uint8_t)c, k->in, buf,
+                               (uint16_t)sizeof(buf));
+        int32_t  n   = tm_unpack(buf, len, &type, &seq, got);
+        bool     ok  = (len == k->bytes) && (n == (int32_t)k->n) &&
+                       (type == k->type) && (seq == (uint8_t)c);
+
+        for (i = 0U; ok && (i < k->n); i++)
+        {
+            ok = (got[i] == k->out[i]);
+            if (!ok)
+            {
+                tm_printf((UB *)"[TEST]   T1 case %lu field %lu: got %ld,"
+                          " want %ld\n", (unsigned long)c, (unsigned long)i,
+                          (long)got[i], (long)k->out[i]);
+            }
+        }
+        if (!ok)
+        {
+            tm_printf((UB *)"[TEST]   T1 case %lu (type %d): %u bytes\n",
+                      (unsigned long)c, (int)k->type, (unsigned int)len);
+            fails++;
+        }
+    }
+
+    /* a wrong version or length must be refused, not misread */
+    (void)tm_pack(TM_T_HUMP, 0U, t1_cases[7].in, buf, (uint16_t)sizeof(buf));
+    if (tm_unpack(buf, 5U, &type, &seq, got) >= 0)
+    {
+        fails++;
+    }
+    buf[0] ^= 0x20U;
+    if (tm_unpack(buf, 6U, &type, &seq, got) >= 0)
+    {
+        fails++;
+    }
+
+    tm_printf((UB *)"[TEST]   T1: %lu cases, %lu failed\n",
+              (unsigned long)(sizeof(t1_cases) / sizeof(t1_cases[0])),
+              (unsigned long)fails);
+    return fails == 0U;
 }
 
 static bool check_no_drops(void)
@@ -1552,6 +1678,8 @@ EXPORT void subsystem1_test(void)
                "every topic under " RC_TOPIC_BASE "/");
     TEST_CHECK("S1-U21", check_timestamps_real_time(),
                "message timestamps keep real time (5 %)");
+    TEST_CHECK("S1-U30", check_t1_round_trip(),
+               "CR1 T1: every frame round-trips, clamps, right size");
     TEST_CHECK("S1-U22", check_state_fields(),
                "state carries every telemetry item in FR10a");
     TEST_CHECK("S1-U23", check_line_frames(),
@@ -1600,7 +1728,7 @@ EXPORT void subsystem1_test(void)
     TEST_CHECK("S1-I09", check_command_to_nav(),
                "command -> RC_EVT_COMMAND_RX for sub_nav");
     TEST_CHECK("S1-I10", check_worst_case_state(),
-               "worst-case inputs: state fits, no overflow");
+               "CR1: out-of-range inputs clamp in a 20/28 B state frame");
     TEST_CHECK("S1-I13", check_bus_move(),
                "B2 move done -> move message");
     TEST_CHECK("S1-I14", check_bus_line(),
@@ -1617,6 +1745,8 @@ EXPORT void subsystem1_test(void)
                "link change -> RC_EVT_LINK_STATE, once");
     TEST_CHECK("S1-I20", check_command_bus_and_callback(),
                "command reaches the bus even with a callback");
+    TEST_CHECK("S1-I21", check_bus_ramp(),
+               "B4 ramp end -> ramp message (height)");
     TEST_CHECK("S1-I11", check_no_drops(),
                "no event-bus drops on either lane");
 

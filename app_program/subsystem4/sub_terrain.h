@@ -38,6 +38,12 @@ rc_result_t sub_terrain_on_hump(sub_terrain_hump_cb_t cb, void *ctx);
  * asks to be reported. */
 uint16_t sub_terrain_max_peak_mm(void);
 
+/* Height above the ground level the car started on, in mm, from the
+ * ramp integrator (terrain_ramp.h): about 0 on the floor, the ramp height
+ * while the car sits on top of one. One halfword, safe to read from any
+ * task. Every finished slope is also published as RC_EVT_RAMP_END. */
+int16_t sub_terrain_height_mm(void);
+
 /* What the car is doing right now, e.g. cruising / turning / climbing a
  * hump / impact - see rc_motion_class_t in rc_types.h for the full list. */
 rc_motion_class_t sub_terrain_motion_class(void);

@@ -41,9 +41,8 @@ typedef struct {
 } code39_t;
 
 /*
- *  Standard Code 39 patterns: the start/stop '*' and all 26 letters
- *  (2026-10-29: the demo-day barcodes can be any letter; symbol_to_cmd()
- *  picks the four that are commands).
+ *  Standard Code 39 patterns: the start/stop '*' and all 26 letters.
+ *  symbol_to_cmd() picks the four that are commands.
  */
 static const code39_t table[] = {
     { '*', 0x094U },    /* bars 00110, spaces 1000 -> 0 1001 0100 */
@@ -165,8 +164,8 @@ static uint32_t widest(uint32_t first, uint32_t skip)
 
 /* A Code 39 character is 5 bars (2 wide) and 4 spaces (1 wide), starting
  * and ending on a bar. Bars and spaces are ranked SEPARATELY: the sensor
- * spot makes black read wider and white narrower (2026-10-26 21:55: one
- * midpoint for all 9 turned a long narrow bar wide in 2 of 3 characters).
+ * spot makes black read wider and white narrower, so one midpoint for all
+ * 9 elements can turn a long narrow bar wide.
  * The 2 widest bars and the widest space are wide, if they stand out by
  * WIDE_RATIO from the rest of their kind. */
 static cls_result_t classify(uint16_t *pattern_out)
@@ -220,7 +219,7 @@ static bool find(uint16_t pattern, char *out)
  * R/V, T/Z) and '*' backwards is 'P', so the direction must be known. A
  * barcode starts with '*': the attempt's first '*', either way round,
  * fixes the direction for the rest of the attempt. Before that, forwards
- * is tried first, as before. */
+ * is tried first. */
 static bool lookup(uint16_t pattern, char *out, bool *reversed)
 {
     uint16_t rev = 0U;
@@ -241,6 +240,10 @@ static bool lookup(uint16_t pattern, char *out, bool *reversed)
             *reversed = (scan_dir < 0);
             return true;
         }
+        /* Every code starts with '*'. Before one is read, a window that
+         * looks like a letter is far more likely to straddle two
+         * characters, so it is not reported (it would also be acted on). */
+        return false;
     }
     if ((scan_dir >= 0) && find(pattern, out)) {
         *reversed = false;
@@ -500,9 +503,9 @@ static void on_edge(const rc_event_t *evt, void *ctx)
     }
 
     out.id = RC_EVT_BARCODE_DECODED;
-    out.u.barcode.symbol   = symbol;
+    out.u.barcode.sym      = rc_sym_code(symbol);   /* 5-bit symbol code */
     out.u.barcode.command  = symbol_to_cmd(symbol);
-    out.u.barcode.reversed = reversed;
+    out.u.barcode.reversed = reversed ? 1U : 0U;
     (void)rc_event_publish(&out);
 
     /* user_cb is a function pointer , might be NULL if nobody registered a
