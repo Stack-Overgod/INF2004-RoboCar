@@ -66,7 +66,7 @@ void sub_telemetry_get_link(rc_pl_link_t *out);
 
 /* Send one event's message now, instead of waiting for the next tick.
  * Takes the events Buddy 1 reports on their own topics (barcode, hump,
- * obstacle, impact, motion class, line lost/found, move done, avoidance
+ * obstacle, lifted, motion class, line lost/found, move done, avoidance
  * plan); anything else is RC_ERR_PARAM. */
 rc_result_t sub_telemetry_publish_event(const rc_event_t *evt);
 

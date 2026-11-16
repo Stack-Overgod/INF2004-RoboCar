@@ -31,7 +31,7 @@
  *                                                              car/01/motion
  *   Buddy 4   RC_EVT_HUMP_END          peak_mm, duration_ms,   car/01/hump,
  *                                      max_pitch_deg           state: peak
- *   Buddy 4   RC_EVT_IMPACT            (none)                  car/01/impact
+ *   Buddy 4   RC_EVT_LIFTED            why                     car/01/lifted
  *   Buddy 5   RC_EVT_ULTRA_RESULT      angle_deg, range_mm,    state: rng
  *                                      valid (90 +/- 5 only)
  *   Buddy 5   RC_EVT_OBSTACLE_PROFILE  all six fields          car/01/obstacle

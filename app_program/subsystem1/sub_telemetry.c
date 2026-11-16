@@ -412,7 +412,7 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
 }
 
 /* Everything that gets its own message the moment it happens: barcode scan attempt,
- * hump, impact, obstacle, avoidance plan, lost/found, move done.
+ * hump, lifted, obstacle, avoidance plan, lost/found, move done.
  * Two of them also feed the per-tick line, so cache those on the way. */
 static void on_notable(const rc_event_t *evt, void *ctx)
 {
@@ -544,9 +544,9 @@ rc_result_t sub_telemetry_publish_event(const rc_event_t *evt)
             v[2] = (int32_t)evt->u.plan.forward_mm;
             return send_evt(TM_T_AVOID, v);
 
-        case RC_EVT_IMPACT:
-            v[0] = 1;
-            return send_evt(TM_T_IMPACT, v);
+        case RC_EVT_LIFTED:
+            v[0] = (int32_t)evt->u.lifted.why;
+            return send_evt(TM_T_LIFTED, v);
 
         case RC_EVT_MOTION_CLASS:
             v[0] = (int32_t)evt->u.motion_class.cls;
@@ -690,7 +690,7 @@ static bool telemetry_link_ok(void)
  * a second -- the queue would fill and state messages would start
  * failing. So the callback only caches the class and this sends it, at
  * most once a tick. A class that comes and goes inside one tick isn't
- * streamed; IMPACT, the one that matters, has its own topic anyway. */
+ * streamed; LIFTED, the one that matters, has its own topic anyway. */
 static void stream_motion_class(void)
 {
     rc_event_t evt;
@@ -780,7 +780,7 @@ static const telem_sub_t subs[] =
     { RC_EVT_MOTION_CLASS,      on_motion_class },  /* cls, car/01/motion */
     { RC_EVT_HUMP_END,          on_notable      },  /* car/01/hump, peak  */
     { RC_EVT_RAMP_END,          on_notable      },  /* car/01/ramp        */
-    { RC_EVT_IMPACT,            on_notable      },  /* car/01/impact      */
+    { RC_EVT_LIFTED,            on_notable      },  /* car/01/lifted      */
 
     /* Buddy 5, scanning and avoidance */
     { RC_EVT_ULTRA_RESULT,      on_ultra        },  /* state: rng         */

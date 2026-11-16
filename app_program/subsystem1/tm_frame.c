@@ -174,7 +174,7 @@ static const field_t f_avoid[] =
     { "fwd_mm", RC_BITS_MM,  K_U }
 };
 
-static const field_t f_impact[] = { { "impact", 1, K_U } };
+static const field_t f_lifted[] = { { "why", RC_BITS_LIFT, K_U } };
 static const field_t f_motion[] = { { "cls", RC_BITS_CLS, K_U } };
 static const field_t f_line[]   = { { "lost", 1, K_U } };
 
@@ -203,7 +203,7 @@ static const schema_t schema[TM_T_COUNT] =
     [TM_T_HUMP]      = { "hump",     f_hump,      N(f_hump),      0U },
     [TM_T_OBSTACLE]  = { "obstacle", f_obstacle,  N(f_obstacle),  0U },
     [TM_T_AVOID]     = { "avoid",    f_avoid,     N(f_avoid),     0U },
-    [TM_T_IMPACT]    = { "impact",   f_impact,    N(f_impact),    0U },
+    [TM_T_LIFTED]    = { "lifted",   f_lifted,    N(f_lifted),    0U },
     [TM_T_MOTION]    = { "motion",   f_motion,    N(f_motion),    0U },
     [TM_T_LINE]      = { "line",     f_line,      N(f_line),      0U },
     [TM_T_MOVE]      = { "move",     f_move,      N(f_move),      0U },

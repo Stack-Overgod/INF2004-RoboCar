@@ -21,7 +21,7 @@ dashboard/fake_car.py (encode).
 import json
 import sys
 
-VERSION = 2                             # = TM_VER in tm_frame.h
+VERSION = 3                             # = TM_VER in tm_frame.h
 
 # (key, bits, kind). kinds: u, s (signed), line2, sym, sym3, char, flags4, sink
 _STATE = [
@@ -55,7 +55,7 @@ FRAMES = {
         ("n", 6, "u"), ("near_mm", 12, "u"), ("at_deg", 8, "u"),
         ("w_mm", 12, "u"), ("cl_l", 10, "u"), ("cl_r", 10, "u")]),
     10: ("avoid", False, [("act", 3, "u"), ("lat_mm", 12, "u"), ("fwd_mm", 12, "u")]),
-    11: ("impact", False, [("impact", 1, "u")]),
+    11: ("lifted", False, [("why", 2, "u")]),
     12: ("motion", False, [("cls", 3, "u")]),
     13: ("line", False, [("lost", 1, "u")]),
     14: ("move", False, [("id", 15, "u"), ("ok", 1, "u"), ("mm", 16, "u")]),
@@ -66,7 +66,7 @@ FRAMES = {
 
 NAV_STATES = ["IDLE", "FOLLOWING", "READING_BARCODE", "EXECUTING_CMD",
               "AVOIDING", "RECOVERING", "STOPPED"]
-FAULTS = ["MOTOR_STALL", "ENCODER", "IMU", "NO_ECHO", "WIFI_LOSS", "IMPACT",
+FAULTS = ["MOTOR_STALL", "ENCODER", "IMU", "NO_ECHO", "WIFI_LOSS", "LIFTED",
           "BARCODE_ADC"]
 SINKS = ["console", "mqtt", "other", "other"]
 

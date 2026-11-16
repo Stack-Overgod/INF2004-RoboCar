@@ -601,7 +601,7 @@ static bool check_events_accepted(void)
     ok = ok && (sub_telemetry_publish_event(&e) == RC_OK);
     make_obstacle(&e, 7U, 250U, -15, 120U, 300U, 80U);
     ok = ok && (sub_telemetry_publish_event(&e) == RC_OK);
-    make_simple(&e, RC_EVT_IMPACT);
+    make_simple(&e, RC_EVT_LIFTED);
     ok = ok && (sub_telemetry_publish_event(&e) == RC_OK);
     return ok;
 }
@@ -647,13 +647,14 @@ static bool check_obstacle_frame(void)
                    "\"cl_l\":300,\"cl_r\":80}");
 }
 
-static bool check_impact_frame(void)
+static bool check_lifted_frame(void)
 {
     rc_event_t e;
 
-    make_simple(&e, RC_EVT_IMPACT);
+    make_simple(&e, RC_EVT_LIFTED);
+    e.u.lifted.why = RC_LIFT_RAISED;
     return frame_event(&e) &&
-           snap_is(RC_TOPIC_BASE "/impact", "{\"impact\":1}");
+           snap_is(RC_TOPIC_BASE "/lifted", "{\"why\":1}");
 }
 
 static bool check_line_frames(void)
@@ -1031,13 +1032,14 @@ static bool check_bus_ramp(void)
                    "\"len_mm\":252}");
 }
 
-static bool check_bus_impact(void)
+static bool check_bus_lifted(void)
 {
     rc_event_t e;
 
-    make_simple(&e, RC_EVT_IMPACT);
+    make_simple(&e, RC_EVT_LIFTED);
+    e.u.lifted.why = RC_LIFT_OVERTURNED;
     return bus_event(&e) &&
-           snap_is(RC_TOPIC_BASE "/impact", "{\"impact\":1}");
+           snap_is(RC_TOPIC_BASE "/lifted", "{\"why\":3}");
 }
 
 static bool check_bus_obstacle(void)
@@ -1232,7 +1234,7 @@ static bool check_worst_case_state(void)
     (void)rc_event_publish(&e);
     play_ultra(90, 65535U, true);
     play_sensor_buddies(INT32_MIN, INT32_MIN, 65535U, 65535U,
-                        true, true, RC_MOTION_IMPACT);
+                        true, true, RC_MOTION_LIFTED);
     if (!fresh_state())
     {
         hold_real_sensors(false);
@@ -1299,7 +1301,8 @@ static const t1_case_t t1_cases[] =
     { TM_T_OBSTACLE, 6, 10, { 64, 4096, 256, 5000, 1024, 2000 },
       { 63, 4095, 255, 4095, 1023, 1023 } },
     { TM_T_AVOID, 3, 6, { 6, 4095, 4095 }, { 6, 4095, 4095 } },
-    { TM_T_IMPACT, 1, 3, { 1 }, { 1 } },
+    { TM_T_LIFTED, 1, 3, { 3 }, { 3 } },
+    { TM_T_LIFTED, 1, 3, { 4 }, { 3 } },
     { TM_T_MOTION, 1, 3, { 7 }, { 7 } },
     { TM_T_LINE, 1, 3, { 1 }, { 1 } },
     { TM_T_MOVE, 3, 6, { 32767, 1, 65535 }, { 32767, 1, 65535 } },
@@ -1435,7 +1438,7 @@ static bool check_dead_link(void)
     pubs  = cap_publishes;
     opens = cap_opens;
 
-    make_simple(&e, RC_EVT_IMPACT);
+    make_simple(&e, RC_EVT_LIFTED);
     fast_fail = (sub_telemetry_publish_event(&e) == RC_ERR_STATE);
 
     tk_dly_tsk(1500);
@@ -1659,7 +1662,7 @@ EXPORT void subsystem1_test(void)
     (void)sub_telemetry_set_sink(&cap_sink);
 
     TEST_CHECK("S1-U09", check_events_accepted(),
-               "barcode/hump/obstacle/impact accepted");
+               "barcode/hump/obstacle/lifted accepted");
     TEST_CHECK("S1-U10", check_unrelated_rejected(),
                "unrelated event rejected, nothing sent");
     TEST_CHECK("S1-U11", check_barcode_frame(),
@@ -1668,8 +1671,8 @@ EXPORT void subsystem1_test(void)
                "hump message: exact topic + JSON");
     TEST_CHECK("S1-U13", check_obstacle_frame(),
                "obstacle message: exact topic + JSON");
-    TEST_CHECK("S1-U14", check_impact_frame(),
-               "impact message: exact topic + JSON");
+    TEST_CHECK("S1-U14", check_lifted_frame(),
+               "lifted message: exact topic + JSON");
     TEST_CHECK("S1-U15", check_state_schedule(),
                "state every 250 ms, no seq gaps");
     TEST_CHECK("S1-U16", check_heartbeat(),
@@ -1721,8 +1724,8 @@ EXPORT void subsystem1_test(void)
                "B3 barcode -> barcode message + bc field");
     TEST_CHECK("S1-I06", check_bus_hump(),
                "B4 hump end -> hump message + peak field");
-    TEST_CHECK("S1-I07", check_bus_impact(),
-               "B4 impact -> impact message");
+    TEST_CHECK("S1-I07", check_bus_lifted(),
+               "B4 lifted -> lifted message");
     TEST_CHECK("S1-I08", check_bus_obstacle(),
                "B5 obstacle profile -> obstacle message");
     TEST_CHECK("S1-I09", check_command_to_nav(),
