@@ -23,7 +23,7 @@ subsystem, ask its owner or open a pull request for them to review.
 | 1 | WiFi comms, command & telemetry (JSON, 4 Hz publish, console/UDP/MQTT sinks, command subscription, link-state heartbeat & reconnect) | 2503331 | | `app_program/subsystem1/` | `testing/subsystem1/` |
 | 2 | Motion control (PWM motor driver, encoder odometry, 50 Hz PID, queued move/turn API) | 2501302 | | `app_program/subsystem2/` | `testing/subsystem2/` |
 | 3 | IR line following & Code 39 barcode decoding (calibration, P-steer, junction detect, A/B/C/D nav commands) | 2500336 | | `app_program/subsystem3/` | `testing/subsystem3/` |
-| 4 | IMU terrain & motion monitoring (LSM303DLHC, pitch, hump FSM & peak height, impact detect, 8-state motion class) | 2503302 | | `app_program/subsystem4/` | `testing/subsystem4/` |
+| 4 | IMU terrain & motion monitoring (LSM303DLHC, pitch, hump FSM & peak height, lift/overturn detect, 8-state motion class) | 2503302 | | `app_program/subsystem4/` | `testing/subsystem4/` |
 | 5 | Ultrasonic scanning & obstacle avoidance (non-blocking HC-SR04, coarse 30°/fine 6° servo sweep, obstacle profile, avoidance plan, line recovery). Also integration owner for `sub_nav` (`app_program/sub_nav.*`) + shared core. | 2500347 | | `app_program/subsystem5/` | `testing/subsystem5/` |
 
 Shared files (`app_program/app_main.c`, `app_program/app.h`,
@@ -140,7 +140,7 @@ API calls noted below (sub_nav/sub_line → sub_motion; sub_nav → sub_scan).
 | IF-01 | S2 → all | event (FAST) | `RC_EVT_ODOMETRY` | speed, encoder counts, distance; every 20 ms (NFR2) | team |
 | IF-02 | S3 → all | event (FAST) | `RC_EVT_LINE_SAMPLE` | line position / status; every 5 ms | team |
 | IF-03 | S3 → all | event (FAST) | `RC_EVT_BARCODE_DECODED` | decoded A/B/C/D nav command | team |
-| IF-04 | S4 → all | event (FAST) | `RC_EVT_IMU_SAMPLE`, `HUMP_BEGIN/END`, `RC_EVT_IMPACT` | pitch/accel; hump + impact safety events | team |
+| IF-04 | S4 → all | event (FAST) | `RC_EVT_IMU_SAMPLE`, `HUMP_BEGIN/END`, `RC_EVT_LIFTED` | pitch/accel; hump + lifted/overturned safety stop | team |
 | IF-05 | S5 → all | event (FAST) | `RC_EVT_ULTRA_RESULT` | range (mm) + valid, tagged with servo angle | team |
 | IF-06 | S5 → all | event (FAST) | `RC_EVT_OBSTACLE_PROFILE`, `RC_EVT_AVOIDANCE_PLAN` | bearing/width/closest/clearance; chosen action | team |
 | IF-07 | sub_nav/sub_line → S2 | direct API + callback | `sub_motion_drive/move/turn`, `MOTION_DONE` | queued move; completion callback | team |
