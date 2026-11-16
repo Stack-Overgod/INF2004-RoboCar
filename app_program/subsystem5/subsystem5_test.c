@@ -375,7 +375,7 @@ EXPORT void subsystem5_test(void)
 	 * valid end of the obstacle path. */
 
 	/* S5-N01: nav ignores events before the run starts (S1's tests
-	 * published fake IMPACT and STOP events earlier in this run). */
+	 * published fake LIFTED and STOP events earlier in this run). */
 	TEST_CHECK("S5-N01", sub_nav_state() == RC_NAV_IDLE,
 		   "sub_nav is IDLE before sub_nav_start()");
 

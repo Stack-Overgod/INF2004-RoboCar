@@ -46,7 +46,7 @@ static T_SPLOCK ring_lock;
 
 /* Keep this many ring slots unavailable to high-rate "stream" events, so a
  * burst of samples can never crowd out a one-off control event
- * (MOTION_DONE, LINE_*, BARCODE_*, IMPACT, HUMP_*, COMMAND_RX, NAV_TIMEOUT,
+ * (MOTION_DONE, LINE_*, BARCODE_*, LIFTED, HUMP_*, COMMAND_RX, NAV_TIMEOUT,
  * ULTRA_RESULT). A dropped sample is replaced by its successor one period
  * later; a dropped one-off can wedge a state machine (Risk 1 / G10). */
 #define RING_RESERVE      (16U)
@@ -305,7 +305,7 @@ static const char *evt_name(rc_evt_id_t id)
     case RC_EVT_HUMP_BEGIN:       return "HUMP_BEGIN";
     case RC_EVT_HUMP_END:         return "HUMP_END";
     case RC_EVT_MOTION_CLASS:     return "MOTION_CLASS";
-    case RC_EVT_IMPACT:           return "IMPACT";
+    case RC_EVT_LIFTED:           return "LIFTED";
     case RC_EVT_ULTRA_RESULT:     return "ULTRA_RESULT";
     case RC_EVT_SCAN_COMPLETE:    return "SCAN_COMPLETE";
     case RC_EVT_OBSTACLE_PROFILE: return "OBSTACLE_PROFILE";

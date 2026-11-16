@@ -9,7 +9,7 @@
  *  anything.
  *
  *  Rule for IDLE: every event is ignored. Other buddies' self-tests
- *  publish fake IMPACT / COMMAND_RX events in a TEST=1 build; nav must not
+ *  publish fake LIFTED / COMMAND_RX events in a TEST=1 build; nav must not
  *  react to them before the run starts.
  *
  *  What talks to what (TEAM.md §5: IF-07..IF-09, IF-11, IF-14..IF-17):
@@ -19,7 +19,7 @@
  *    sub_nav -> sub_line    enable() / begin_search()            (Buddy 3)
  *    sub_nav -> sub_barcode arm()                                (Buddy 3)
  *    events in:  ULTRA_RESULT, AVOIDANCE_PLAN (S5), LINE_REACQUIRED,
- *                BARCODE_DECODED (S3), IMPACT (S4), COMMAND_RX (S1),
+ *                BARCODE_DECODED (S3), LIFTED (S4), COMMAND_RX (S1),
  *                NAV_TIMEOUT (our own alarm handler)
  *    events out: COMMAND_RX (sub_nav_stop / inject), RECOVERY_FAILED (FR9)
  */
@@ -1023,14 +1023,15 @@ static void on_line_sample(const rc_event_t *evt, void *ctx)
     }
 }
 
-/* FR8b / FR13: an impact during the run aborts to STOPPED. */
-static void on_impact(const rc_event_t *evt, void *ctx)
+/* The car was lifted or overturned (sub_terrain): stop the motors and end
+ * the run in STOPPED. Lifting the car is how a run is ended by hand; START
+ * begins a new one. */
+static void on_lifted(const rc_event_t *evt, void *ctx)
 {
-    (void)evt;
     (void)ctx;
 
     if ((state != RC_NAV_IDLE) && (state != RC_NAV_STOPPED)) {
-        tm_printf((UB *)"[nav] impact\n");
+        tm_printf((UB *)"[nav] lifted (%d)\n", (INT)evt->u.lifted.why);
         enter(RC_NAV_STOPPED);
     }
 }
@@ -1062,7 +1063,6 @@ static void on_command_rx(const rc_event_t *evt, void *ctx)
     if (cmd == RC_CMD_START) {
         if (state == RC_NAV_STOPPED) {
             tm_printf((UB *)"[nav] START command\n");
-            rc_fault_clear(RC_FAULT_IMPACT);    /* START acknowledges it */
             (void)sub_nav_start();
         } else {
             tm_printf((UB *)"[nav] START ignored in %s\n",
@@ -1148,8 +1148,8 @@ rc_result_t sub_nav_init(void)
                                on_plan, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_BARCODE_DECODED, RC_LANE_FAST,
                                on_barcode, NULL) < 0)
-        || (rc_event_subscribe(RC_EVT_IMPACT, RC_LANE_FAST,
-                               on_impact, NULL) < 0)
+        || (rc_event_subscribe(RC_EVT_LIFTED, RC_LANE_FAST,
+                               on_lifted, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_COMMAND_RX, RC_LANE_FAST,
                                on_command_rx, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_NAV_TIMEOUT, RC_LANE_FAST,
@@ -1181,8 +1181,10 @@ rc_result_t sub_nav_start(void)
     scan_pending   = false;
     pending_cmd    = RC_CMD_NONE;
     junction_count = 0U;
-    /* the car stands on the track: that is level for the IMU (Buddy 4) */
+    /* the car stands on the track: that is level for the IMU (Buddy 4),
+     * and START acknowledges an earlier lift */
     sub_terrain_level_here();
+    rc_fault_clear(RC_FAULT_LIFTED);
     /* line up on the line first (NAV_START_SCAN_DEG), then FOLLOWING */
     rejoin_start   = true;
     enter(RC_NAV_RECOVERING);

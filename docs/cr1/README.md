@@ -22,7 +22,7 @@ Evidence status:
 | Laptop tools | Broker logs each frame as decoded JSON, then a tab, then the raw hex. Dashboard decodes; adds nav state, faults and frame size | `scripts/tm_frames.py`, `scripts/mqtt_broker.py`, `dashboard/dashboard.py`, `dashboard/index.html` (Buddy 1 / Buddy 5) |
 | Motion | Speeds 11-bit, odometer 16-bit, move id 15-bit; stall and encoder fault bits | `subsystem2/sub_motion.c`, `drv_encoder.c` (Buddy 2) |
 | Line, barcode | Line sample 2 bits (position derived); barcode symbol 5-bit code; ADC barcode | `subsystem3/drv_ir.c/.h`, `sub_line.c`, `sub_barcode.c`, `subsystem3_test.c` (Buddy 3) |
-| IMU, terrain | Accelerometer 12-bit; hump 7/13/8 bits; IMU and impact fault bits; magnetometer off the bus | `subsystem4/drv_imu.c`, `sub_terrain.c` (Buddy 4) |
+| IMU, terrain | Accelerometer 12-bit; hump 7/13/8 bits; IMU and lifted fault bits; magnetometer off the bus | `subsystem4/drv_imu.c`, `sub_terrain.c` (Buddy 4) |
 | Obstacle | Range 12-bit with 0 meaning no echo (`valid` flag removed); angle 8-bit; profile and plan packed; no-echo fault bit | `subsystem5/drv_ultrasonic.c`, `sub_scan.c`, `subsystem5_test.c`, `sub_nav.c` (Buddy 5) |
 | Config | `DEVCNF_USE_ADC 1`; barcode ADC pins and threshold settings | `config/config_device.h`, `rc_config.h`, `rc_sense.c/.h`, `TEAM.md` (team) |
 
@@ -78,7 +78,7 @@ The table covers every application field in the CR1 scope:
 | 2 | IMU | Buddy 4 `drv_imu.c` | IMU not ready, or a read failed | A read succeeds |
 | 3 | NO_ECHO | Buddy 5 `drv_ultrasonic.c` | The latest ping timed out or was out of range | A valid echo |
 | 4 | WIFI_LOSS | Buddy 1 `sub_telemetry.c` | WiFi or broker down (MQTT sink) | Link back up |
-| 5 | IMPACT | Buddy 4 `sub_terrain.c` | Impact detected (FR13, 1500 mg unchanged) | START command (`sub_nav.c`) |
+| 5 | LIFTED | Buddy 4 `sub_terrain.c` | Car lifted or overturned (replaced the 1500 mg IMPACT bit; frame `lifted`, TM_VER 3) | START command (`sub_nav.c`) |
 | 6 | BARCODE_ADC | Buddy 3 `drv_ir.c` | ADC open failed at boot | Never |
 
 ## 3. Race safety (packed shared data)

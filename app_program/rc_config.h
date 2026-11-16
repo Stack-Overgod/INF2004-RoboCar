@@ -178,8 +178,18 @@
  * left-right wheel spacing used for turns. PLACEHOLDER - measure. */
 #define RC_AXLE_DIST_MM         (80U)
 
-/* FR13: impact when max(|ax|, |ay|) >= this, mg. Freeze after G11. */
-#define RC_IMPACT_MG            (1500)
+/* Lift / overturn watch (sub_terrain.c lift_step, lift_height) from the
+ * accelerometer. Either condition stops the run (sub_nav -> STOPPED):
+ *   raised: the vertical acceleration, integrated twice, says the car
+ *           has risen RC_LIFT_UP_MM (a hand picking it up ~4-5 cm within
+ *           ~0.6 s; slower lifts are not seen). A bump comes back down
+ *           and cancels;
+ *   tilted: more than 35 deg off level for RC_LIFT_TILT_MS (held at an
+ *           angle, on its side); past 90 deg it is reported as
+ *           overturned. A one-wheel 10 mm hump tilts the car ~5 deg. */
+#define RC_LIFT_UP_MM           (20)
+#define RC_LIFT_TAN2_PERMILLE   (490)    /* tan^2(35 deg) x 1000 */
+#define RC_LIFT_TILT_MS         (300U)
 
 /* drv_imu_calibrate() sample count at boot; 5 ms each, so ~0.3 s. */
 #define RC_IMU_CAL_SAMPLES      (64U)

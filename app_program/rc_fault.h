@@ -17,7 +17,7 @@
  *    3    NO_ECHO             Buddy 5    ultrasonic timeout / out   a valid echo
  *                                        of range
  *    4    WIFI_LOSS           Buddy 1    WiFi or broker down        link back up
- *    5    IMPACT              Buddy 4    impact detected (FR13)     START command
+ *    5    LIFTED              Buddy 4    lifted or overturned       START command
  *    6    BARCODE_ADC         Buddy 3    ADC open / read failed     never (boot)
  *
  *  7 bits used; telemetry sends the low 8 (subsystem1/tm_frame.c).
@@ -34,7 +34,7 @@
 #define RC_FAULT_IMU            (1U << 2)
 #define RC_FAULT_NO_ECHO        (1U << 3)
 #define RC_FAULT_WIFI_LOSS      (1U << 4)
-#define RC_FAULT_IMPACT         (1U << 5)
+#define RC_FAULT_LIFTED         (1U << 5)
 #define RC_FAULT_BARCODE_ADC    (1U << 6)
 
 #define RC_FAULT_BITS           (8U)        /* width in telemetry */

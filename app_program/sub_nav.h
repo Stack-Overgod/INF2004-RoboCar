@@ -13,7 +13,7 @@
  *  EXECUTING_CMD (barcode A/B/C/D and remote turn commands as queued
  *  sub_motion moves, FR3/FR10b); the obstacle path (watch ping ->
  *  AVOIDING -> scan -> plan -> bypass -> RECOVERING -> FOLLOWING); the
- *  FR9 3 s recovery timeout; STOPPED (remote STOP, IMPACT, aborted move,
+ *  FR9 3 s recovery timeout; STOPPED (remote STOP, LIFTED, aborted move,
  *  failed recovery, no safe route). Not built: reverse-and-reattempt (G5).
  */
 #ifndef SUB_NAV_H

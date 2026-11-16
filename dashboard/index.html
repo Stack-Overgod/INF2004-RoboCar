@@ -315,7 +315,7 @@ details.more[open] summary { margin-bottom: 4px; }
         <g id="bypassMap" style="display:none"></g>
       </svg>
     </div>
-    <details class="hint"><summary>How the mode is inferred</summary>The car doesn't send its nav state, so the mode is inferred: wheel speeds → driving / turning / spinning; a barcode decode → reading; range ≤ 20 cm while stopped → obstacle; impact event → stopped. During a bypass the view switches to a map of the planned legs (dashed) and the driven path, with each turn's angle: planned, and measured from the encoders once done.</details>
+    <details class="hint"><summary>How the mode is inferred</summary>The car doesn't send its nav state, so the mode is inferred: wheel speeds → driving / turning / spinning; a barcode decode → reading; range ≤ 20 cm while stopped → obstacle; lifted event → stopped. During a bypass the view switches to a map of the planned legs (dashed) and the driven path, with each turn's angle: planned, and measured from the encoders once done.</details>
   </section>
 
   <section class="card c-cmd">
@@ -373,7 +373,7 @@ details.more[open] summary { margin-bottom: 4px; }
 
   <section class="card">
     <h2>IMU / terrain <small id="imuAge"></small></h2>
-    <div class="banner" id="impactBanner">⚠ IMPACT</div>
+    <div class="banner" id="liftBanner">⏹ LIFTED</div>
     <div class="stats four">
       <div><div class="label" title="Height above the start level now">Height</div><div class="stat num" id="hNow">-<small>mm</small></div></div>
       <div><div class="label" title="Highest ramp so far">Ramp</div><div class="stat num" id="rampMax">-<small>mm</small></div></div>
@@ -421,7 +421,7 @@ details.more[open] summary { margin-bottom: 4px; }
 
 <script>
 const $ = id => document.getElementById(id);
-const CLS = ["stationary", "accelerating", "cruising", "decelerating", "turning", "climbing", "descending", "IMPACT"];
+const CLS = ["stationary", "accelerating", "cruising", "decelerating", "turning", "climbing", "descending", "LIFTED"];
 const CMD = ["none", "left", "right", "straight", "U-turn", "stop", "start"];
 const KEY_CMD = { " ": "X", g: "G", G: "G", ArrowLeft: "L", ArrowUp: "S", ArrowRight: "R", ArrowDown: "U" };
 const WINDOW_S = 60;
@@ -489,7 +489,7 @@ document.addEventListener("keydown", e => {
 const NAV = ["IDLE", "FOLLOWING", "READING_BARCODE", "EXECUTING_CMD",
              "AVOIDING", "RECOVERING", "STOPPED"];
 const FAULTS = ["MOTOR_STALL", "ENCODER", "IMU", "NO_ECHO", "WIFI_LOSS",
-                "IMPACT", "BARCODE_ADC"];
+                "LIFTED", "BARCODE_ADC"];
 function onState(d, t, epoch) {
   const L = d.line?.[0] === "1", R = d.line?.[1] === "1";
   setTile("senL", L); setTile("senR", R);
@@ -575,15 +575,16 @@ function onRamp(d, t) {
   $("rampMax").innerHTML = Math.max(...ramps.map(r => r.rise_mm)) + "<small>mm</small>";
   $("ramps").innerHTML = ramps.map(r => `<tr><td class="num">${r.t}</td><td class="num">${r.rise_mm}</td><td class="num">${r.net_mm}</td><td class="num">${r.deg}</td><td class="num">${cm(r.len_mm)}</td></tr>`).join("");
 }
-function onImpact(t) {
-  const b = $("impactBanner");
-  b.textContent = `⚠ IMPACT at ${t} (car stopped)`;
+const LIFT_WHY = ["lifted", "picked up", "tilted", "overturned"];
+function onLifted(d, t) {
+  const b = $("liftBanner");
+  b.textContent = `⏹ ${(LIFT_WHY[d.why] ?? "lifted").toUpperCase()} at ${t} (car stopped)`;
   b.style.display = "block";
-  view.impact = true;
+  view.lifted = LIFT_WHY[d.why] ?? "lifted";
 }
 function onAck(d, t) {
   $("ack").textContent = `ack ${d.rx} → ${d.cmd ? CMD[d.cmd] : "ignored"} · ${t}`;
-  if (d.cmd === 6) { $("impactBanner").style.display = "none"; view.impact = false; }
+  if (d.cmd === 6) { $("liftBanner").style.display = "none"; view.lifted = ""; }
 }
 
 /* ---------- barcode scans: decoded letters + sensor bits ---------- */
@@ -670,7 +671,7 @@ function stripSvg(b) {
 }
 
 /* ---------- car view (top-down, animated from telemetry) ---------- */
-const view = { l: 0, r: 0, line: "00", rng: 0, lastState: 0, readUntil: 0, impact: false, obstacle: null, avoid: null };
+const view = { l: 0, r: 0, line: "00", rng: 0, lastState: 0, readUntil: 0, lifted: "", obstacle: null, avoid: null };
 const MM = 0.9;                  // px per mm on the ground
 const BASE_MM = 112;             // RC_WHEEL_BASE_MM
 let offG = 0, offL = 0, offR = 0, lastFrame = performance.now();
@@ -698,7 +699,7 @@ let offG = 0, offL = 0, offR = 0, lastFrame = performance.now();
 function carMode(now, stale) {
   const { l, r } = view, still = Math.abs(l) < 5 && Math.abs(r) < 5;
   if (stale) return ["", "No live data"];
-  if (view.impact) return ["critical", "IMPACT – stopped"];
+  if (view.lifted) return ["critical", `${view.lifted[0].toUpperCase()}${view.lifted.slice(1)} – stopped`];
   if (now < view.readUntil) return ["info", "Reading barcode"];
   if (view.avoid && now < view.avoid.until && !still) return ["warning", `Avoiding (${CMD[view.avoid.act] ?? view.avoid.act})`];
   if (still) {
@@ -1031,7 +1032,7 @@ function drawPolar(d) {
 }
 
 /* ---------- event log ---------- */
-const CHIP_TOPICS = ["link", "ack", "barcode", "bcscan", "bcbits", "obstacle", "avoid", "spin", "hump", "ramp", "impact", "motion", "line", "move", "status", "cmd"];
+const CHIP_TOPICS = ["link", "ack", "barcode", "bcscan", "bcbits", "obstacle", "avoid", "spin", "hump", "ramp", "lifted", "motion", "line", "move", "status", "cmd"];
 CHIP_TOPICS.forEach(k => {
   const b = document.createElement("button");
   b.className = "chip"; b.textContent = k;
@@ -1081,7 +1082,7 @@ function handle(ev, replay) {
     case "move": if (!replay) bypassMove(d); break;
     case "spin": onSpin(d); break;
     case "line": if (!replay && bp && d.lost === 0) bp.lineFound = Date.now(); break;
-    case "impact": if (!replay && bp) bp.failed = "impact"; onImpact(t); break;
+    case "lifted": if (!replay && bp) bp.failed = "lifted"; onLifted(d, t); break;
     case "hump": onHump(d, t, replay); break;
     case "ramp": onRamp(d, t); break;
     case "barcode": onBarcode(d, t, replay); break;
@@ -1089,7 +1090,7 @@ function handle(ev, replay) {
     case "bcbits": onBits(d); break;
     case "ack": onAck(d, t); break;
   }
-  logLine(t, ev.leaf, typeof d === "string" ? d : JSON.stringify(d), ev.leaf === "impact" || (ev.leaf === "line" && d.lost));
+  logLine(t, ev.leaf, typeof d === "string" ? d : JSON.stringify(d), ev.leaf === "lifted" || (ev.leaf === "line" && d.lost));
 }
 function hello(ev) {
   setBroker(ev.broker); car = ev.car;

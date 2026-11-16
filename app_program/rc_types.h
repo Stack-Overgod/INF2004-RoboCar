@@ -48,8 +48,16 @@ typedef enum {
     RC_MOTION_TURNING,
     RC_MOTION_CLIMBING,
     RC_MOTION_DESCENDING,
-    RC_MOTION_IMPACT
+    RC_MOTION_LIFTED            /* lifted or overturned (sub_terrain)  */
 } rc_motion_class_t;
+
+/* Why the car counts as lifted (RC_EVT_LIFTED), 2 bits. */
+typedef enum {
+    RC_LIFT_NONE = 0,
+    RC_LIFT_RAISED,             /* accelerated upwards: picked up      */
+    RC_LIFT_TILTED,             /* held well off level                 */
+    RC_LIFT_OVERTURNED          /* past 90 deg: on its side or back    */
+} rc_lift_t;
 
 typedef enum {
     RC_SIDE_LEFT = 0,
@@ -86,7 +94,7 @@ typedef enum {
     RC_EVT_HUMP_BEGIN,
     RC_EVT_HUMP_END,            /* carries the measured peak             */
     RC_EVT_MOTION_CLASS,
-    RC_EVT_IMPACT,
+    RC_EVT_LIFTED,              /* lifted or overturned: stop the run    */
 
     /* buddy 5, scanning and avoidance */
     RC_EVT_ULTRA_RESULT,        /* one range measurement completed       */
@@ -137,6 +145,7 @@ typedef enum {
 #define RC_BITS_ANGLE       (8U)    /* servo angle 0..180 deg */
 #define RC_BITS_CMD         (3U)    /* rc_nav_cmd_t, 7 values */
 #define RC_BITS_CLS         (3U)    /* rc_motion_class_t, 8 values */
+#define RC_BITS_LIFT        (2U)    /* rc_lift_t, 4 values */
 #define RC_BITS_SYM         (5U)    /* barcode symbol code, 28 values */
 #define RC_BITS_ACC         (12U)   /* +/-2047 mg; LSM303D at +/-2 g */
 #define RC_BITS_HUMP_PEAK   (7U)    /* 0..127 mm; track humps are ~20-60 mm */
@@ -350,6 +359,10 @@ typedef struct {
     uint8_t  cls:3;             /* rc_motion_class_t                     */
 } rc_pl_motion_class_t;
 
+typedef struct {
+    uint8_t  why:2;             /* rc_lift_t                             */
+} rc_pl_lifted_t;
+
 /* range_mm 0 means no echo (timeout or out of range), so there is no
  * separate valid flag: use RC_ULTRA_VALID(). */
 typedef struct {
@@ -413,6 +426,7 @@ typedef struct {
         rc_pl_hump_t         hump;
         rc_pl_ramp_t         ramp;
         rc_pl_motion_class_t motion_class;
+        rc_pl_lifted_t       lifted;
         rc_pl_ultra_t        ultra;
         rc_pl_profile_t      profile;
         rc_pl_plan_t         plan;
