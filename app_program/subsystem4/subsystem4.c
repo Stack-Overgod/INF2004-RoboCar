@@ -11,7 +11,7 @@
  *	                    RC_PERIOD_IMU_MS once drv_imu_available() is true.
  *
  *	An IMU failure is NOT fatal (FR15): the car runs without hump and
- *	impact detection, and drv_imu_available() reports IMU_UNAVAILABLE.
+ *	lift detection, and drv_imu_available() reports IMU_UNAVAILABLE.
  */
 
 #include "../rc_prelude.h"

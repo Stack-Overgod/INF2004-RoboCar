@@ -1,8 +1,8 @@
 /*
  *  sub_terrain.h  -  Buddy 4
  *
- *  Hump detection, peak measurement, motion classification and impact
- *  detection, all from the LSM303D accelerometer.
+ *  Hump detection, peak measurement, motion classification and lift /
+ *  overturn detection, all from the LSM303D accelerometer.
  *
  *  Read the warning at the top of drv_imu.h first. There is no
  *  gyroscope, which rules out the textbook approach to most of this.
@@ -45,7 +45,7 @@ uint16_t sub_terrain_max_peak_mm(void);
 int16_t sub_terrain_height_mm(void);
 
 /* What the car is doing right now, e.g. cruising / turning / climbing a
- * hump / impact - see rc_motion_class_t in rc_types.h for the full list. */
+ * hump / lifted - see rc_motion_class_t in rc_types.h for the full list. */
 rc_motion_class_t sub_terrain_motion_class(void);
 
 /* Worst-case execution time (WCET) observed for on_sample() on the FAST
@@ -58,7 +58,8 @@ void sub_terrain_reset(void);
 
 /* The car is standing on level ground now (sub_nav calls it on START):
  * take its current tilt as level for the hump detectors and the ramp
- * integrator, and set the ramp height back to 0. The power-up zero
+ * integrator, set the ramp height back to 0 and watch for a lift
+ * afresh (a car still held up is reported again). The power-up zero
  * (drv_imu_calibrate) is often taken while the car is being handled.
  * Call from the FAST lane (it shares state with the IMU handler). */
 void sub_terrain_level_here(void);

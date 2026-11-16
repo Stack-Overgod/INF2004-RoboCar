@@ -38,6 +38,17 @@ static void test_hump_cb(uint16_t peak_mm, uint32_t duration_ms, void *ctx)
 	cb_call_count++;
 }
 
+/* RC_EVT_LIFTED seen during the lift tests (S4-U04, U10, U11) */
+static volatile uint32_t lifted_count = 0U;
+static volatile uint8_t  lifted_why   = 0U;
+
+static void on_lifted(const rc_event_t *evt, void *ctx)
+{
+	(void)ctx;
+	lifted_why = evt->u.lifted.why;
+	lifted_count++;
+}
+
 /* Publish what drv_imu_sample() would, then wait until it is handled. */
 static void publish_imu(int16_t ax, int16_t ay, int16_t az)
 {
@@ -66,8 +77,11 @@ EXPORT void subsystem4_test(void)
 {
 	int16_t  dummy_x = 0, dummy_y = 0, dummy_z = 0;
 	uint32_t wcet_us = 0U;
+	int32_t  lift_sub;
 
 	TEST_INIT();
+	lift_sub = rc_event_subscribe(RC_EVT_LIFTED, RC_LANE_FAST,
+				      on_lifted, NULL);
 
 	tm_printf((UB*)"[INFO] S4 IMU %s\n",
 		  drv_imu_available() ? "available" : "UNAVAILABLE (FR15)");
@@ -93,18 +107,41 @@ EXPORT void subsystem4_test(void)
 		sub_terrain_max_peak_mm() == 0U,
 		"sub_terrain_init resets state to stationary and 0mm peak");
 
-	/* S4-U04: Impact detection on high-G spike (>= RC_IMPACT_MG).
-	 * From here to U09 only fake samples reach sub_terrain. */
+	/* S4-U04: Lift detection: upward acceleration integrated to a rise of
+	 * RC_LIFT_UP_MM (here 0.4 g for up to 300 ms). From here to U09 only
+	 * fake samples reach sub_terrain. */
 	drv_imu_test_hold(true);
 	(void)tk_dly_tsk(S4_SETTLE_MS);	/* let a real sample in flight drain */
 	sub_terrain_reset();
-	publish_imu(1900, 0, 1000);
+	lifted_count = 0U;
+	publish_imu_n(0, 0, 1400, 15U);
 	TEST_CHECK("S4-U04",
-		sub_terrain_motion_class() == RC_MOTION_IMPACT,
-		"high acc_x spike triggers RC_MOTION_IMPACT");
+		sub_terrain_motion_class() == RC_MOTION_LIFTED &&
+		lifted_count == 1U && lifted_why == RC_LIFT_RAISED,
+		"held upward acceleration -> one LIFTED event (raised)");
+
+	/* S4-U10: the episode above ends once the car stands calm for
+	 * 500 ms, and one bump spike (a wheel landing) is not a lift */
+	publish_imu_n(0, 0, 1000, 40U);
+	lifted_count = 0U;
+	publish_imu(0, 0, 2047);
+	publish_imu_n(0, 0, 1000, 10U);
+	TEST_CHECK("S4-U10",
+		lifted_count == 0U &&
+		sub_terrain_motion_class() != RC_MOTION_LIFTED,
+		"lift episode ends on the ground; one vertical spike is no lift");
+
+	/* S4-U11: overturned: Z below 0 (past 90 deg) for RC_LIFT_TILT_MS */
+	sub_terrain_reset();
+	lifted_count = 0U;
+	publish_imu_n(0, 0, -800, 25U);
+	TEST_CHECK("S4-U11",
+		lifted_count == 1U && lifted_why == RC_LIFT_OVERTURNED &&
+		sub_terrain_motion_class() == RC_MOTION_LIFTED,
+		"upside down -> one LIFTED event (overturned)");
 
 	/* S4-U05: Hump climbing state detection (pitch >= 3.0 deg -> ax >= 53 mg) */
-	publish_imu(0, 0, 1000);	/* back below the impact threshold */
+	publish_imu_n(0, 0, 1000, 30U);	/* back on the ground */
 	sub_terrain_reset();
 	(void)sub_terrain_on_hump(test_hump_cb, NULL);
 	cb_last_peak_mm = 0U;
@@ -160,6 +197,9 @@ EXPORT void subsystem4_test(void)
 	(void)sub_terrain_on_hump(NULL, NULL);
 	sub_terrain_reset();
 	drv_imu_test_hold(false);	/* real samples flow again */
+	if (lift_sub >= 0) {
+		(void)rc_event_unsubscribe(lift_sub);
+	}
 
 	TEST_SUMMARY("subsystem4");
 }

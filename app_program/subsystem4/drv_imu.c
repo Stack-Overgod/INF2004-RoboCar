@@ -83,6 +83,9 @@ static int16_t bias_x;
 static int16_t bias_y;
 /* calibration offset to subtract from raw accel Z (mg), see note below */
 static int16_t bias_z;
+/* +1, or -1 when the chip is mounted upside down (drv_imu_calibrate), so
+ * that Z reads +1 g with the car upright and -1 g overturned */
+static int16_t z_sign = 1;
 /* most recent bias-corrected accel X reading (mg), used by pitch calc */
 static int16_t last_ax;
 /* most recent bias-corrected accel Y reading (mg) */
@@ -246,7 +249,7 @@ rc_result_t drv_imu_read_accel(int16_t *x, int16_t *y, int16_t *z)
      * format). Rebuild each axis from its low+high byte, then scale to
      * milli-g: at +/-2 g full scale the sensitivity is 0.061 mg/LSB, so
      * mg = raw * 61 / 1000. The product is held in int32 because raw
-     * (+/-32767) * 61 overflows 16 bits. Downstream (pitch, RC_IMPACT_MG)
+     * (+/-32767) * 61 overflows 16 bits. Downstream (pitch, lift_height)
      * expects mg with 1 g ~= 1000. */
     *x = (int16_t)(((int32_t)(int16_t)((uint16_t)b[1] << 8 | b[0]) * 61) / 1000);
     *y = (int16_t)(((int32_t)(int16_t)((uint16_t)b[3] << 8 | b[2]) * 61) / 1000);
@@ -394,7 +397,7 @@ void drv_imu_sample(void)
     ay -= bias_y;
     /* Z keeps its 1 g offset on purpose: it is the reference the pitch
      * calculation needs. Only the level-sitting error is removed. */
-    az -= bias_z;
+    az = (int16_t)((z_sign * az) - bias_z);
 
     last_ax = ax;
     last_ay = ay;
@@ -452,16 +455,18 @@ rc_result_t drv_imu_calibrate(uint16_t n)
     bias_x = (int16_t)(sx / (int32_t)got);
     bias_y = (int16_t)(sy / (int32_t)got);
 
-    /* Sitting level, Z reads 1 g. Store only the deviation from that so
-     * the sign of pitch stays meaningful. */
-    bias_z = (int16_t)((sz / (int32_t)got) - 1000);
+    /* Sitting level, Z reads 1 g, or -1 g if the chip is upside down:
+     * keep that sign in z_sign. Store only the deviation from 1 g so the
+     * sign of pitch stays meaningful. */
+    z_sign = (sz < 0) ? -1 : 1;
+    bias_z = (int16_t)(((z_sign * sz) / (int32_t)got) - 1000);
 
     imu_ready = true;       /* drv_imu_sample() may run from now on */
     return RC_OK;
 }
 
 /* FR15: false means IMU_UNAVAILABLE - init or calibration failed, so no
- * IMU_SAMPLE events (and no hump / impact detection) this run. */
+ * IMU_SAMPLE events (and no hump / lift detection) this run. */
 bool drv_imu_available(void)
 {
     return imu_ready;

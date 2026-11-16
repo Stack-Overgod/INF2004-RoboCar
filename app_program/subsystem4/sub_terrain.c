@@ -3,8 +3,9 @@
  *
  *  Buddy 4: Terrain and motion event classification.
  *  Uses the LSM303D accelerometer to detect speed humps, estimate peak
- *  height via chassis geometry cross-checked with wheel odometry, and flag
- *  impacts/shocks without relying on a non-existent gyroscope.
+ *  height via chassis geometry cross-checked with wheel odometry, and tell
+ *  when the car has been lifted or overturned (lift_step), which stops the
+ *  run, without relying on a non-existent gyroscope.
  */
 
 #include "../rc_prelude.h"
@@ -36,16 +37,25 @@
 #define MIN_HUMP_TRAVEL_MM      (30U)    /* Reject if car rolled < 30 mm    */
 #define HUMP_MIN_REPORT_MM      (5U)     /* Lower humps are not reported    */
 
-#define IMPACT_MG               (RC_IMPACT_MG)   /* FR13, rc_config.h */
+/* lift_step(): thresholds in rc_config.h (RC_LIFT_*) */
+#define LIFT_SMOOTH_N           (4)      /* accel average, ~40 ms           */
+#define LIFT_CALM_MG            (150)    /* within this of 1 g counts calm  */
+#define LIFT_CLEAR_MS           (500U)   /* upright and calm this long ends */
+/* lift_height(): vertical accel integrated twice, with leaks */
+#define LIFT_DEAD_MG            (20)     /* smaller wobbles are ignored     */
+#define LIFT_CLIP_MG            (250)    /* one bump counts at most this    */
+#define LIFT_V_TAU_MS           (600)    /* speed estimate leaks away       */
+#define LIFT_H_TAU_MS           (2000)   /* height estimate leaks away      */
+#define LIFT_LVL_BAND_MG        (30)     /* closer than this: learn 1 g     */
+#define LIFT_LVL_TAU_MS         (5000)   /* 1 g reference learnt over ~5 s  */
+#define LIFT_UM_S2_PER_MG       (9807)   /* 1 mg = 9.807 mm/s^2             */
 
 /* 1: print the IMU readings to the console once a second (bench check
  * of the axes). Keep 0 in the repo. */
 #ifndef S4_IMU_PRINT
 #define S4_IMU_PRINT            (0)
 #endif
-#if S4_IMU_PRINT
 #include <tm/tmonitor.h>
-#endif
 
 #define ACCEL_LINEAR_MG         (250)    /* Linear push threshold on X      */
 #define TURN_SPEED_DIFF_MM_S    (150)    /* Wheel speed diff for turning    */
@@ -76,6 +86,18 @@ static uint32_t              roll_start_ms;
 static uint32_t              roll_flat_ms;
 static int16_t               roll_peak;
 static uint32_t              roll_dist0;
+/* lift_step(): smoothed accel x16, condition timers (0 = off), episode */
+static int32_t               lift_ax_x16;
+static int32_t               lift_ay_x16;
+static int32_t               lift_az_x16;
+static uint32_t              lift_tilt_ms;
+static uint32_t              lift_calm_ms;
+static rc_lift_t             lift_on;       /* RC_LIFT_NONE = on the ground */
+/* lift_height(): 1 g reference (mg x 1024), speed um/s, height um */
+static int32_t               lift_lvl_x1024;
+static int32_t               lift_v_um_s;
+static int32_t               lift_h_um;
+static uint32_t              lift_last_ms;
 static uint32_t              dist_at_hump_start;
 static uint16_t              max_peak_height_mm;
 static rc_motion_class_t     current_motion_class;
@@ -344,16 +366,138 @@ static void roll_step(int16_t ay, uint32_t now_ms)
 }
 
 /* ------------------------------------------------------------------ *
+ *  Lifted / overturned (rc_config.h RC_LIFT_*)
+ * ------------------------------------------------------------------ */
+
+/* Time since `cond` became true, tracked in *since (0 = false). */
+static uint32_t held_ms(bool cond, uint32_t *since, uint32_t now_ms)
+{
+    if (!cond) {
+        *since = 0U;
+        return 0U;
+    }
+    if (*since == 0U) {
+        *since = now_ms | 1U;           /* never 0 while true */
+    }
+    return now_ms - *since;
+}
+
+/* How far the car has risen, um: the vertical acceleration less the
+ * learnt 1 g, integrated to a speed and again to a height. Wobbles under
+ * LIFT_DEAD_MG are dropped and each sample is clipped to LIFT_CLIP_MG, so
+ * noise and single bumps add little; a bump also comes back down, which
+ * cancels it. Both integrals leak (LIFT_V_TAU_MS, LIFT_H_TAU_MS) so that
+ * an offset cannot build up. The 1 g reference follows az slowly while it
+ * is close (LIFT_LVL_*). */
+static int32_t lift_height(int16_t az, uint32_t now_ms)
+{
+    int32_t dt;
+    int32_t d;
+    int32_t e;
+
+    dt = (lift_last_ms == 0U) ? 10 : (int32_t)(now_ms - lift_last_ms);
+    lift_last_ms = now_ms;
+    if (dt < 1) {
+        dt = 1;
+    }
+    if (dt > 50) {
+        dt = 50;                        /* a gap: count it as 50 ms */
+    }
+
+    d = (int32_t)az - (lift_lvl_x1024 / 1024);
+    if ((d < LIFT_LVL_BAND_MG) && (d > -LIFT_LVL_BAND_MG)) {
+        lift_lvl_x1024 += (d * 1024 * dt) / LIFT_LVL_TAU_MS;
+    }
+    if (d >= LIFT_DEAD_MG) {
+        e = d - LIFT_DEAD_MG;
+    } else if (d <= -LIFT_DEAD_MG) {
+        e = d + LIFT_DEAD_MG;
+    } else {
+        e = 0;
+    }
+    if (e > LIFT_CLIP_MG) {
+        e = LIFT_CLIP_MG;
+    } else if (e < -LIFT_CLIP_MG) {
+        e = -LIFT_CLIP_MG;
+    } else {
+        /* within the clip */
+    }
+
+    lift_v_um_s += (e * LIFT_UM_S2_PER_MG * dt) / 1000;
+    lift_v_um_s -= (lift_v_um_s * dt) / LIFT_V_TAU_MS;
+    lift_h_um   += (lift_v_um_s * dt) / 1000;
+    lift_h_um   -= (lift_h_um * dt) / LIFT_H_TAU_MS;
+    if (lift_h_um < -50000) {
+        lift_h_um = -50000;             /* going down banks no credit */
+    }
+    return lift_h_um;
+}
+
+/* One accelerometer sample (mg; az reads +1000 standing level, below 0
+ * past 90 deg). Returns why the car has just been lifted, once per
+ * episode, else RC_LIFT_NONE. The episode lasts until the car stands
+ * upright and calm for LIFT_CLEAR_MS.
+ *   raised:  lift_height() >= RC_LIFT_UP_MM;
+ *   tilted:  on ~40 ms averages, horizontal^2 > vertical^2 x
+ *            tan^2(35 deg), or az <= 0, for RC_LIFT_TILT_MS; az < 0 is
+ *            reported as overturned. */
+static rc_lift_t lift_step(int16_t ax, int16_t ay, int16_t az,
+                           uint32_t now_ms)
+{
+    int32_t sx;
+    int32_t sy;
+    int32_t sz;
+    int32_t horiz2;
+    bool    tilted;
+    bool    raised;
+    bool    calm;
+
+    lift_ax_x16 += (((int32_t)ax * 16) - lift_ax_x16) / LIFT_SMOOTH_N;
+    lift_ay_x16 += (((int32_t)ay * 16) - lift_ay_x16) / LIFT_SMOOTH_N;
+    lift_az_x16 += (((int32_t)az * 16) - lift_az_x16) / LIFT_SMOOTH_N;
+    sx = lift_ax_x16 / 16;
+    sy = lift_ay_x16 / 16;
+    sz = lift_az_x16 / 16;
+
+    /* |values| <= 2047, so the squares fit; sz^2 is scaled down first */
+    horiz2 = (sx * sx) + (sy * sy);
+    tilted = (sz <= 0)
+             || (horiz2 > (((sz * sz) / 1000) * RC_LIFT_TAN2_PERMILLE));
+    raised = (lift_height(az, now_ms) >= (RC_LIFT_UP_MM * 1000));
+    calm   = !tilted && ((sz - 1000) < LIFT_CALM_MG)
+             && ((sz - 1000) > -LIFT_CALM_MG);
+
+    if (lift_on != RC_LIFT_NONE) {
+        lift_tilt_ms = 0U;
+        lift_v_um_s  = 0;               /* start afresh after the episode */
+        lift_h_um    = 0;
+        if (held_ms(calm, &lift_calm_ms, now_ms) >= LIFT_CLEAR_MS) {
+            lift_calm_ms = 0U;
+            lift_on = RC_LIFT_NONE;     /* back on the ground */
+        }
+        return RC_LIFT_NONE;
+    }
+
+    if (raised) {
+        lift_on = RC_LIFT_RAISED;
+    } else if (held_ms(tilted, &lift_tilt_ms, now_ms) >= RC_LIFT_TILT_MS) {
+        lift_on = (sz < 0) ? RC_LIFT_OVERTURNED : RC_LIFT_TILTED;
+    } else {
+        return RC_LIFT_NONE;
+    }
+    lift_calm_ms = 0U;
+    return lift_on;
+}
+
+/* ------------------------------------------------------------------ *
  *  8-State Motion Classifier (FR14)
  * ------------------------------------------------------------------ */
 
-static rc_motion_class_t classify(int16_t ax, int16_t ay)
+static rc_motion_class_t classify(int16_t ax)
 {
-    /* Priority 1: High-g Impact / Shock */
-    /* FR13: max(|ax|, |ay|) >= RC_IMPACT_MG */
-    if ((ax >= IMPACT_MG) || (ax <= -IMPACT_MG) ||
-        (ay >= IMPACT_MG) || (ay <= -IMPACT_MG)) {
-        return RC_MOTION_IMPACT;
+    /* Priority 1: lifted or overturned (lift_step) */
+    if (lift_on != RC_LIFT_NONE) {
+        return RC_MOTION_LIFTED;
     }
 
     /* Priority 2: Active Slope Traverse */
@@ -407,11 +551,26 @@ static void on_sample(const rc_event_t *evt, void *ctx)
     /* Pitch in deci-degrees from acc_x, smoothed (smooth_pitch) */
     int16_t  pitch  = smooth_pitch((int16_t)(((int32_t)ax * 573) / 1000));
     uint32_t now_ms = rc_time_ms();
+    rc_lift_t lifted = lift_step(ax, ay, evt->u.imu.acc_z, now_ms);
 
-    /* --- Hump State Machine --- */
+    /* --- Lifted or overturned: stop the run (sub_nav) --- */
+    if (lifted != RC_LIFT_NONE) {
+        rc_event_t lift_evt = {0};
+
+        tm_printf((UB *)"[s4] lifted (%d)\n", (INT)lifted);
+        rc_fault_set(RC_FAULT_LIFTED);      /* cleared by START (sub_nav) */
+        lift_evt.id = RC_EVT_LIFTED;
+        lift_evt.u.lifted.why = (uint8_t)lifted;
+        (void)rc_event_publish(&lift_evt);
+        /* a hump begun while being picked up is not one */
+        hump_state = H_FLAT;
+        roll_on = false;
+    }
+
+    /* --- Hump State Machine (no new hump while lifted) --- */
     switch (hump_state) {
     case H_FLAT:
-        if (pitch >= PITCH_ENTER_DDEG) {
+        if ((pitch >= PITCH_ENTER_DDEG) && (lift_on == RC_LIFT_NONE)) {
             hump_state = H_CLIMBING;
             hump_start_ms = now_ms;
             hump_peak_pitch = pitch;
@@ -465,8 +624,10 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         break;
     }
 
-    /* --- One-wheel hump: the car rolls (roll_step) --- */
-    roll_step(ay, now_ms);
+    /* --- One-wheel hump: the car rolls (roll_step), not while lifted --- */
+    if (lift_on == RC_LIFT_NONE) {
+        roll_step(ay, now_ms);
+    }
 
 #if S4_IMU_PRINT
     {
@@ -487,20 +648,20 @@ static void on_sample(const rc_event_t *evt, void *ctx)
      * 1000 / 573). Leaning sideways means one wheel is on something, not
      * a ramp: the nose dips as it does on a slope, so while |roll| >=
      * PITCH_EXIT_DDEG it is fed level (its slope episode then lapses and
-     * is undone). */
+     * is undone). So it is while the car is lifted. */
     {
         int16_t ramp_ax = ax;
 
         /* level ground reads 0 for the ramp too (level_dev) */
         ramp_ax -= (int16_t)(((pitch_lvl_x256 / 256) * 1000) / 573);
-        if (roll_abs >= PITCH_EXIT_DDEG) {
+        if ((roll_abs >= PITCH_EXIT_DDEG) || (lift_on != RC_LIFT_NONE)) {
             ramp_ax = 0;
         }
         ramp_sample(ramp_ax, evt->u.imu.acc_z, now_ms);
     }
 
     /* --- Motion Classification --- */
-    rc_motion_class_t new_class = classify(ax, ay);
+    rc_motion_class_t new_class = classify(ax);
 
     if (new_class != current_motion_class) {
         current_motion_class = new_class;
@@ -509,14 +670,6 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         class_evt.id = RC_EVT_MOTION_CLASS;
         class_evt.u.motion_class.cls = new_class;
         (void)rc_event_publish(&class_evt);
-
-        /* Publish dedicated impact alert for immediate safety stop */
-        if (new_class == RC_MOTION_IMPACT) {
-            rc_event_t impact_evt = {0};
-            rc_fault_set(RC_FAULT_IMPACT);  /* cleared by START (sub_nav) */
-            impact_evt.id = RC_EVT_IMPACT;
-            (void)rc_event_publish(&impact_evt);
-        }
     }
 
     uint32_t elapsed_us = (uint32_t)rc_time_us() - t0_us;
@@ -567,6 +720,16 @@ void sub_terrain_reset(void)
     dist_at_hump_start = 0U;
     max_peak_height_mm = 0U;
     current_motion_class = RC_MOTION_STATIONARY;
+    lift_ax_x16 = 0;
+    lift_ay_x16 = 0;
+    lift_az_x16 = 1000 * 16;            /* standing level */
+    lift_tilt_ms = 0U;
+    lift_calm_ms = 0U;
+    lift_on = RC_LIFT_NONE;
+    lift_lvl_x1024 = 1000 * 1024;
+    lift_v_um_s = 0;
+    lift_h_um = 0;
+    lift_last_ms = 0U;
 
     ramp_reset(&ramp);
     ramp_cnt[0] = drv_encoder_count(RC_SIDE_LEFT);
@@ -580,6 +743,12 @@ void sub_terrain_level_here(void)
     roll_lvl_x256 = roll_x16 * 16;
     hump_state = H_FLAT;
     roll_on = false;
+    lift_tilt_ms = 0U;
+    lift_calm_ms = 0U;
+    lift_on = RC_LIFT_NONE;             /* a lift still going on is seen again */
+    lift_lvl_x1024 = (lift_az_x16 / 16) * 1024;     /* standing here is 1 g */
+    lift_v_um_s = 0;
+    lift_h_um = 0;
     ramp_reset(&ramp);
     ramp_cnt[0] = drv_encoder_count(RC_SIDE_LEFT);
     ramp_cnt[1] = drv_encoder_count(RC_SIDE_RIGHT);
