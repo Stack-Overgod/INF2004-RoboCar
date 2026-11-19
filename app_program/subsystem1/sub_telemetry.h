@@ -54,8 +54,8 @@ rc_result_t sub_telemetry_start_task(void);    /* start the telemetry task */
  * -------------------------------------------------------------------- */
 
 /* Also call cb for every command from the dashboard. The command still
- * goes out as RC_EVT_COMMAND_RX either way; this is an extra, like
- * Buddy 3's sub_barcode_on_decode(). cb runs on the telemetry task, so it
+ * goes out as RC_EVT_COMMAND_RX either way; this is an extra. cb runs on
+ * the telemetry task, so it
  * must be short and must not block. NULL removes it. */
 rc_result_t sub_telemetry_on_command(sub_telemetry_cmd_cb_t cb, void *ctx);
 
@@ -65,9 +65,10 @@ rc_result_t sub_telemetry_on_command(sub_telemetry_cmd_cb_t cb, void *ctx);
 void sub_telemetry_get_link(rc_pl_link_t *out);
 
 /* Send one event's message now, instead of waiting for the next tick.
- * Takes the events Buddy 1 reports on their own topics (barcode, hump,
- * obstacle, lifted, motion class, line lost/found, move done, avoidance
- * plan); anything else is RC_ERR_PARAM. */
+ * Takes the events Buddy 1 reports on their own topics (barcode decoded,
+ * scan and raw bits, hump, ramp, obstacle, spin edges, lifted, motion
+ * class, line lost/found, move done, avoidance plan); anything else is
+ * RC_ERR_PARAM. */
 rc_result_t sub_telemetry_publish_event(const rc_event_t *evt);
 
 /* --------------------------------------------------------------------
@@ -94,8 +95,9 @@ void sub_telemetry_mqtt_link(bool *wifi_up, bool *broker_up);
  * The command path (used by sub_telemetry_mqtt.c and the tests)
  * -------------------------------------------------------------------- */
 
-/* One command character -> a driving command: L/R/S/U/X or barcode letters
- * A/B/C/D, either case (P is also stop). Anything else is RC_CMD_NONE. */
+/* One command character -> a driving command: L/R/S/U/X, barcode letters
+ * A/B/C/D, P (stop) or G (start), either case. Anything else is
+ * RC_CMD_NONE. */
 rc_nav_cmd_t sub_telemetry_parse_cmd(char c);
 
 /* A command character has arrived from the dashboard: count it, decode

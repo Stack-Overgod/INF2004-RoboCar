@@ -10,9 +10,10 @@
 > each motor's encoder board are the reference for its wires. The Robo Pico
 > motor-driver details are in [`docs/Robo_Pico.pdf`](../Robo_Pico.pdf).
 
-**Files:** `subsystems/sub_motion.c` / `.h`, `drivers/drv_motor.c` / `.h`,
-`drivers/drv_encoder.c` / `.h`, and your test, `bench_motion()` in
-`app/app_bench.c`
+**Files:** `app_program/subsystem2/sub_motion.c` / `.h`, `drv_motor.c` / `.h`,
+`drv_encoder.c` / `.h`, and your tests, `subsystem2_test.c` (S2-U01..U22;
+`S2_TURN_CAL` 1/2/3 selects the floor turn, straight-drive and per-wheel
+wiring checks instead)
 
 **Your brief, and where each part lives**
 
@@ -121,21 +122,24 @@ what happened.
 | `drv_motor.c` | `core/rc_pwm` | `rc_pwm_init_pin(pin, 20000)`, `rc_pwm_set_duty(pin, permille)` | "Set this wheel's dimmer to 40 %." Two pins per motor (GP8/9, GP10/11): drive A for forward, B for reverse, both high to brake. |
 | `drv_encoder.c` | `core/rc_gpioirq` | `rc_gpioirq_attach(GP0/GP7, RC_EDGE_RISE, …)` | "Ring `encoder_isr` on every rising edge of channel A." Channel B (GP1/GP28) is a plain input the ISR reads for direction. |
 | `drv_encoder.c` | `core/rc_time` | `rc_time_us()` inside the ISR | Stamps each click so the gap between clicks gives speed. |
-| `drv_encoder.c` | `core/rc_defer` | `rc_defer_register(encoder_drain)`, `rc_defer_signal_i()` | The ISR only counts and rings the bell; `encoder_drain` does the rest in task context. |
-| `drv_encoder.c` | `core/rc_event` | `rc_event_publish(RC_EVT_ENCODER_EDGE)` | Lets anyone (telemetry, debugging) watch raw clicks. |
+| `drv_encoder.c` | the kernel | `ISpinLock` / `ISpinUnlock` (SMP), `DI` / `EI` (single core) as `ENC_LOCK` | The ISR and the readers share count, period and last-edge time; the lock keeps them consistent across both cores. There is no bottom half and no encoder event: `sub_motion` reads the encoder every control period. |
 | `sub_motion.c` | `drv_encoder.c` | `drv_encoder_speed_mm_s()`, `drv_encoder_count()`, `drv_encoder_distance_mm()`, `drv_encoder_reset()` | Each wheel's speed for the PID; click counts for "have I gone far enough yet?"; distances for telemetry. |
 | `sub_motion.c` | `drv_motor.c` | `drv_motor_set_pair(left, right)`, `drv_motor_stop()` | The PID's output goes here every 20 ms. |
 | `sub_motion.c` | `core/rc_event` | publishes `RC_EVT_ODOMETRY` and `RC_EVT_MOTION_DONE`; subscribes to `RC_EVT_MOTION_DONE` | Every 20 ms: "here's my speed/distance". When a move ends: "done" — and `sub_motion` listens to its own "done" to call the requester's callback. |
-| `sub_motion.c` | the kernel | a task (`tk_cre_tsk`), a mutex (`tk_cre_mtx`, `tk_loc_mtx`, `tk_unl_mtx`) | Its own background task runs the control loop; the mutex stops two tasks changing the motion state at once. |
+| `sub_motion.c` | the kernel | a task (`tk_cre_tsk`), a mutex (`tk_cre_mtx`, `tk_loc_mtx`, `tk_unl_mtx`), a cyclic wake-up (`rc_period_start`) | Its own background task runs the control loop every 20 ms exactly; the mutex stops two tasks changing the motion state at once. It also checks in with the watchdog (`rc_wdog_checkin`) every cycle. |
 | `sub_motion.c` | `core/rc_config.h` | `RC_PERIOD_MOTION_MS`, `RC_PRI_MOTION`, `RC_STACK_SZ`, `RC_ENC_UM_PER_TICK`, `RC_WHEEL_BASE_MM` | Loop rate, task priority and stack, and the measured mechanics your maths depends on. |
 
-Who calls *you*: `sub_line` (Buddy 3) calls `sub_motion_drive(base, steer)`
-on every 5 ms line sample; `sub_nav` calls `sub_motion_turn_deg()` for
+Who calls *you*: `sub_line` (Buddy 3) calls `sub_motion_drive_speed(base, steer)`
+(closed loop, `LINE_CLOSED_LOOP` 1; `sub_motion_drive()` when it is 0) on
+every 10 ms line sample; `sub_nav` calls `sub_motion_turn_deg()` for
 barcode turns, `sub_motion_turn_deg()` / `sub_motion_forward_mm()` for the
-three legs of an obstacle bypass, `sub_motion_drive()` while recovering or
-slowing for an obstacle, and `sub_motion_stop()` when the car must stop;
-`app_main.c` sets the cruise speed with `sub_motion_set_speed(250)`. None of
-them touch `drv_motor` directly — you own the wheels.
+legs of an obstacle bypass, `sub_motion_drive_speed()` for the drive back
+to the line and the line scans, `sub_motion_set_speed()` for the slow
+detour speed, and `sub_motion_stop()` when the car must stop; `sub_scan`
+(Buddy 5) uses `sub_motion_drive_speed()` / `sub_motion_stop()` to step the
+chassis during the step scan; `subsystem2_start()` sets the cruise speed
+with `sub_motion_set_speed(S2_CRUISE_MM_S)` (188 mm/s). None of them touch
+`drv_motor` directly — you own the wheels.
 
 **What this module does**
 
@@ -218,7 +222,7 @@ runs three phases:
    *new value = old value × tape distance ÷ printed distance*, where the
    old value is `31416 × RC_WHEEL_DIAM_MM ÷ (10 × RC_ENC_TICKS_PER_REV)`.
    For example, old value 335, tape 490 mm, printed 500 mm →
-   `#define RC_ENC_UM_PER_TICK (328UL)`.
+   328 (`#define RC_ENC_UM_PER_TICK (328UL)`).
 5. **Calibrate turns.** Measure the real angle of the phase-2 turns (a
    protractor, or a taped line on the floor). Wheels slip when spinning in
    place, so the car usually turns a little less than asked. Set
@@ -235,7 +239,7 @@ runs three phases:
 
 This is a big module, so it's broken down file by file, and inside each
 file, constant by constant and function by function — the same bar of
-detail as "`#define STEER_KP (2)` — what it does, why, any links to other
+detail as "`#define STEER_KP (3)` — what it does, why, any links to other
 code" that the rest of this walkthrough follows. Jargon is explained the
 first time it comes up; skip ahead once you recognise a term.
 
@@ -376,10 +380,9 @@ measurement instead of a guess.
   ticks per wheel turn, a moving wheel ticks far more often than that, so
   100 ms without one means the wheel is creeping at a few mm/s at most.
 - `#define DEBOUNCE_US (50UL)` — the debounce window described above. It
-  must stay well below the real gap between ticks at top speed: at 1000
-  ticks per wheel turn and 200 wheel RPM that gap is 300 µs. (The earlier
-  500 µs was chosen for a 20-slot optical disc and would throw away real
-  ticks at speed.)
+  must stay well below the real gap between ticks at top speed: at
+  `RC_ENC_TICKS_PER_REV` (640) ticks per wheel turn and 200 wheel RPM that
+  gap is ~470 µs.
 
 **The `enc_t` struct** — one instance per wheel, in the private `encs[2]`
 array: `count` is the running total of accepted clicks since boot
@@ -388,9 +391,7 @@ recent accepted edge; `period_us` is the microsecond gap between the two
 most recent accepted edges — this is what speed gets computed from;
 `base_count` is a snapshot of `count` taken at the last
 `drv_encoder_reset()`, so "distance since reset" is just
-`count - base_count`; `published` is the `count` value already turned
-into an event, so the bottom-half worker (below) doesn't re-publish
-unchanged data every cycle; `dir` is +1 or −1, the direction read from
+`count - base_count`; `dir` is +1 or −1, the direction read from
 channel B on the most recent edge; `pin_a` is the channel-A GPIO that
 raises the interrupt and `pin_b` the channel-B GPIO the ISR samples.
 Every field except the two pins is `volatile`, because the ISR writes
@@ -405,34 +406,19 @@ per-instance data (here, "which wheel is this edge for") without writing
 two nearly-identical handler functions. Inside, it does the absolute
 minimum: compute the gap since the last accepted edge (`delta`), bail out
 if that gap is smaller than `DEBOUNCE_US` (a glitch, ignore it), otherwise
-read channel B once with `gpio_get_val(e->pin_b)` to set `dir`, record
-the new timestamp, store the new period, increment `count`, and call
-`rc_defer_signal_i(defer_h)` to wake the bottom-half task. That single
-GPIO read is a register read, which the interrupt rule allows. It does
-**not** build or publish an event itself — see TEAM_GUIDE.md §1.2's rule
-that an ISR may only record state and hand off, never do real work,
-because the two encoder pins, the ultrasonic echo pin, and the barcode
-pin all share the same interrupt hardware bank; time spent in one ISR is
-time another pin's edge is waiting to be noticed, and for the barcode
-reader specifically, edge *timing* is the actual data being measured, so
-delay there directly corrupts a reading.
+then, under `ENC_LOCK` (a spinlock on the dual-core build, because a
+reader may run on the other core, where masking interrupts excludes
+nothing), read channel B once with `gpio_get_val(e->pin_b)` to set `dir`,
+record the new timestamp, store the new period and increment `count`.
+That single GPIO read is a register read, which the interrupt rule
+allows. It makes **no kernel call** and publishes nothing: `sub_motion`
+reads the counts and speeds every control period instead. That matters
+because the two encoder pins and the ultrasonic echo pin share the same
+interrupt hardware bank; time spent in one ISR is time another pin's edge
+is waiting to be noticed, and for the echo the pulse width is the data.
 
-**`encoder_drain(ctx)`** — the "bottom half" (deferred work), which runs
-later in normal task context rather than inside the interrupt, so it's
-safe to do more here, including publishing on the event bus. For each
-wheel, it copies `count`/`period_us` out inside a `DI`/`EI` critical
-section (see jargon above), skips publishing if nothing changed since the
-last drain (`count == published`), and otherwise publishes an
-`RC_EVT_ENCODER_EDGE` event carrying the current count and period. Note
-this deliberately *coalesces* rapid edges — if three clicks arrive before
-the drain task next runs, one event reports the latest state rather than
-three separate events replaying each click — because downstream code
-cares about "current count and period," not "receiving one event per
-physical click," and coalescing keeps a fast-spinning wheel from flooding
-the event bus.
-
-**`drv_encoder_init(void)`** — boot-time setup: registers `encoder_drain`
-as the deferred worker, zeroes every field of both `enc_t` structs, sets
+**`drv_encoder_init(void)`** — boot-time setup: zeroes every field of
+both `enc_t` structs, sets
 each channel-B pin up as a plain pulled-up input (no interrupt — the ISR
 reads it), and attaches `encoder_isr` to each channel-A pin for **rising
 edges only**. The comment in the code explains why not both edges:
@@ -483,8 +469,8 @@ while the car drives forward, swap that encoder's A and B wires rather
 than negating in software. (`sub_motion.c` only uses the *size* of this
 number — see `wheel_measure()` for why.)
 
-**`drv_encoder_distance_mm(side)`** — `(count - base_count)` converted to
-millimetres using the same `RC_ENC_UM_PER_TICK` constant: distance since
+**`drv_encoder_distance_mm(side)`** — `(count - base_count)`, read under
+`ENC_LOCK`, converted to millimetres using the same `RC_ENC_UM_PER_TICK` constant: distance since
 the last `drv_encoder_reset()`. `sub_motion.c` puts it in the
 `RC_EVT_ODOMETRY` event for telemetry and Buddy 4's terrain code; its own
 "have I gone far enough?" check counts ticks directly instead.
@@ -614,10 +600,11 @@ for how to replace them.
   arc during a spin turn (slower than straight driving, for accuracy).
 - `#define TURN_DECEL_ZONE_MM (30U)` — the same slow-down idea for turns,
   measured along each wheel's arc (a 90° turn is only ~86 mm of arc).
-- `#define TURN_SLIP_PERMILLE (1000U)` — wheels slip when spinning in
-  place, so a turn usually falls short of the geometry. This stretches
-  every turn: 1000 = trust the geometry, 1100 = drive each wheel 10 %
-  further. Calibrate it as in "How to get started" step 5.
+- `#define TURN_SLIP_PERMILLE (986U)` — scales every turn to make up for
+  how far the real turn differs from the geometry: 1000 = trust the
+  geometry, 1100 = drive each wheel 10 % further. 986 is the floor
+  calibration (a set of 90° turns each way came out slightly past).
+  Calibrate it as in "How to get started" step 5.
 - `#define SYNC_GAIN (4)` and `SYNC_MAX_MM_S (80)` — the straight-line
   correction: for every mm one wheel is ahead of the other, that wheel's
   target speed drops by 4 mm/s and the other's rises by 4 mm/s, capped at
@@ -629,9 +616,12 @@ for how to replace them.
 - `#define MOVE_TIMEOUT_EXTRA_MS (2000U)` — the timeout guard: a move is
   stopped if it takes more than twice its expected time plus 2 s (e.g.
   the motors can't reach the speed).
-- `#define LOCK_TMO_MS (20)` — the longest any caller waits for the mutex.
-  `motion_task()` only holds it for a few tens of microseconds per cycle,
-  so this is just a safety net.
+- `#define LOCK_TMO_MS (2)` — the longest an ordinary caller waits for
+  the mutex. `motion_task()` only holds it for a few tens of microseconds
+  per cycle, so this is just a safety net; the kernel counts timeouts in
+  10 ms ticks, so it expires one to two ticks later. `sub_motion_stop()`
+  and `on_motion_done()` do not use it: they wait as long as it takes
+  (`motion_lock_wait()`).
 - `#define CB_SLOTS (8U)` and `DONE_QUEUE (8U)` — room for callbacks
   waiting to be delivered and finished moves waiting to be announced. At
   most two are ever in flight (a move that just finished and the one that
@@ -691,6 +681,12 @@ All `static`, so private to this file, and all guarded by the mutex:
 - `fault_msg` — a stall or timeout message, printed by `motion_task()`
   *after* it releases the lock (printing is slow and must not happen
   while holding it).
+- `speed_stalled` — set when a stall ends `MODE_SPEED`;
+  `sub_motion_drive_speed()` then refuses (`RC_ERR_HARDWARE`) until
+  `sub_motion_stop()` or a new queued move clears it, so the line follower
+  cannot restart a blocked wheel on its next sample.
+- `motion_overruns` — control periods missed since boot
+  (`sub_motion_overruns()`).
 
 ### Small helpers
 
@@ -698,6 +694,11 @@ All `static`, so private to this file, and all guarded by the mutex:
   "key" (`tk_loc_mtx` with a `LOCK_TMO_MS` timeout / `tk_unl_mtx`).
   `motion_lock()` returns false if the key didn't come back in time — it
   shouldn't happen, and callers treat it as "busy".
+- **`motion_lock_wait()`** — takes the key with no timeout (`TMO_FEVR`),
+  for a stop and for delivering a move's callback, which must never be
+  skipped. It cannot deadlock: `motion_task` holds the key for tens of
+  microseconds with its priority raised (`TA_INHERIT`) and waits for
+  nothing while holding it.
 - **`queued_move_active()`** — true in `MODE_DISTANCE` or `MODE_TURN`.
 - **`move_ticks(side)`** — ticks one wheel has turned since the current
   move began: today's `drv_encoder_count()` minus `start_count`. It counts
@@ -812,9 +813,10 @@ either wheel's `stall_cycles` reached `STALL_CYCLES`, otherwise `NULL`.
 5. Records `move_sign` and the ID, and finally sets `mode` — from this
    moment `motion_task()` drives the move.
 
-Worked numbers (assuming `RC_ENC_TICKS_PER_REV` comes out at 600, so one
-tick = 31416 × 64 / 6000 = **335 µm**): `forward_mm(500)` → 500,000 µm →
-**1,493 ticks**, slow down for the last 60 mm = **179 ticks**, timeout
+Worked numbers (`RC_ENC_TICKS_PER_REV` 640 and `RC_WHEEL_DIAM_MM` 68, so one
+tick = 31416 × 68 / 6400 = **333 µm**; cruise speed taken as 250 mm/s):
+`forward_mm(500)` → 500,000 µm → **1,502 ticks**, slow down for the last
+60 mm = **180 ticks**, timeout
 500,000 / 250 × 2 + 2,000 = **6,000 ms** (300 cycles).
 
 **`queue_move(...)`** — takes the lock, calls `start_move()`, gives the
@@ -840,7 +842,7 @@ correction is `diff ticks × µm per tick / 1000 × SYNC_GAIN`, in mm/s,
 capped at `SYNC_MAX_MM_S` and at half the current speed. It's positive
 when the left wheel is ahead; `run_move()` then slows the left wheel and
 speeds up the right by that amount. For example, with the left wheel
-3 ticks (about 1 mm) ahead: 3 × 335 / 1000 × 4 ≈ **4 mm/s** of correction.
+3 ticks (about 1 mm) ahead: 3 × 333 / 1000 × 4 ≈ **4 mm/s** of correction.
 The multiplication is done in 64 bits because a blocked wheel can fall far
 behind before the stall guard stops the move, and the product would then
 overflow 32 bits.
@@ -864,7 +866,8 @@ overflow 32 bits.
 **`run_speed()`** — one cycle of `MODE_SPEED`: left target
 `base_spd + steer_spd`, right `base_spd − steer_spd` (a negative target
 means that wheel runs backwards), both through `wheel_control()`. If a
-wheel stalls, the car brakes and goes idle with a message.
+wheel stalls, the car brakes, goes idle with a message and sets
+`speed_stalled`.
 
 **`run_continuous()`** — one cycle of `MODE_CONTINUOUS`, the line
 follower's open-loop drive: left duty `base_cmd + steer_cmd`, right duty
@@ -891,8 +894,10 @@ finished move is never silently lost — a lost one would leave `sub_nav`
 waiting forever.
 
 **`on_motion_done(evt, ctx)`** — this module's own subscriber to
-`RC_EVT_MOTION_DONE`, on the fast lane. It finds the callback stored
-under that move's ID, frees the slot, gives the lock back, and **then**
+`RC_EVT_MOTION_DONE`, on the fast lane. It takes the lock with
+`motion_lock_wait()` (so no callback is ever lost to a lock timeout),
+finds the callback stored under that move's ID, frees the slot, gives the
+lock back, and **then**
 calls the callback. Why this detour through the event bus instead of
 calling the callback straight from `finish_move()`?
 
@@ -911,9 +916,11 @@ calling the callback straight from `finish_move()`?
 **`motion_task(stacd, exinf)`** — the background task created in
 `sub_motion_init()`. Forever:
 
-1. **Sleep** 20 ms with `tk_dly_tsk(RC_PERIOD_MOTION_MS)` — a real RTOS
-   sleep; other tasks use the CPU meanwhile (§1.3's non-blocking rule at
-   the task level).
+1. **Sleep** until the next 20 ms period (`rc_period_wait()`, woken by
+   a cyclic handler, so the period does not drift with the loop's own run
+   time); other tasks use the CPU meanwhile. Periods it missed are added
+   to `motion_overruns`. Then check in with the watchdog
+   (`rc_wdog_checkin(RC_WDOG_MOTION)`).
 2. **Odometry:** read both wheels' speed and distance and publish
    `RC_EVT_ODOMETRY` — every cycle, whatever the mode, so telemetry and
    Buddy 4's terrain code always have fresh numbers.
@@ -932,7 +939,7 @@ calling the callback straight from `finish_move()`?
   `TA_INHERIT`: while a higher-priority task waits for the key,
   `motion_task` borrows that priority so the wait stays short),
   subscribes `on_motion_done`, and creates and starts `motion_task` at
-  priority `RC_PRI_MOTION`.
+  priority `RC_PRI_MOTION` (7) with its 20 ms cyclic wake-up.
 - **`sub_motion_set_speed(mm_s)`** — cruise speed for distance moves.
   Takes effect at once, even on a move already running.
 - **`sub_motion_forward_mm(mm, cb, ctx)`** — `moveForward(distance)`.
@@ -945,8 +952,9 @@ calling the callback straight from `finish_move()`?
   wheel runs along a circle whose diameter is the wheel base, so for
   `deg` degrees it covers `RC_WHEEL_BASE_MM × π × deg / 360` mm. In
   integers: `base × 31416 × deg / 3600` micrometres (31416 = π × 10⁴),
-  then × `TURN_SLIP_PERMILLE` / 1000. Worked numbers: 90° with a 110 mm
-  base → 86,394 µm → **258 ticks** per wheel (at 335 µm per tick).
+  then × `TURN_SLIP_PERMILLE` / 1000. Worked numbers: 90° with the 112 mm
+  base → 87,964 µm × 986 / 1000 = 86,732 µm → **260 ticks** per wheel (at
+  333 µm per tick).
 - **`sub_motion_drive(base_permille, steer_permille)`** — the line
   follower's open-loop drive (`MODE_CONTINUOUS`). Returns `RC_ERR_BUSY`,
   changing nothing, while a queued move or turn is running: switching
@@ -954,18 +962,23 @@ calling the callback straight from `finish_move()`?
 - **`sub_motion_drive_speed(base_mm_s, steer_mm_s)`** — the closed-loop
   version (`MODE_SPEED`): the PID holds the left wheel at base + steer and
   the right at base − steer, so the speed stays the same whatever the
-  battery level. Needs working, calibrated encoders. Same busy rule. The
-  line follower doesn't use it yet — that's a decision for Buddy 3 and
-  you.
+  battery level. Needs working, calibrated encoders. Same busy rule;
+  after a stall in this mode it returns `RC_ERR_HARDWARE` until
+  `sub_motion_stop()` or a new queued move. The line follower and
+  `sub_nav` use it.
 - **`sub_motion_stop(brake)`** — `stop()`: cancels whatever is running (a
   queued move reports `completed = false`) and stops the motors —
-  `brake = true` stops fast, `false` coasts. If the lock isn't available
-  it stops the motors anyway: stopping must never be refused.
+  `brake = true` stops fast, `false` coasts. The motors stop at once;
+  then it waits for the lock as long as it takes (`motion_lock_wait()`)
+  and clears the mode, so `motion_task` cannot drive them again. Never
+  refused.
 - **`sub_motion_busy()`** — true while a queued move is running; false in
   the continuous modes and when idle.
 - **`sub_motion_target_mm_s(side)`** — the speed the controller is asking
   one wheel for right now (negative when reversing; 0 when idle or in
-  open-loop drive). For logs such as the bench's step response only.
+  open-loop drive). For logs and tests only.
+- **`sub_motion_overruns()`** — control periods missed since boot, like
+  `rc_sense_overruns()`; a TEST build prints both at the end of the run.
 
 ### Follow one move from start to finish
 
@@ -1000,22 +1013,16 @@ car".
 
 ## What's left for Buddy 2
 
-The code for everything in the brief is written, and it passed a set of
-simulated tests on a PC (straight moves with one motor weaker, turns,
-stalls, timeouts, callbacks) — but **it has not run on the real car yet**.
-What's left is the work that needs the car:
+The code for everything in the brief is written and runs on the car.
+`RC_ENC_TICKS_PER_REV` (640), `RC_WHEEL_DIAM_MM` (68), `RC_WHEEL_BASE_MM`
+(112) and `TURN_SLIP_PERMILLE` (986) are measured values (see the comments
+in `rc_config.h` and `sub_motion.c`). What's left:
 
-- **Wire it and check it** — phase 1 of the `motion` bench (wiring,
-  directions).
-- **Measure** `RC_ENC_TICKS_PER_REV` (still the placeholder `20`) and
-  `RC_WHEEL_BASE_MM` (still a guess) — "How to get started" step 1.
 - **Tune the PID** — `PID_KP`, `PID_KI`, `PID_KD`, `FF_START_PERMILLE`,
-  `FF_TOP_SPEED_MM_S` are placeholders. The speed logs you record while
+  `FF_TOP_SPEED_MM_S` have not been step-tuned. The speed logs you record while
   tuning are your **PID tuning report**.
-- **Calibrate** distance (`RC_ENC_UM_PER_TICK`) and turns
-  (`TURN_SLIP_PERMILLE`) — steps 4 and 5.
+- **Re-check calibration** of distance (`RC_ENC_UM_PER_TICK`) and turns
+  (`TURN_SLIP_PERMILLE`) on the track surface — steps 4 and 5.
 - **Motion accuracy evaluation** — step 6.
-- **Integration** — run the mission image (`BUILD.md` §5.10) with the
-  team and check barcode turns and the obstacle bypass on the real track;
-  agree with Buddy 3 whether line following should move to
-  `sub_motion_drive_speed()` for a consistent speed.
+- **Integration** — run the track image with the team and check barcode
+  turns and the obstacle bypass on the real track.

@@ -30,7 +30,10 @@
 		/* On (2026-11-06): the barcode sensor's AOUT on GP26 is read
 		   through "adca" channel 0 (Buddy 3, drv_ir.c).  Only GP26 is
 		   turned into an analogue input (adc_cnf_sysdep.h
-		   DEVCONF_ADC_PIN_INIT_0). */
+		   DEVCONF_ADC_PIN_INIT_0).  With RC_BAR_ADC_FIFO 1 the driver
+		   only powers the ADC and sets up GP26 at boot; drv_ir.c then
+		   runs the ADC free-running into its FIFO and takes over the
+		   ADC interrupt itself ("adca" is not opened). */
 #define DEVCNF_USE_IIC		1		// I2C communication device
 		/* Off by default so no pins are claimed at boot.  To use I2C,
 		   set this to 1 and choose the pins in

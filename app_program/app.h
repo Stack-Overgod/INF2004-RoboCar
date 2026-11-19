@@ -14,16 +14,18 @@
 #include <bsp/libbsp.h>		/* Board helpers: gpio_set_pin/val, pwm_... */
 
 /* ---------------------------------------------------------------------
- *  Pins: free for projects are GP0..GP22 and GP26..GP28.  GP0/GP1 are
- *  taken by UART0 when built with "make CRASH_REPORT=1" (see README).
+ *  Pins: free for projects are GP0..GP22 and GP26..GP28; every pin
+ *  number is in rc_config.h.  GP0/GP1 are the left encoder here, so a
+ *  UART0 console build (CONSOLE=uart, CRASH_REPORT=1) is refused there.
  *  Never use GP23/24/25/29: they are wired to the Pico W radio.
  *  Claim every pin in TEAM.md section 2 before using it.
  * --------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------
- *  Task priorities: 1 is the highest; the kernel's USB console (3) and
- *  WiFi (4) tasks sit above every application task.  Each subsystem
- *  has its own band (TEAM.md section 4), defined in its own header.
+ *  Task priorities: 1 is the highest.  The kernel's USB console task (3)
+ *  runs above every application task; its WiFi task (4) shares the top
+ *  application level with RC_PRI_DEFER.  The application priorities are
+ *  RC_PRI_* in rc_config.h (TEAM.md section 4).
  * --------------------------------------------------------------------- */
 #define TASK_STACK_SIZE		2048	/* bytes; tm_printf needs ~1 KB */
 

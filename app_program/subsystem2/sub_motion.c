@@ -1,7 +1,7 @@
 /*
- *  sub_motion.c
+ *  sub_motion.c  -  Buddy 2
  *
- *  The "brain" of Buddy 2's module: decides what duty to send the motors
+ *  The "brain" of the motion module: decides what duty to send the motors
  *  every control cycle so the wheels track a target speed (PID control)
  *  or a target distance/turn, and runs the non-blocking move state
  *  machine described in sub_motion.h. See docs/buddy2-motion/buddy2-motion.md
@@ -16,12 +16,12 @@
  *    each wheel -> feedforward + PID -> duty -> drv_motor
  *
  *  Sharing rules. The motion state below is used by motion_task AND by
- *  whichever task calls the public API (the event dispatchers, the bench).
+ *  whichever task calls the public API (the event dispatchers, the tests).
  *  One kernel mutex guards all of it, so a request can never land half way
  *  through a control cycle. Completion callbacks are never called with the
  *  mutex held: finishing a move publishes RC_EVT_MOTION_DONE, and this
  *  module's own fast-lane subscriber calls the requester's callback from
- *  the dispatcher task (TEAM_GUIDE.md §1.3). That also means a callback
+ *  the dispatcher task. That also means a callback
  *  that starts the next move (sub_nav's bypass legs do) never runs inside
  *  this module.
  */
@@ -34,13 +34,15 @@
 #include "../rc_config.h"
 #include "../rc_event.h"
 #include "../rc_fault.h"
+#include "../rc_time.h"
+#include "../rc_wdog.h"
 
 /* ------------------------------------------------------------------ *
  *  Tuning constants
  *
- *  Each value is a starting point worked out from the hardware's rough
- *  specs, not a measurement. The motion bench (bench_motion() in
- *  app/app_bench.c, BUILD.md §5.2) prints what you need to replace them.
+ *  Values not marked as measured are starting points worked out from the
+ *  hardware's rough specs. A step-response log (sub_motion_target_mm_s()
+ *  against the odometry) shows what to replace them with.
  * ------------------------------------------------------------------ */
 
 /* Largest duty in "permille" (parts per thousand: 1000 = 100.0 %), the
@@ -59,8 +61,8 @@
  *   PID_KD 0         - start with PI. The measured speed jitters from
  *                      tick to tick and D amplifies that jitter; try a
  *                      small value (e.g. 8) while tuning.
- * Record the bench's step response for each setting you try: that log is
- * the PID tuning report. */
+ * Record the step response for each setting you try: that log is the PID
+ * tuning report. */
 #define PID_KP                  (256)
 #define PID_KI                  (512)
 #define PID_KD                  (0)
@@ -71,7 +73,7 @@
  *   FF_START_PERMILLE - duty at which a wheel on the floor just starts
  *                       to turn (motor friction, the "deadband").
  *   FF_TOP_SPEED_MM_S - wheel speed at 100 % duty, car on the floor.
- * Both are guesses; measure them with the motion bench. */
+ * Both are estimates, not measurements. */
 #define FF_START_PERMILLE       (150)
 #define FF_TOP_SPEED_MM_S       (400)
 /* Per-wheel feedforward gain, permille. The left motor is ~15 % weaker
@@ -124,10 +126,12 @@
 #define MOVE_TIMEOUT_EXTRA_MS   (2000U)
 
 /* Longest any caller waits for the motion mutex. motion_task holds it for
- * a few tens of microseconds per cycle, so this is only a safety net - a
- * dispatcher callback must never block for long (rc_event.h). Kept well
- * inside the FAST dispatcher's 10 ms line-sample period; 2 rather than 1
- * because the kernel tick is 1 ms, so a 1 ms timeout can expire at once. */
+ * a few tens of microseconds per cycle, so a normal wait is that short and
+ * this is only a safety net - a dispatcher callback must never block for
+ * long (rc_event.h). The kernel counts timeouts in whole ticks
+ * (RC_TICK_PERIOD_MS, 10 ms), so this expires one to two ticks later;
+ * a polling lock would fail whenever motion_task held it on the other
+ * core. */
 #define LOCK_TMO_MS             (2)
 
 /* Move callbacks waiting to be delivered, and finished moves waiting to
@@ -136,13 +140,28 @@
 #define CB_SLOTS                (8U)
 #define DONE_QUEUE              (8U)
 
+/* control periods missed since boot (sub_motion_overruns) */
+static volatile uint32_t motion_overruns;
+
+uint32_t sub_motion_overruns(void)
+{
+    return motion_overruns;
+}
+
 #if APP_TEST
 /* A self-test is injecting fake odometry. See sub_motion_test_hold_odometry(). */
 static volatile bool odo_test_hold;
+/* worst-case time of one control cycle, us (sub_motion_wcet_us) */
+static volatile uint32_t loop_max_us;
 
 void sub_motion_test_hold_odometry(bool hold)
 {
     odo_test_hold = hold;
+}
+
+uint32_t sub_motion_wcet_us(void)
+{
+    return loop_max_us;
 }
 #endif
 
@@ -243,6 +262,11 @@ static uint32_t  done_n;
  * printing is slow and must not happen inside the lock. */
 static const char *fault_msg;
 
+/* Set when a stall ends speed mode. sub_motion_drive_speed() refuses
+ * until sub_motion_stop() or a new queued move clears it, so the line
+ * follower cannot restart a blocked wheel on its next sample. */
+static bool speed_stalled;
+
 /* ------------------------------------------------------------------ *
  *  Small helpers
  * ------------------------------------------------------------------ */
@@ -255,6 +279,16 @@ static bool motion_lock(void)
 static void motion_unlock(void)
 {
     (void)tk_unl_mtx(motion_mtxid);
+}
+
+/* For a stop and for move-done delivery, which must never be skipped:
+ * waits for the mutex as long as it takes. motion_task holds it for tens
+ * of microseconds with its priority raised (TA_INHERIT), and nothing that
+ * holds it waits for anything else, so this cannot deadlock. Task context
+ * only (not from a handler). */
+static void motion_lock_wait(void)
+{
+    (void)tk_loc_mtx(motion_mtxid, TMO_FEVR);
 }
 
 /* True while a queued move (forward/backward/turn) is running. */
@@ -501,7 +535,7 @@ static void publish_done(void)
 
     while (done_n > 0U) {
         evt.id = RC_EVT_MOTION_DONE;
-        evt.u.motion_done.move_id      = done_q[0].id;   /* < 2^15, see below */
+        evt.u.motion_done.move_id      = done_q[0].id;   /* < 2^15, start_move */
         evt.u.motion_done.completed    = done_q[0].completed ? 1U : 0U;
         evt.u.motion_done.travelled_mm =
             RC_SAT_U(done_q[0].travelled_mm, RC_BITS_MOVE_MM);
@@ -575,9 +609,10 @@ static void on_motion_done(const rc_event_t *evt, void *ctx)
 
     (void)ctx;
 
-    if ((id == 0U) || !motion_lock()) {
+    if (id == 0U) {
         return;
     }
+    motion_lock_wait();
     for (i = 0U; i < CB_SLOTS; i++) {
         if (cb_slots[i].id == id) {
             cb     = cb_slots[i].cb;
@@ -623,12 +658,13 @@ static uint32_t start_move(mode_t m, uint64_t goal_um, int8_t sign,
         move_id_next = 1U;          /* 0 means "no move" */
     }
     rc_fault_clear(RC_FAULT_MOTOR_STALL | RC_FAULT_ENCODER);
+    speed_stalled = false;
     if (cb != NULL) {
         cb_register(id, cb, ctx);
     }
 
-    /* drv_encoder_distance_mm() restarts from 0 for each move too, as
-     * telemetry's odometry figures always have. */
+    /* drv_encoder_distance_mm() restarts from 0 for each move too, so
+     * telemetry's odometry distances are per move. */
     drv_encoder_reset();
     for (i = 0U; i < 2U; i++) {
         wheels[i].start_count  = drv_encoder_count((rc_side_t)i);
@@ -787,6 +823,7 @@ static void run_speed(void)
         fault_msg = stall;
         (void)drv_motor_stop(RC_MOTOR_BRAKE);
         wheels_zero();
+        speed_stalled = true;
         mode = MODE_IDLE;
         return;
     }
@@ -813,9 +850,9 @@ static void run_continuous(void)
 /* ------------------------------------------------------------------ *
  *  Control task
  *
- *  Wakes every RC_PERIOD_MOTION_MS. tk_dly_tsk yields the CPU for the
- *  whole interval; it is not a spin. Everything between wakeups is
- *  bounded arithmetic, done with the mutex held.
+ *  Wakes every RC_PERIOD_MOTION_MS (rc_period: an exact cyclic wake-up,
+ *  the CPU is free in between). Everything between wakeups is bounded
+ *  arithmetic, done with the mutex held.
  * ------------------------------------------------------------------ */
 
 static void motion_task(INT stacd, void *exinf)
@@ -829,7 +866,11 @@ static void motion_task(INT stacd, void *exinf)
     (void)exinf;
 
     for (;;) {
-        (void)rc_period_wait();
+        motion_overruns += rc_period_wait();
+        rc_wdog_checkin(RC_WDOG_MOTION);
+#if APP_TEST
+        uint32_t t_loop = rc_time_us();
+#endif
 
         /* Odometry for telemetry and Buddy 4's terrain code, every cycle
          * whatever the mode. Signed speeds (the encoder's own direction),
@@ -879,6 +920,12 @@ static void motion_task(INT stacd, void *exinf)
         msg       = fault_msg;
         fault_msg = NULL;
         motion_unlock();
+#if APP_TEST
+        t_loop = rc_time_since(t_loop);
+        if (t_loop > loop_max_us) {
+            loop_max_us = t_loop;
+        }
+#endif
 
         if (msg != NULL) {
             tm_printf((UB *)"[motion] %s\n", msg);
@@ -1040,6 +1087,8 @@ rc_result_t sub_motion_drive_speed(int16_t base_mm_s, int16_t steer_mm_s)
     }
     if (queued_move_active()) {
         res = RC_ERR_BUSY;
+    } else if (speed_stalled) {
+        res = RC_ERR_HARDWARE;          /* until stop() or a queued move */
     } else {
         if (mode != MODE_SPEED) {
             for (i = 0U; i < 2U; i++) {
@@ -1057,19 +1106,19 @@ rc_result_t sub_motion_drive_speed(int16_t base_mm_s, int16_t steer_mm_s)
 
 /* stop(). Cancels whatever is running (a queued move reports
  * completed = false) and stops the motors: brake = true stops fast,
- * false coasts. The motors are stopped even if the mutex is unavailable -
- * stopping must never be refused. */
+ * false coasts. The motors stop at once; the mode is then cleared under
+ * the mutex, waiting for it as long as it takes, so motion_task cannot
+ * drive them again. Never refused. */
 rc_result_t sub_motion_stop(bool brake)
 {
     rc_motor_stop_t how = brake ? RC_MOTOR_BRAKE : RC_MOTOR_COAST;
 
-    if (!motion_lock()) {
-        (void)drv_motor_stop(how);
-        return RC_ERR_BUSY;
-    }
+    (void)drv_motor_stop(how);
+    motion_lock_wait();
     if (queued_move_active()) {
         finish_move(false);
     }
+    speed_stalled = false;
     mode = MODE_IDLE;
     wheels_zero();
     (void)drv_motor_stop(how);
@@ -1086,7 +1135,7 @@ bool sub_motion_busy(void)
 
 /* The speed the controller is currently asking one wheel for, mm/s,
  * signed by direction. 0 when idle or in open-loop drive. For logging
- * (the bench's step response) - it does not change anything. */
+ * and tests (step response) - it does not change anything. */
 int32_t sub_motion_target_mm_s(rc_side_t side)
 {
     mode_t m = mode;

@@ -4,15 +4,16 @@
  *  Ring buffer plus dispatcher task, one pair per lane.
  *
  *  Why a hand-rolled ring rather than a message buffer: tk_snd_mbf can
- *  wait, so it is not callable from an interrupt handler. The encoder and
- *  echo ISRs both need to publish. A short critical section around a
- *  power-of-two ring, followed by tk_set_flg (which is legal in an ISR),
- *  gives an ISR-safe publish that always returns in bounded time.
+ *  wait, so it is not callable from an interrupt handler, and timer
+ *  handlers (sub_nav's state timer) publish. A short critical section
+ *  around a power-of-two ring, followed by tk_set_flg (which is legal in
+ *  an ISR), gives an ISR-safe publish that always returns in bounded time.
  */
 
 #include "rc_prelude.h"
 #include <tm/tmonitor.h>
 #include "rc_event.h"
+#include "rc_wdog.h"
 #include "rc_config.h"
 #include "rc_time.h"
 
@@ -97,8 +98,7 @@ static volatile uint8_t lane_mask[RC_EVT_COUNT];
 static bool is_stream_evt(rc_evt_id_t id)
 {
     return (id == RC_EVT_LINE_SAMPLE) || (id == RC_EVT_IMU_SAMPLE)
-        || (id == RC_EVT_ODOMETRY)    || (id == RC_EVT_ENCODER_EDGE)
-        || (id == RC_EVT_MOTION_CLASS);
+        || (id == RC_EVT_ODOMETRY)    || (id == RC_EVT_MOTION_CLASS);
 }
 
 static bool ring_push(lane_t *ln, const rc_event_t *evt)
@@ -208,20 +208,22 @@ int32_t rc_event_subscribe(rc_evt_id_t id,
 
     ln = &lanes[lane];
 
+    /* Claim the slot under the lock: another task may subscribe at the
+     * same time, and the dispatcher reads the slot from the other core. */
     for (i = 0U; i < RC_EVENT_MAX_SUBS; i++) {
+        RC_LOCK(sts);
         if (!ln->subs[i].in_use) {
             ln->subs[i].cb     = cb;
             ln->subs[i].ctx    = ctx;
             ln->subs[i].id     = id;
             ln->subs[i].in_use = true;
-
-            RC_LOCK(sts);
             lane_mask[id] |= (uint8_t)(1U << (uint32_t)lane);
             RC_UNLOCK(sts);
 
             /* handle encodes both lane and slot */
             return (int32_t)(((uint32_t)lane << 16) | i);
         }
+        RC_UNLOCK(sts);
     }
     return -1;
 }
@@ -254,6 +256,9 @@ rc_result_t rc_event_unsubscribe(int32_t handle)
     {
         rc_evt_id_t id = ln->subs[slot].id;
 
+        /* Under the lock, so the dispatcher never sees a half-cleared
+         * slot (it copies cb/ctx under the same lock). */
+        RC_LOCK(sts);
         ln->subs[slot].in_use = false;
         ln->subs[slot].cb     = NULL;
 
@@ -264,10 +269,9 @@ rc_result_t rc_event_unsubscribe(int32_t handle)
             }
         }
         if (!still_used) {
-            RC_LOCK(sts);
             lane_mask[id] &= (uint8_t)~(1U << lane);
-            RC_UNLOCK(sts);
         }
+        RC_UNLOCK(sts);
     }
     return RC_OK;
 }
@@ -280,20 +284,11 @@ uint32_t rc_event_dropped(rc_lane_t lane)
     return lanes[lane].dropped;
 }
 
-uint32_t rc_event_high_water(rc_lane_t lane)
-{
-    if (lane >= RC_LANE_COUNT) {
-        return 0U;
-    }
-    return lanes[lane].high_water;
-}
-
 #if APP_TEST
 static const char *evt_name(rc_evt_id_t id)
 {
     switch (id) {
     case RC_EVT_TICK:             return "TICK";
-    case RC_EVT_ENCODER_EDGE:     return "ENCODER_EDGE";
     case RC_EVT_ODOMETRY:         return "ODOMETRY";
     case RC_EVT_MOTION_DONE:      return "MOTION_DONE";
     case RC_EVT_LINE_SAMPLE:      return "LINE_SAMPLE";
@@ -405,11 +400,24 @@ static void dispatch_lane(lane_t *ln)
         }
 #endif
         for (i = 0U; i < RC_EVENT_MAX_SUBS; i++) {
+            rc_event_cb_t cb  = NULL;
+            void         *ctx = NULL;
+
+            /* Unlocked pre-check, then copy cb/ctx under the lock: a task on
+             * the other core may be clearing this slot (unsubscribe). */
             if (ln->subs[i].in_use && (ln->subs[i].id == evt.id)) {
+                RC_LOCK(sts);
+                if (ln->subs[i].in_use && (ln->subs[i].id == evt.id)) {
+                    cb  = ln->subs[i].cb;
+                    ctx = ln->subs[i].ctx;
+                }
+                RC_UNLOCK(sts);
+            }
+            if (cb != NULL) {
 #if APP_TEST
                 uint32_t t0 = rc_time_us();
 #endif
-                ln->subs[i].cb(&evt, ln->subs[i].ctx);
+                cb(&evt, ctx);
 #if APP_TEST
                 {
                     uint32_t dt = rc_time_since(t0);
@@ -432,8 +440,11 @@ static void dispatcher_task(INT stacd, void *exinf)
 
     for (;;) {
         /* The timeout is a safety net, not a period. If a flag is ever
-         * missed the ring still drains within 50 ms instead of stalling. */
+         * missed the ring still drains within ~50 ms instead of stalling. */
         (void)tk_wai_flg(ln->flgid, FLG_WORK, TWF_ORW | TWF_CLR, &ptn, 50);
+        if (ln == &lanes[RC_LANE_FAST]) {
+            rc_wdog_checkin(RC_WDOG_FAST);
+        }
         dispatch_lane(ln);
     }
 }

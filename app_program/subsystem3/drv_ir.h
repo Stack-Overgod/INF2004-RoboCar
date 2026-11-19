@@ -14,7 +14,7 @@
 typedef enum {
     RC_IR_LINE_L = 0,   /* left line sensor */
     RC_IR_LINE_R,       /* right line sensor */
-    RC_IR_BARCODE       /* barcode sensor (analogue AO, ADC threshold) */
+    RC_IR_BARCODE       /* barcode sensor (analogue AO, peak / valley detector) */
 } rc_ir_ch_t;
 
 /* Barcode edge callback, on the defer task. `width_us` is how long the
@@ -23,21 +23,19 @@ typedef void (*drv_ir_edge_cb_t)(bool new_level, uint32_t width_us, void *ctx);
 
 rc_result_t drv_ir_init(void);
 
-/* Digital state. True means "over the line", after polarity correction. */
+/* True means "over the line" (line sensors, after polarity correction) or
+ * "on a bar" (barcode sensor, from the edge detector). */
 bool drv_ir_on_line(rc_ir_ch_t ch);
 
 /* Poll both line sensors and publish RC_EVT_LINE_SAMPLE. Called from the
  * sense task at RC_PERIOD_LINE_MS. */
 void drv_ir_sample_line(void);
 
-/* Read the barcode sensor's AO once and update the midpoint threshold;
- * queues an edge when the level changes while armed. Called from the Sense
- * task every RC_PERIOD_LINE_MS, armed or not. */
+/* Device mode (RC_BAR_ADC_FIFO 0): read the barcode sensor's AO once and
+ * run the edge detector; queues an edge when the level changes while
+ * armed. FIFO mode: does nothing, the readings arrive by ADC interrupt.
+ * Called from the Sense task every RC_PERIOD_LINE_MS, armed or not. */
 void drv_ir_sample_barcode(void);
-
-/* Latest ADC reading and the current low / high extremes (0..4095); the
- * threshold is their midpoint. For tests and calibration. */
-void drv_ir_barcode_adc(uint16_t *raw, uint16_t *lo, uint16_t *hi);
 
 rc_result_t drv_ir_on_barcode_edge(drv_ir_edge_cb_t cb, void *ctx);
 
@@ -45,7 +43,8 @@ rc_result_t drv_ir_on_barcode_edge(drv_ir_edge_cb_t cb, void *ctx);
  * Masking when idle keeps a shiny patch of track from flooding the bus. */
 rc_result_t drv_ir_barcode_enable(bool on);
 
-/* Edges dropped because the decoder could not keep up. Should stay 0. */
+/* Edges (and, in FIFO mode, ADC readings) dropped because the decoder
+ * could not keep up. Should stay 0. */
 uint32_t drv_ir_barcode_overruns(void);
 
 #endif /* DRV_IR_H */

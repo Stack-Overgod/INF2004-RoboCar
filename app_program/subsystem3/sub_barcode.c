@@ -1,5 +1,5 @@
 /*
- *  sub_barcode.c
+ *  sub_barcode.c  -  Code 39 decoder on RC_EVT_BARCODE_EDGE widths
  */
 #include "../rc_prelude.h"
 #include "sub_barcode.h"
@@ -14,9 +14,9 @@
 /* How many widths we keep buffered at once.*/
 #define WINDOW          (10U)
 
-/* Flicker on the bar edges (DOUT chatter, under 10 ms) is merged back
- * into its element by the ISR (drv_ir.c BAR_GLITCH_US), so every width
- * that reaches on_edge() is a real bar or space.
+/* drv_ir.c merges levels shorter than BAR_GLITCH_US back into their
+ * element before publishing, so every width that reaches on_edge() is a
+ * real bar or space.
  *
  * Noise filter: fewer than NOISE_EDGES edges within NOISE_WINDOW_US of
  * each other are a speck, not a barcode: nothing is reported and sub_line
@@ -36,8 +36,8 @@ typedef enum {
 /* barcode table entry */
 typedef struct {
     char     symbol;
-    /* bit 0 holds the LAST. 1 = wide, 0 = narrow*/
-    uint16_t pattern;   /* bit 8 is the first element, 1 means wide */
+    /* 9 elements: bit 8 is the first, bit 0 the last; 1 = wide */
+    uint16_t pattern;
 } code39_t;
 
 /*
@@ -88,13 +88,6 @@ static bool     is_bar[WINDOW];
 static uint32_t n_widths;
 /* decoding enabled? (see sub_barcode_arm) */
 static bool     armed;
-/* most recently decoded character, for telemetry/logging */
-static char     last_symbol;
-/* a "function pointer" — the caller-supplied function to invoke on a successful decode */
-static sub_barcode_cb_t user_cb;
-/* opaque context pointer passed back to user_cb untouched, so the caller can
- * tell which car/instance called it */
-static void    *user_ctx;
 
 /* the scan attempt being collected (see NOISE_WINDOW_US) */
 static bool             scan_open;
@@ -454,8 +447,8 @@ static void on_edge(const rc_event_t *evt, void *ctx)
     scan_edge(evt->t_us);
     scan_width(w);
 
-    /* the element that just ended is the level before this edge; the
-     * sensor reads high over black (drv_ir IR_ACTIVE_HIGH) */
+    /* level_high is the level after this edge (1 = black), so the element
+     * that just ended was a bar when it is 0 */
     raw_add(w, !evt->u.bar_edge.level_high);
 
     /* Append the new width to the buffer, making room by sliding out the
@@ -490,8 +483,7 @@ static void on_edge(const rc_event_t *evt, void *ctx)
     }
 
     /* Successful decode: reset the window */
-    n_widths    = 0U;
-    last_symbol = symbol;
+    n_widths = 0U;
     scan_symbol(symbol);
     if (symbol != '*') {
         frame_letter = true;
@@ -507,18 +499,13 @@ static void on_edge(const rc_event_t *evt, void *ctx)
     out.u.barcode.command  = symbol_to_cmd(symbol);
     out.u.barcode.reversed = reversed ? 1U : 0U;
     (void)rc_event_publish(&out);
-
-    /* user_cb is a function pointer , might be NULL if nobody registered a
-     *  callback via sub_barcode_on_decode(), check before calling through it */
-    if (user_cb != NULL) {
-        user_cb(symbol, symbol_to_cmd(symbol), user_ctx);
-    }
 }
 
 /* ------------------------------------------------------------------ */
 
-/* Call once at boot. Clears the width buffer, starts disarmed and subscribes 
-* on_edge() to fire for every RC_EVT_BARCODE_EDGE event published by drv_ir.c's barcode ISR. */
+/* Call once at boot. Clears the width buffer, starts disarmed and
+ * subscribes on_edge() to RC_EVT_BARCODE_EDGE (from drv_ir.c) and
+ * on_line_tick() to RC_EVT_LINE_SAMPLE. */
 rc_result_t sub_barcode_init(void)
 {
     {
@@ -527,11 +514,9 @@ rc_result_t sub_barcode_init(void)
             widths[i] = 0U;
         }
     }
-    n_widths    = 0U;
-    armed       = false;
-    /* '\0' is the "nul" character: C's usual way to say "no value here" */
-    last_symbol = '\0';
-    scan_open   = false;
+    n_widths  = 0U;
+    armed     = false;
+    scan_open = false;
 
     if ((rc_event_subscribe(RC_EVT_BARCODE_EDGE, RC_LANE_FAST,
                             on_edge, NULL) < 0)
@@ -552,20 +537,5 @@ rc_result_t sub_barcode_arm(bool on)
     armed    = on;
     n_widths = 0U;
     return drv_ir_barcode_enable(on);
-}
-
-/* Registers a function to call every time a character is successfully decoded. */
-rc_result_t sub_barcode_on_decode(sub_barcode_cb_t cb, void *ctx)
-{
-    user_cb  = cb;
-    user_ctx = ctx;
-    return RC_OK;
-}
-
-/* Returns the most recently decoded character, mainly for telemetry
- * to report on what the car has read so far. */
-char sub_barcode_last(void)
-{
-    return last_symbol;
 }
 /*** end of file ***/

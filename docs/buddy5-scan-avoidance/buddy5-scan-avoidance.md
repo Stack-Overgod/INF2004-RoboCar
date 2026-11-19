@@ -9,8 +9,8 @@
 > **Datasheets for your parts** sit in this folder:
 > - [`HCSR04.pdf`](HCSR04.pdf) — the HC-SR04 ranger — timing, 5 V Echo, range limits
 
-**Files:** `subsystems/sub_scan.c/.h`, `drivers/drv_ultrasonic.c/.h`,
-`drivers/drv_servo.c/.h`
+**Files:** `app_program/subsystem5/sub_scan.c/.h`, `drv_ultrasonic.c/.h`,
+`drv_servo.c/.h`, tests in `subsystem5_test.c`
 
 ## Your hardware — wiring, pin by pin
 
@@ -23,8 +23,9 @@ the microsecond stopwatch.
 **SG90-class servo + pan bracket (×1).** The small blue plastic servo with a
 white horn and a three-wire lead (brown or black = ground, red = power,
 orange or yellow = signal). The HC-SR04 bolts to a bracket on the horn so
-the scan task can point it from 30° to 150°. **Centre the servo at 90°
-before attaching the bracket** (the `ultra` bench parks it at 90°).
+the scan task can point it from 70° to 110° (±20° around straight
+ahead). **Centre the servo at 90° before attaching the bracket**
+(`drv_servo_init()` parks it at 90°, a 1500 µs pulse).
 
 <img src="../img/hw/hcsr04.jpg" width="260" alt="HC-SR04"> <img src="../img/hw/servo_sg90.png" width="300" alt="SG90 servo">
 
@@ -100,24 +101,29 @@ stopwatch, the defer list *and* the RP2040's hardware timer alarms.
 
 | Your file | Talks to | Through | In plain terms |
 |---|---|---|---|
-| `drv_servo.c` | `core/rc_pwm` | `rc_pwm_init_pin(GP15, 50)`, `rc_pwm_set_pulse_us()`, `rc_pwm_enable()` | "Hold this angle" becomes a 1000–2000 µs pulse fifty times a second. `drv_servo_settle_ms()` estimates how long the horn takes to get there. |
-| `drv_ultrasonic.c` | the RTOS's timer interrupts | `tk_def_int(INTNO_TIMER_1 / _2)` directly (not via `core/`) | Alarm 1 ends the 12 µs TRIG pulse; alarm 2 gives up if no echo arrives within 30 ms. No delay loops anywhere. |
+| `drv_servo.c` | `rc_pwm` | `rc_pwm_init_pin(GP15, 50)`, `rc_pwm_set_pulse_us()` | "Hold this angle" becomes a 1289–1711 µs pulse fifty times a second (70°–110°, 1500 µs = straight ahead). `drv_servo_settle_ms()` estimates how long the horn takes to get there. |
+| `drv_ultrasonic.c` | the RTOS's timer interrupts | `tk_def_int(INTNO_TIMER_1 / _2)` directly, NVIC level 3 (the PendSV level, because the handlers call kernel services) | Alarm 1 ends the 12 µs TRIG pulse; alarm 2 gives up if no echo arrives within 30 ms. No delay loops anywhere. |
 | `drv_ultrasonic.c` | `core/rc_gpioirq` | `rc_gpioirq_attach(GP3, RC_EDGE_BOTH, …)`, `rc_gpioirq_enable(GP3, on/off)` | "Ring `echo_isr` on both edges" — but only while a ping is live, so a stray edge can't fake a reading. |
 | `drv_ultrasonic.c` | `core/rc_time` | timestamps in `echo_isr` | Echo went high at *t1*, low at *t2*; `t2 − t1` in µs × 343 m/s ÷ 2 = distance. |
 | `drv_ultrasonic.c` | `core/rc_defer` | `rc_defer_register(ultra_drain)`, `rc_defer_signal_i()` | ISR stores the two timestamps and rings the bell; `ultra_drain` does the division and publishes. |
-| `drv_ultrasonic.c` | `core/rc_event` | `rc_event_publish(RC_EVT_ULTRA_RESULT)` | Range in mm, valid flag, and the servo angle it was tagged with. `sub_nav` watches these for the "something ahead" trigger. |
+| `drv_ultrasonic.c` | `rc_event` | `rc_event_publish(RC_EVT_ULTRA_RESULT)` | Range in mm (12 bits, 0 = no echo) and the servo angle it was tagged with. `sub_nav` watches these for the "something ahead" trigger. |
+| `drv_ultrasonic.c` | `rc_fault` | `rc_fault_set/clear(RC_FAULT_NO_ECHO)` | The fault bit follows the latest reading. |
 | `drv_ultrasonic.c` | `sub_scan.c` | `drv_ultrasonic_on_result(cb)` direct callback | Same result, delivered straight to your subsystem so the scan task can wake immediately (`tk_set_flg` on your own flag). |
-| `sub_scan.c` | `drv_servo.c` / `drv_ultrasonic.c` | `drv_servo_set_angle()`, `drv_ultrasonic_ping(angle)` | The scan task steps the servo, pings, waits on its flag, repeats — coarse 30° sweep, then fine 6° sweep around the nearest hit. |
+| `sub_scan.c` | `drv_servo.c` / `drv_ultrasonic.c` | `drv_servo_set_angle()`, `drv_ultrasonic_ping(angle)` | The scan task points the servo, pings, waits on its flag, repeats: the forward watch (one ping ahead every 60 ms) and the step scan. |
+| `sub_scan.c` | `sub_motion.c` / `drv_encoder.c` (Buddy 2) | `sub_motion_drive_speed(0, ±60)`, `sub_motion_stop()`, `drv_encoder_count()` | The step scan turns the chassis in place in 5° steps, measuring the heading from the encoders. |
 | `sub_scan.c` | `core/rc_event` | `rc_event_publish(RC_EVT_OBSTACLE_PROFILE)`, `…(RC_EVT_AVOIDANCE_PLAN)` | Your conclusions: where the obstacle is and which way to go round it. |
-| `sub_scan.c` | `core/rc_config.h` | `RC_SCAN_COARSE_*`, `RC_SCAN_FINE_STEP`, `RC_PERIOD_SCAN_MS`, `RC_ULTRA_*` | Sweep geometry, step timing, range limits. |
+| `sub_scan.c` | `rc_config.h`, `drv_servo.h` | `RC_PERIOD_SCAN_MS`, `RC_PRI_SCAN`, `RC_WHEEL_BASE_MM`, `RC_ENC_UM_PER_TICK`, `RC_SERVO_HALF_SWING` | Ping period, task priority, chassis-turn geometry, servo swing (±20°). The step-scan constants (`STEP_*`, `SPIN_*`, `OBSTACLE_*`) are at the top of `sub_scan.c`. |
 
 Who calls *you*: `sub_nav` calls `sub_scan_set_watch(true, mm)` while
-line-following (one forward ping every 60 ms), `sub_scan_start()` when a
-watch ping comes back closer than the trigger distance, and
-`sub_scan_abort()` on a stop. Your plan comes back to `sub_nav` as an
-event and as the `on_complete` callback, and `sub_nav` then drives the
-bypass using Buddy 2's `sub_motion_*()` calls — you never touch the
-motors yourself.
+line-following (one forward ping every 60 ms; also while standing in
+IDLE/STOPPED outside TEST builds, where nav ignores the readings),
+`sub_scan_start_measure()` once a watch ping comes back at or under the
+200 mm trigger (`NAV_WATCH_TRIGGER_MM`) and the car has stopped,
+`sub_scan_busy()` / `sub_scan_abort()` on a stop. Your plan comes back to
+`sub_nav` as the `RC_EVT_AVOIDANCE_PLAN` event, and `sub_nav` then drives
+the bypass using Buddy 2's `sub_motion_*()` calls. The only motor use
+inside this module is the step scan's chassis turns (the motors are free
+then: `sub_nav` is in AVOIDING and has stopped the car).
 
 **What this module does**
 
@@ -129,14 +135,22 @@ ultrasonic "click" (40 kHz, above human hearing) instead of a shout.
 Because one sensor only measures distance in a single straight line, it's
 mounted on a small hobby servo motor — the same kind that swivels a
 security camera — so it can be aimed left and right to build up a picture
-of what's around the car, not just what's directly ahead. Buddy 5's job is
-to sweep that sensor across an arc (a "coarse scan"), zoom in around
-anything it finds (a "fine scan"), turn the raw distance readings into a
-description of the obstacle (how close, how wide, how much room on each
-side), and then decide whether the car should go straight, swerve left,
-swerve right, or stop.
+of what's around the car, not just what's directly ahead. The servo
+only swings ±20°, and the beam is wide, so from 20 cm away it never gets
+off a 10–20 cm obstacle with the chassis still. Buddy 5's job is to find
+both edges of the obstacle with a **step scan** (servo fully to one side,
+then the chassis turns a few degrees at a time, stopped for every ping,
+until the beam leaves the obstacle's face; then the same on the other
+side), turn those readings into a description of the obstacle (how close,
+how long, where each edge is relative to the line), and decide whether
+the car should go straight, go round on the left, go round on the right,
+or stop.
 
-**Run your module** — bench `ultra`, `scan`. The full procedure, what good output looks like and what each bad symptom means is in [`BUILD.md`](../../BUILD.md) §5.7–5.8. Short version, in VS Code: **Terminal → Run Task → RoboCar: build bench image…**, pick it from the list, put the Pico in BOOTSEL, **…flash bench image…**, then open the Serial Monitor.
+**Run your module** — build the TEST image (`make TEST=1`), flash it and
+read the `[TEST] S5-..` lines on the USB console (tests listed in
+`testing/subsystem5/TEST_LOG.md`; S5-N02/N04 turn the wheels, so use the
+stand). A normal build prints `[step] …` lines for every step scan, and the
+MQTT build publishes `car/01/obstacle`, `car/01/avoid` and `car/01/spin`.
 
 **How to get started**
 
@@ -152,16 +166,15 @@ swerve right, or stop.
 3. **Measure your actual servo's settle time and update the constants in
    `drv_servo.c`** (`US_PER_DEG`, `SETTLE_FIXED_MS`, used by
    `drv_servo_settle_ms()`). Defaults are rough guesses for a typical 9g
-   servo. A full coarse scan takes roughly 5 × (servo travel time + 30ms
-   of ultrasonic flight time) — getting this wrong makes scans too slow
-   or makes them ping before the sensor has stopped swinging.
-4. **Set `CAR_WIDTH_MM` in `sub_scan.c`** (currently a placeholder `150`)
-   to your car's widest point plus about 40mm margin — this is what the
-   avoidance planner compares gaps against.
-5. Follow the HARDWARE.md §7 bring-up order: servo sweep test (step 8),
-   ultrasonic vs. tape measure at 100/300/1000mm (step 9), full scan while
-   confirming the motor PID loop keeps running smoothly throughout (step
-   10).
+   servo. Getting this wrong makes scans slower than needed or makes them
+   ping before the sensor has stopped swinging.
+4. **Check `CAR_WIDTH_MM` in `sub_scan.c`** (150: the car's widest point
+   plus 40 mm margin). The plan's sideways step is the edge's distance
+   from the line plus half of it.
+5. Bring-up order: servo centre (S5-U02, check it points straight ahead),
+   ultrasonic vs. tape measure at 100/300/1000 mm (S5-U11), then a step
+   scan of a box 20 cm ahead (S5-N07) while confirming the motor PID loop
+   keeps running smoothly throughout.
 
 **Code walkthrough**
 
@@ -216,15 +229,16 @@ side actually printed the page.
   one pulse every 1/50th of a second (20 ms). This isn't a tunable
   performance knob, it's just what hobby servos expect by convention —
   fixed by the hardware, not chosen for this project.
-- **`#define PULSE_MIN_US (500UL)` / `#define PULSE_MAX_US (2400UL)`** —
-  the pulse widths (in microseconds, within each 20 ms frame) that a
-  typical hobby servo reads as "go to 0°" and "go to 180°." Everything
-  between those two angles is a straight-line interpolation between these
-  two pulse widths. These numbers come from the servo's own
-  datasheet/convention, and are what `drv_servo_set_angle()` converts
-  every angle into.
+- **`#define PULSE_CENTRE_US (1500UL)` / `#define PULSE_HALF_US (211UL)`**,
+  giving `PULSE_MIN_US` 1289 and `PULSE_MAX_US` 1711 — the pulse widths
+  (in microseconds, within each 20 ms frame) for the ends of the swing,
+  `RC_SERVO_ANGLE_MIN` (70°) and `RC_SERVO_ANGLE_MAX` (110°), centred on
+  1500 µs for 90° (straight ahead). A hobby servo turns ~10.6 µs per
+  degree, so ±20° is ±211 µs. Everything in between is a straight-line
+  interpolation. If the sensor does not point straight ahead at rest, move
+  `PULSE_CENTRE_US`.
 - **`#define SWEEP_DEG (RC_SERVO_ANGLE_MAX - RC_SERVO_ANGLE_MIN)`** — total
-  degrees of travel (180), used as the divisor in that same interpolation.
+  degrees of travel (40), used as the divisor in that same interpolation.
 - **`#define US_PER_DEG (2200UL)` and `#define SETTLE_FIXED_MS (25UL)`** —
   this is the pair called out explicitly in the "how to get started"
   section above, and it deserves the "what it does, why, what links to
@@ -241,14 +255,12 @@ side actually printed the page.
     knowing when a distance reading taken at a new angle can be trusted.
     Too short, and `sub_scan.c` pings before the sensor has physically
     settled, producing readings tagged with the wrong angle or blurred
-    by motion. Too long, and every scan takes needlessly longer — a full
-    5-point coarse scan takes roughly `5 × (servo travel + 30ms echo
-    flight)`, so this pair of constants directly controls how long the
-    car sits still scanning instead of driving.
+    by motion. Too long, and every scan takes needlessly longer: every
+    ping of the step scan waits for it, so this pair of constants directly
+    controls how long the car sits still scanning instead of driving.
   - **Links to other code:** `drv_servo_settle_ms()` (which uses both
-    constants) is called from `step_to()` in `sub_scan.c`, which is the
-    single function both the coarse and fine sweep loops use for every
-    angle they visit. Get this wrong, and it shows up as a symptom in
+    constants) is called from `step_to()` in `sub_scan.c`, which every
+    ping of the step scan goes through. Get this wrong, and it shows up as a symptom in
     `sub_scan.c`'s scan timing, not in this file.
 - **`drv_servo_init(void)`** — sets up the 50 Hz PWM signal and centers
   the sensor at 90° (straight ahead). Call once at boot, after the
@@ -256,14 +268,15 @@ side actually printed the page.
   above — the code's idea of "90° = straight ahead" only means anything
   if the bracket was bolted on correctly).
 - **`drv_servo_set_angle(int16_t deg)`** — the actual "point it here"
-  function. First it clamps `deg` to `RC_SERVO_ANGLE_MIN`/`MAX` (0–180)
-  so a bug elsewhere can never ask for an angle outside what the bracket
-  can physically reach. Then it does the pulse-width math:
+  function. First it clamps `deg` to `RC_SERVO_ANGLE_MIN`/`MAX` (70–110)
+  so a bug elsewhere can never ask for an angle outside the swing. Then it
+  does the pulse-width math:
   ```c
   pulse_us = PULSE_MIN_US
-           + (((PULSE_MAX_US - PULSE_MIN_US) * (uint32_t)deg) / SWEEP_DEG);
+           + (((PULSE_MAX_US - PULSE_MIN_US)
+               * (uint32_t)(deg - RC_SERVO_ANGLE_MIN)) / SWEEP_DEG);
   ```
-  Read this as: "0° maps to `PULSE_MIN_US`, 180° maps to `PULSE_MAX_US`,
+  Read this as: "70° maps to `PULSE_MIN_US`, 110° maps to `PULSE_MAX_US`,
   and everything in between is proportionally in between" — the same
   logic as reading a value off a ruler between two marked ends. It's
   written as multiply-then-divide (not divide-then-multiply) specifically
@@ -280,12 +293,6 @@ side actually printed the page.
   walkthrough of `US_PER_DEG`/`SETTLE_FIXED_MS` above; this function is
   where those two constants actually get combined: distance travelled
   (in degrees) × time-per-degree, plus the fixed settle allowance.
-- **`drv_servo_release(void)`** — stops sending PWM pulses entirely, which
-  lets the servo go mechanically limp and stop drawing current. This
-  matters because the servo and the drive motors share one battery — a
-  servo move happening at the exact moment the drive motors draw a big
-  current spike (e.g. starting from a stop) can brown out (momentarily
-  starve of power) the whole Pico.
 
 ## `drv_ultrasonic.h` / `drv_ultrasonic.c` — the "shout and listen"
 
@@ -337,12 +344,19 @@ it and exactly what it does:
    - Raises the TRIG pin high (this is the "shout") and arms **TIMER
      alarm 1** to fire again in `RC_ULTRA_TRIG_US` (12 microseconds) —
      the standard trigger pulse length the HC-SR04 datasheet asks for.
+     `alarm_arm()` reads the counter and writes the target with
+     interrupts off, and if the target has already passed it forces the
+     interrupt (`TIMER_INTF`): an RP2040 alarm fires only when the counter
+     *equals* its target, so a missed target would otherwise wait 71.6
+     minutes for the counter to wrap and the sensor would go silent.
    - Returns immediately. Total time spent: a handful of microseconds.
 
 2. **`trig_done_handler` — triggered by TIMER alarm 1 firing**, exactly
    12µs after step 1 armed it. This is the chip's own hardware clock
    jumping straight to this function; nothing was sitting and counting
    down in software. It:
+   - Clears its interrupt flag (hardware or forced) and ignores a late
+     duplicate (state not `ST_TRIG`).
    - Drops TRIG back to low — the trigger pulse is over, and the HC-SR04
      has (by now) started emitting its 40kHz "click" and preparing to
      listen for the echo.
@@ -366,9 +380,9 @@ it and exactly what it does:
    microseconds — and hands that duration off to `finish_i()`. Crucially,
    the actual *division* needed to turn microseconds into millimetres
    (via the `US_TO_MM` macro) does **not** happen here — it's deferred to
-   a "bottom half" function, `ultra_drain()`, that runs later in normal
-   task context. The golden interrupt rule from TEAM_GUIDE.md §1.2
-   applies directly here: an ISR may only record a timestamp and hand
+   a "bottom half" function, `ultra_drain()`, that runs later in the
+   defer task. The golden interrupt rule applies directly here: an ISR
+   may only record a timestamp and hand
    off, never do the heavier work (division, publishing an event, calling
    a user callback) itself. `finish_i()` also does the two things that
    genuinely *can't* wait — masking the ECHO pin's interrupt back off
@@ -407,219 +421,162 @@ use, and it works directly on whatever integer width is handed in.
 **Result delivery — `ultra_drain()` and `RC_EVT_ULTRA_RESULT`.** Once
 `finish_i()` has stashed a raw measurement, it calls
 `rc_defer_signal_i()` to request that `ultra_drain()` run soon, in normal
-task context. `ultra_drain()` converts the width to millimetres, checks
-it against `RC_ULTRA_MIN_MM`/`RC_ULTRA_MAX_MM` (flagging it invalid if
-out of the sensor's honest working range), then publishes
-`RC_EVT_ULTRA_RESULT` on the shared event bus (see TEAM_GUIDE.md §1.2)
-and — if one was registered via `drv_ultrasonic_on_result()` — calls a
-direct callback too. `sub_scan.c`'s `on_range()` is exactly that
-callback: it's what stitches a raw distance reading back into the
-angle-tagged `points[]` array a scan is building up.
+task context (the defer task). `ultra_drain()` converts the width to
+millimetres, checks it against `RC_ULTRA_MIN_MM`/`RC_ULTRA_MAX_MM`
+(treating it as no echo if out of the sensor's honest working range),
+updates `RC_FAULT_NO_ECHO`, then publishes `RC_EVT_ULTRA_RESULT` on the
+shared event bus (12-bit range, **0 = no echo**, no separate valid flag;
+a real echo never reads 0) and — if one was registered via
+`drv_ultrasonic_on_result()` — calls a direct callback too. `sub_scan.c`'s
+`on_range()` is exactly that callback: it keeps the latest reading and
+wakes the scan task.
 
 ## `sub_scan.h` / `sub_scan.c` — scanning, profiling, and planning
 
 This file is where the two drivers above get orchestrated into an actual
-behaviour: sweep, look at what was found, decide what to do about it. It
-is built as **two nested state machines** — the top-level scan state
-(idle / watching / coarse-moving / coarse-pinging / fine-moving /
-fine-pinging) plus the ping/echo state machine inside
+behaviour: look ahead, measure an obstacle, decide what to do about it.
+It is built as **two nested state machines** — the top-level scan state
+(`S_IDLE` / `S_WATCH` / `S_STEP`) plus the ping/echo state machine inside
 `drv_ultrasonic.c` underneath it.
 
-**The event-flag "doorbell" pattern.** Before the state machine itself, a
-quick note on the plumbing: `scan_flgid` is a kernel "event flag" object,
-which is like a doorbell a task can go to sleep listening for (via
-`tk_wai_flg`), instead of constantly checking a mailbox in a loop. Other
-code rings that doorbell (`tk_set_flg`) with one of three named bits:
+**The kernel objects.** `scan_task` (priority `RC_PRI_SCAN`, 8) does all
+the work and sleeps nearly all the time:
 
-- **`FLG_RESULT`** — "an ultrasonic ping just produced a result," rung by
-  `on_range()` (the ultrasonic driver's registered callback) every time a
-  measurement completes.
-- **`FLG_START`** — "please begin a scan," rung by `sub_scan_start()`.
-- **`FLG_ABORT`** — "stop whatever's running," rung by `sub_scan_abort()`.
+- **`scan_semid`**, a semaphore (max count 1) that counts scan requests:
+  `sub_scan_start_measure()` signals it and `scan_task` takes it. A count
+  cannot be lost the way a flag bit can be cleared by someone else; a
+  second request before the first is taken is the same request.
+- **`scan_flgid`**, an event flag with two bits: `FLG_RESULT` ("a ping just
+  produced a result", set by `on_range()`) and `FLG_ABORT` ("stop what's
+  running", set by `sub_scan_abort()`). Waits use `TWF_BITCLR`, which
+  clears only the bits waited for, so a wait for a result can never wipe
+  an abort (or the other way round). A stale abort is cleared when the
+  next request is made, and a stale result before a scan starts.
 
-This is how `scan_task` (the background task driving the whole module)
-can sleep almost the entire time a scan is happening, without polling
-anything.
+**`scan_task(INT stacd, void *exinf)`** — the background task, running
+forever. Each time through the loop:
 
-**The scan state machine.** `scan_state_t` defines the named states:
-`S_IDLE` (nothing happening), `S_WATCH` (slow continuous forward ping —
-see below), `S_COARSE_MOVE`/`S_COARSE_PING` (the broad first sweep),
-`S_FINE_MOVE`/`S_FINE_PING` (the zoomed-in re-scan), and an unused
-`S_DONE` marker. Walking through what actually happens, function by
-function:
+- In `S_WATCH` (the forward watch, see below) it points the servo ahead,
+  pings once, waits for the result, sleeps `RC_PERIOD_SCAN_MS` (60 ms) and
+  loops.
+- Otherwise it waits on `scan_semid` (100 ms timeout, so it re-checks
+  `S_WATCH`). When a request arrives it runs the step scan (`run_step()`),
+  then `publish_and_finish()`, and goes back to `S_WATCH` if a watch is
+  on, else `S_IDLE`.
 
-- **`sub_scan_init(void)`** — creates the event flag and the background
-  `scan_task`, and registers `on_range()` with the ultrasonic driver.
-  Call once at boot, after `drv_servo_init()` and `drv_ultrasonic_init()`.
-- **`sub_scan_start(void)`** — the entry point everything else calls
-  (typically `sub_nav.c`, the shared mission state machine, when it
-  decides an obstacle needs a proper look). Returns `RC_ERR_BUSY` if a
-  scan is already running, otherwise rings `FLG_START` and returns
-  **immediately** — this is the "start it and register a callback"
-  non-blocking pattern from TEAM_GUIDE.md §1.3 in action. The actual
-  scanning work happens later, on `scan_task`'s own schedule.
-- **`scan_task(INT stacd, void *exinf)`** — the background task, created
-  once and running forever (`for (;;)`, a loop with no exit — the normal
-  C idiom for "a task that just keeps doing its job"). Each time through
-  the loop:
-  - If in `S_WATCH`, it pings straight ahead once, waits for the result,
-    then sleeps for `RC_PERIOD_SCAN_MS` before looping again — this is
-    the slow, continuous "is something getting close while I'm just line
-    following" background check (see `sub_scan_set_watch` below).
-  - Otherwise it sleeps (via `tk_wai_flg`) until `FLG_START` is rung (or
-    100ms passes, just so the loop can re-check things periodically).
-  - Once started, it calls `run_coarse()`, then — if something was found
-    — `find_fine_window()` followed by `run_fine()`, then
-    `publish_and_finish()` to report the result. If a watch was requested
-    meanwhile, it drops back into `S_WATCH` instead of `S_IDLE` once done.
-- **`step_to(int16_t angle)`** — the one function both sweep loops call
-  for every angle they visit: ask `drv_servo_settle_ms()` how long this
-  particular move will take, command the servo there, **sleep for that
-  long via `tk_dly_tsk()`** (a genuine kernel sleep — the task is
-  completely off the CPU, not spinning), then start one ultrasonic ping.
-  This single function is where the "non-blocking but still correctly
-  timed" trick lives: from the outside it looks like ordinary sequential
-  code (move, wait, ping), but because the wait is a kernel sleep and not
-  a busy loop, every other task on the system — especially the motion PID
-  loop — keeps running at full rate the entire time.
-- **`wait_result(void)`** — sleeps until either `FLG_RESULT` or
-  `FLG_ABORT` is rung, or 100ms passes as a safety timeout (protecting
-  against a genuinely wedged measurement, not expected to fire in normal
-  operation since the ultrasonic driver has its own timeout — see step 5
-  above).
-- **`run_coarse(void)`** — the broad first pass: steps the servo from
-  `RC_SCAN_COARSE_START` to `RC_SCAN_COARSE_END` in
-  `RC_SCAN_COARSE_STEP`-degree increments (all defined in
-  `rc_config.h`), pinging and collecting a result at each stop. This is
-  the "slowly pan the security camera across the whole visible arc once"
-  pass.
-- **`find_fine_window(void)`** — looks back over everything `run_coarse()`
-  collected, finds the single closest hit that counted as an obstacle
-  (closer than `OBSTACLE_MM`), and computes a narrow angular window
-  (`fine_from`..`fine_to`) centred on it, clamped to the servo's physical
-  travel limits. This is the "spotted something, now swing back and get a
-  closer look at just that spot" step. Returns `false` (skipping the fine
-  scan entirely) if nothing close enough was found.
-- **`run_fine(void)`** — re-scans just that narrow window at the tighter
-  `RC_SCAN_FINE_STEP` spacing, adding these extra, more closely-packed
-  points on top of what the coarse pass already collected. This sharpens
-  the eventual width/clearance estimate around the one obstacle that
-  matters, without paying the cost of scanning the *entire* arc that
-  finely.
-- **`on_range(uint16_t range_mm, bool valid, void *ctx)`** — registered
-  with the ultrasonic driver as its result callback, so this runs in
-  **interrupt context**. It does the bare minimum allowed: store the
-  reading (angle, range, valid) into the next free slot of the `points[]`
-  array — guarded by a bounds check so a scan can never write past the
-  end of the fixed-size array, a classic C bug this code deliberately
-  avoids — then rings `FLG_RESULT` to wake `scan_task`.
+**`step_to(int16_t angle)`** — every ping goes through it: ask
+`drv_servo_settle_ms()` how long the move will take, command the servo,
+**sleep that long via `tk_dly_tsk()`** (a genuine kernel sleep — the task
+is off the CPU, not spinning), then start one ping. **`wait_result()`**
+then sleeps until `FLG_RESULT` or `FLG_ABORT`, or 100 ms as a safety
+timeout (the ultrasonic driver has its own 30 ms timeout, so this only
+catches a wedged measurement).
 
-**The obstacle-profiling trigonometry — `build_profile()`.** Once a scan
-finishes, this function walks every collected `(angle, range)` point once
-and boils the whole scan down into five numbers: closest obstacle
-distance and its bearing, an estimated width, and clearance (open space)
-on the left and right of straight-ahead. The interesting part is the
-width estimate:
+**The step scan — `run_step()` and `step_side()`.** Headings are measured
+from the line, > 0 = left, in tenths of a degree; the chassis heading
+comes from the encoders (`spin_heading()`: mean wheel travel since the
+turn began, over the wheel travel per degree of spin, less the slip
+`SPIN_TURN_EFF_PERMILLE` 800).
 
-```c
-int32_t span_ddeg = ((int32_t)last_hit - (int32_t)first_hit) * 10;
-int32_t span_mrad = (span_ddeg * 1745) / 1000;
-p->width_mm = (uint16_t)(((int32_t)closest * span_mrad) / 1000);
+1. Ping straight ahead (`STEP_PINGS` 2 pings per stop, the nearest valid
+   one counts). If nothing is within `OBSTACLE_MM` (400 mm), stop: there
+   is nothing to measure. Otherwise that range is the obstacle's face.
+2. For the left side, then the right side (`step_side()`):
+   - servo fully out to that side (`RC_SERVO_HALF_SWING`, 20°), chassis
+     straight: ping;
+   - while the echo still comes from the face (`step_on_face()`: no
+     further than the face's plane along the beam plus
+     `SPIN_DEPTH_BAND_MM` 25), turn the chassis `STEP_CHASSIS_DDEG` (5°)
+     further that way (`chassis_to()`: spin at `STEP_TURN_MM_S` 60 mm/s,
+     stop, settle 150 ms, read the heading), and ping again — stopped for
+     every ping, so there is no turning-while-pinging lag;
+   - at the first heading where it does not, walk the servo back
+     `STEP_FINE_DEG` (1°) at a time until the face echoes again: the edge
+     is between the two, to within ±0.5°;
+   - if the beam is still on the face once it points past where the corner
+     of the longest allowed obstacle could be (`OBSTACLE_MAX_MM`, 250 mm
+     out from the line; `step_past_max()`), that side has no edge;
+   - chassis back to straight.
+3. Servo back to 90°, motors stopped.
+
+How far the chassis turns therefore follows from the obstacle (roughly
+10–15° for a 10 cm one), not from a fixed swing. An abort (or a chassis
+turn that does not get there within ~2 s) ends the scan early.
+
+**The profile — `step_profile()`.** Each edge found becomes a corner
+position across the line. The sensor sits `SPIN_SENSOR_AHEAD_MM` (85 mm)
+ahead of the wheel axle (the spin centre); with chassis heading φ, beam
+heading ψ, the beam's half-width β (`SPIN_BEAM_HALF_DDEG`, 8°) and range
+r, the corner is at
+
+```
+x = -(A sin φ + r sin(ψ - side × β))
 ```
 
-The underlying geometry: `width ≈ 2 × range × tan(span / 2)`, where
-`span` is the angular width (in degrees) the obstacle occupied across the
-sweep (`first_hit` to `last_hit` — the first and last angle at which a
-reading counted as "close"), and `range` is the distance to it. Picture
-the sensor at the point of a narrow triangle, with the obstacle's two
-edges as the triangle's other two corners — this is exactly the same
-trigonometry an old-fashioned land surveyor uses to estimate the width of
-something across a field just from one distance and two angles.
+(`isin()` is a sine table in 1° steps, interpolated; there is no FPU).
+`closest_mm` is the face range, `width_mm` the distance between the two
+corners (0 if either edge was not found), `clearance_left_mm` /
+`clearance_right_mm` each corner's distance from the line (0 = that edge
+was not found, so the obstacle may run on past the scan), `n_points` the
+number of stops pinged. The edges also go out as `RC_EVT_SPIN_EDGES`
+(`car/01/spin`) for diagnostics.
 
-The code doesn't call a real `tan()` function, though — and this is the
-key trick, called the **small-angle approximation**: for angles under
-about 60 degrees, `tan(x)` (measured in radians) is close enough to `x`
-itself that the error is smaller than the HC-SR04's own ~15° beam width
-(the sensor's own fuzziness already swamps this shortcut's error). That
-approximation lets the whole computation be done with plain integer
-multiply/divide instead of needing a real trigonometric function — which
-matters because the RP2040 chip has **no hardware floating-point unit
-(FPU)**, so calling a software `tan()` would be slow, and would also
-require `float`/`double` math, which this entire codebase avoids on
-principle (see TEAM_GUIDE.md §5, "No floating point anywhere" — Buddy 4's
-pitch-to-height calculation in `sub_terrain.c` uses this exact same
-small-angle trick for the same reason). Concretely: `span_ddeg` converts
-the angular span into tenths of a degree (keeping it a whole number even
-though the real span may not be a multiple of 10), `span_mrad` converts
-that into milliradians (thousandths of a radian, using the constant 1745
-≈ 1000 × π/180 × 10, i.e. "tenths of a degree to milliradians"), and the
-final line multiplies that angle (in "radians × 1000") by the distance
-and divides back down by 1000 — which works out to exactly `range ×
-angle_in_radians`, standing in for the full `2 × range × tan(span/2)`
-formula (the factor of 2 and the "half the span" cancel out
-algebraically, which is why neither shows up explicitly in the code).
+**The decision — `spin_plan()`.** Takes the profile and turns it into one
+of:
 
-**Clearance counting.** `clearance_left_mm`/`clearance_right_mm` are
-*not* a measured gap width — they're a count of how many sampled bearings
-on each side of straight-ahead came back "clear" (farther than
-`OBSTACLE_MM`), multiplied by the angular spacing between samples
-(`RC_SCAN_COARSE_STEP`) to turn "N clear bearings" into a rough linear
-distance. This is a deliberately crude stand-in: a single narrow ranging
-beam, sampled in discrete angular steps, can honestly only report "this
-direction looked open," not a smooth, precise gap width.
+- **go straight** — nothing within `OBSTACLE_MM`;
+- **stop** — neither edge found;
+- **go round on the side away from the obstacle**: with both edges seen,
+  if the obstacle's centre is right of the line (or on it) go left, else
+  right; with one edge unseen, the obstacle reaches past the scan on that
+  side, so go round the other side. `lateral_mm` is that side's edge
+  distance from the line plus half `CAR_WIDTH_MM`; `forward_mm` is how far
+  ahead of the axle's present position the axle must get before turning
+  back in: sensor offset + face range + the obstacle's depth (taken as
+  square: its measured length, capped at `OBSTACLE_MAX_MM`, which is also
+  used when an edge was not seen) + the car's rear overhang
+  (`SPIN_REAR_MM` 55) + a margin (`SPIN_PAST_MARGIN_MM` 30).
 
-**The decision — `build_plan()`.** Takes the profile above and turns it
-into one of: go straight (nothing close, or the nearest thing is further
-than `OBSTACLE_MM`), stop (both `clearance_left_mm` and
-`clearance_right_mm` are below `CAR_WIDTH_MM` — nowhere safe to fit), or
-turn toward whichever side reported more clearance (`>=` breaks a tie
-toward turning left, an arbitrary but consistent choice). When it decides
-to turn, it also computes how far sideways (`lateral_mm`) and forward
-(`forward_mm`) to steer — half the car's width plus half the obstacle's
-width sideways, and the obstacle's width plus a 100mm margin forward —
-simple geometric estimates for clearing the obstacle's far edge before
-straightening back out. `build_plan()` only *decides*; it's
-`sub_motion.c` (Buddy 2's module) that actually drives the resulting
-turn/distance commands.
+`spin_plan()` only *decides*; `sub_nav` drives the bypass (45° out,
+parallel, 45° in, then a line scan to rejoin) with Buddy 2's
+`sub_motion` calls.
 
 **Reporting the result — `publish_and_finish()`.** Builds the profile and
-plan, then publishes both on the shared event bus:
-`RC_EVT_OBSTACLE_PROFILE` and `RC_EVT_AVOIDANCE_PLAN`. `sub_nav.c` (the
-shared mission state machine everyone's module plugs into — see
-TEAM_GUIDE.md §2.2) subscribes to `RC_EVT_AVOIDANCE_PLAN` to know when
-it's time to leave `RC_NAV_AVOIDING` mode and hand off to `sub_motion.c`'s
-actual turn/drive commands; `sub_telemetry.c` (Buddy 1's module)
-subscribes to `RC_EVT_OBSTACLE_PROFILE` to report what was found. Any
-direct callback registered via `sub_scan_on_complete()` is also called
-here, and finally the state machine resets to idle (or back to `S_WATCH`
-if a continuous watch was requested).
+plan, publishes `RC_EVT_OBSTACLE_PROFILE`, `RC_EVT_AVOIDANCE_PLAN` and
+`RC_EVT_SPIN_EDGES`, and sets the state back to idle. `sub_nav` subscribes
+to `RC_EVT_AVOIDANCE_PLAN` (in AVOIDING); `sub_telemetry` (Buddy 1)
+reports all three.
+
+**`on_range(uint16_t range_mm, bool valid, void *ctx)`** — registered with
+the ultrasonic driver as its result callback, so it runs in the defer
+task. It stores the latest reading and sets `FLG_RESULT` to wake
+`scan_task`.
 
 **Continuous forward watch — `sub_scan_set_watch(bool on, uint16_t
-trigger_mm)`.** A lighter-weight mode than a full scan: while the car is
-just line-following, one ping straight ahead fires every
-`RC_PERIOD_SCAN_MS` so the car can notice something getting close without
-running a full sweep constantly — like a security camera's motion sensor
-staying on low-power standby between active sweeps. `sub_nav.c` subscribes
-to `RC_EVT_ULTRA_RESULT` directly (not through this module) and decides
-when a watch reading is close enough to escalate into a real
-`sub_scan_start()`.
+trigger_mm)`.** While the car is line-following, one ping straight ahead
+every `RC_PERIOD_SCAN_MS`, each result published as
+`RC_EVT_ULTRA_RESULT`. `trigger_mm` is accepted but not used here:
+`sub_nav` subscribes to `RC_EVT_ULTRA_RESULT` itself and decides when a
+reading is close enough (200 mm) to stop and call
+`sub_scan_start_measure()`.
+
+**Public API (`sub_scan.h`).** `sub_scan_init()` creates the flag, the
+semaphore and the task and registers `on_range()` (call once at boot,
+after `drv_servo_init()` and `drv_ultrasonic_init()`);
+`sub_scan_start_measure()` requests a step scan (returns at once,
+`RC_ERR_BUSY` if one is running; the motors must be free);
+`sub_scan_busy()` is true while a scan runs (not the watch);
+`sub_scan_abort()` stops a running scan and drops a request not yet taken;
+`sub_scan_set_watch()` turns the forward watch on or off.
 
 **Missing / TODO for Buddy 5**
 
-- **No memory of which side was chosen last time.** On a track with
-  several obstacles in a row, the planner picks left-or-right
-  independently each time from current clearance counts only. If it
-  alternates sides between obstacles, the car wastes distance zig-
-  zagging. Needs a small piece of state remembering the last avoidance
-  direction (with a bias toward repeating it when clearance is roughly
-  tied).
+- **Length accuracy is limited by the sensor.** The HC-SR04 sees a flat
+  face only over a narrow angle and its beam is wide; `SPIN_BEAM_HALF_DDEG`
+  and `SPIN_TURN_EFF_PERMILLE` are fitted values to re-check on a known
+  object.
 - **No "reverse and reattempt" case.** The project brief calls for this,
-  but `build_plan()` currently just returns `RC_CMD_STOP` when both
-  `clearance_left_mm` and `clearance_right_mm` are below `CAR_WIDTH_MM` —
-  it stops rather than backing up and trying a different approach angle.
-  Needs: when both sides are too narrow, issue a reverse command, then
-  re-trigger `sub_scan_start()` from the new position.
-- **Report the real angular resolution honestly.** The HC-SR04's ~15°
-  beam width means `RC_SCAN_FINE_STEP` (6°) is oversampling for smoothing
-  only — the sensor physically cannot distinguish bearings closer than
-  ~15° apart. Say so in writeups rather than claiming 6° accuracy.
+  but `spin_plan()` returns `RC_CMD_STOP` when neither edge was found —
+  it stops rather than backing up and trying again.
+- **Single-ping trigger.** `sub_nav` starts avoidance on one watch reading
+  at or under 200 mm; a stray short reading can stop the car for a scan.

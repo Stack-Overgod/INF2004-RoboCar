@@ -49,7 +49,8 @@ int16_t sub_terrain_height_mm(void);
 rc_motion_class_t sub_terrain_motion_class(void);
 
 /* Worst-case execution time (WCET) observed for on_sample() on the FAST
- * event dispatcher lane, in microseconds (must fit well within 5000 us). */
+ * event dispatcher lane, in microseconds (must fit well within the
+ * RC_PERIOD_IMU_MS sample period). */
 uint32_t sub_terrain_wcet_us(void);
 
 /* Clears hump-tracking and motion-class state back to defaults, e.g. at

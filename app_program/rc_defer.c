@@ -18,7 +18,6 @@ static slot_t   slots[DEFER_MAX];
 static uint32_t n_slots;
 static ID       defer_flgid;
 static ID       defer_tskid;
-static uint32_t drain_count;
 
 static void defer_task(INT stacd, void *exinf)
 {
@@ -40,7 +39,7 @@ static void defer_task(INT stacd, void *exinf)
         } else if (er != E_OK) {
             continue;
         } else {
-            drain_count++;
+            /* ptn holds the bits that were signalled */
         }
 
         for (i = 0U; i < n_slots; i++) {
@@ -133,9 +132,4 @@ void rc_defer_signal_i(int32_t handle)
     if ((handle >= 0) && (handle < (int32_t)DEFER_MAX)) {
         (void)tk_set_flg(defer_flgid, (UINT)(1U << (uint32_t)handle));
     }
-}
-
-uint32_t rc_defer_count(void)
-{
-    return drain_count;
 }

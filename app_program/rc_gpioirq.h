@@ -5,15 +5,15 @@
  *
  *  The RP2040 gives all 30 GPIOs one interrupt line. Two drivers need
  *  edges (two encoders, the ultrasonic echo), so something has to
- *  demultiplex. This module owns the vector and hands
- *  each pin to its registered handler.
+ *  demultiplex. This module owns the vector and hands each pin to its
+ *  registered handler.
  *
  *  Handler contract
  *  ----------------
  *   - Runs in INTERRUPT context, not task context.
- *   - Must be short. Timestamp, update a counter, publish an event,
- *     return. No printing, no waiting, no tk_ calls other than the ones
- *     documented as interrupt safe (tk_set_flg, tk_sig_sem, tk_isig_tim).
+ *   - Must be short (the rules in rc_defer.h): store the timestamp,
+ *     update the driver's state, rc_defer_signal_i(), return. No
+ *     printing, no waiting, no event publishing.
  *   - `level` is the pin state read at entry, which is a hint rather than
  *     a guarantee on a fast edge.
  */
@@ -33,12 +33,12 @@ typedef void (*rc_gpio_isr_t)(uint32_t pin, bool level, uint32_t t_us,
                               void *ctx);
 
 /*
- *  Claim IO_IRQ_BANK0 and clear the table. Call once, before any driver
- *  that registers a pin.
+ *  Claim IO_IRQ_BANK0 and clear the table. Call before any driver that
+ *  registers a pin; later calls do nothing.
  *
  *  Note for SMP builds: the vector is enabled in core 0's NVIC only, per
  *  the port's rule that a shared peripheral IRQ has exactly one owner
- *  core. Handlers therefore always run on processor 1.
+ *  core. Handlers therefore always run on core 0 (TP_PRC1).
  */
 rc_result_t rc_gpioirq_init(void);
 
@@ -53,8 +53,6 @@ rc_result_t rc_gpioirq_attach(uint32_t pin,
                               rc_gpio_isr_t cb,
                               void *ctx);
 
-rc_result_t rc_gpioirq_detach(uint32_t pin);
-
 /* Mask or unmask one pin without losing its registration. Used by the
  * ultrasonic driver, which only wants echo edges while a ping is live. */
 rc_result_t rc_gpioirq_enable(uint32_t pin, bool on);
@@ -63,6 +61,8 @@ rc_result_t rc_gpioirq_enable(uint32_t pin, bool on);
 /* Risk 1 / NFR5 instrumentation, TEST builds only. */
 uint32_t rc_gpioirq_max_us(void);
 uint32_t rc_gpioirq_irq_count(void);
+/* worst-case time inside `pin`'s callback alone, us (0 if unused) */
+uint32_t rc_gpioirq_pin_max_us(uint32_t pin);
 void     rc_gpioirq_probe_reset(void);
 #endif
 

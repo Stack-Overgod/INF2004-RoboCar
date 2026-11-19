@@ -11,8 +11,9 @@
  *          A plain `mask |= bit` on the M0+ (no LDREX/STREX) would fail
  *          this; the kernel event flag must not. Test bits 8..10 are
  *          outside the telemetry byte, so the run is invisible on MQTT.
- *  CR1-T3  Sense task timing with the ADC barcode read added: no missed
- *          10 ms periods, and the longest ADC sample + threshold.
+ *  CR1-T3  Sense task timing: no missed 10 ms periods, and the longest
+ *          barcode ADC read made by the Sense task (0 when RC_BAR_ADC_FIFO
+ *          is 1, where the ADC FIFO interrupt samples it instead).
  *
  *  Called from usermain() after the subsystem tests.
  */
@@ -160,7 +161,7 @@ static bool check_t2(void)
     return ok;
 }
 
-/* 3 s of the Sense task as it runs (line + IMU + ADC barcode). */
+/* 3 s of the Sense task as it runs. */
 static bool check_t3(void)
 {
     uint32_t over0 = rc_sense_overruns();

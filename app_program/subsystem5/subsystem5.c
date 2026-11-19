@@ -10,19 +10,19 @@
  *	below rely on (drv_ultrasonic uses rc_gpioirq + rc_defer; sub_scan
  *	subscribes to the event bus).
  *
- *	NOTE: the S5 modules return rc_result_t (RC_OK == 0); the template
- *	wants ER.  RC_OK becomes E_OK, anything else E_SYS so usermain()'s
- *	CHECK() flags it (same convention as subsystem1.c).
+ *	The S5 modules return rc_result_t (RC_OK == 0); the template wants
+ *	ER.  RC_OK becomes E_OK, anything else E_SYS so usermain()'s CHECK()
+ *	flags it (same convention as subsystem1.c).
  *
  *	Init order is fixed by the drivers: servo and ultrasonic hardware
  *	must be up before sub_scan_init(), which registers the ultrasonic
  *	result callback and creates the Scan task (see sub_scan.c).
  *
- *	What this subsystem does NOT start here: the forward watch and full
- *	coarse/fine scans.  Per report §6.5 those are driven by sub_nav
+ *	What this subsystem does NOT start here: the forward watch and the
+ *	obstacle scans.  Per report §6.5 those are driven by sub_nav
  *	(app_program/sub_nav.c: sub_scan_set_watch() while FOLLOWING,
- *	sub_scan_start() on a close reading), which usermain() starts after
- *	every subsystem is up.  So S5 comes up idle: the Scan task is
+ *	sub_scan_start_measure() on a close reading), which usermain() starts
+ *	after every subsystem is up.  So S5 comes up idle: the Scan task is
  *	created and parked, drivers are ready, and nothing pings until sub_nav
  *	(or the TEST=1 self-test) asks.  This also keeps a TEST=1 build clean
  *	-- no background pings competing with subsystem5_test()'s own pings.
@@ -54,8 +54,8 @@ EXPORT ER subsystem5_init(void)
 EXPORT ER subsystem5_start(void)
 {
 	/* Nothing to start here.  sub_scan_init() already created and
-	 * started the Scan task (it parks in S_IDLE waiting on its event
-	 * flag).  The forward watch and avoidance scans are turned on by
-	 * sub_nav during FOLLOWING (report §6.5), not at boot. */
+	 * started the Scan task (it parks in S_IDLE waiting on its request
+	 * semaphore).  The forward watch and avoidance scans are driven by
+	 * sub_nav (report §6.5). */
 	return E_OK;
 }

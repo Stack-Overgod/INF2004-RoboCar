@@ -1,5 +1,5 @@
 /*
- *  sub_line.c
+ *  sub_line.c  -  line follower on RC_EVT_LINE_SAMPLE, steering sub_motion
  */
 #include "../rc_prelude.h"
 #include "sub_line.h"
@@ -18,28 +18,17 @@
 #define RC_LINE_STRADDLE    (1)
 #endif
 
-#if RC_LINE_STRADDLE
 /* 2 s of 0/0 before the line counts as lost and the search starts: 200
  * samples of RC_PERIOD_LINE_MS, ~60 mm at line speed. Longer leaves the
- * car too far past the end of the line before it searches. */
+ * car too far past the end of the line before it searches. In edge mode
+ * (RC_LINE_STRADDLE 0) the car arcs back toward the last-seen side until
+ * then. */
 #define LOST_THRESHOLD      (200U)
-/* Gentle correction, +-30 permille: wheels 380 / 320 at base 350, about
- * 46 mm/s wheel difference = 0.4 rad/s, so ~2-5 degrees over the 0.1 to
- * 0.23 s a correction lasts. A longer one-sided reading keeps tightening
- * the turn (STEER_STEP). */
+/* Gentle first correction: position (+-500) x STEER_KP / STEER_DIV =
+ * +-30 permille. A longer one-sided reading keeps tightening the turn
+ * (STEER_STEP). */
 #define STEER_KP            (3)
 #define STEER_DIV           (50)
-#else
-/* Samples of 0/0 (off the line) before the line counts as lost: 2 s.
- * Until then the car arcs back toward the side the line was last seen on
- * (see on_sample), so this is the time it gets to find the line again
- * before LOST. */
-#define LOST_THRESHOLD      (200U)
-/* Same gentle first correction as straddle mode (+-30 permille, then
- * STEER_STEP). */
-#define STEER_KP            (3)
-#define STEER_DIV           (50)
-#endif
 
 /* Both sensors on the line for this long means a junction or a barcode
  * lead-in, not a centred car. */
@@ -78,16 +67,10 @@
  * floor drops to ~113: if the inner wheel stalls in turns (dead band, see
  * TURN_INNER_MIN), raise TURN_INNER_MIN rather than this. */
 #define SPEED_SCALE         (750)
-/* Extra power for the curve arcs only (both wheels), permille, on top of
- * SPEED_SCALE: 1100 = +10 %, because at 75 % the arcs bog down. Drift
- * corrections are not affected. */
-#define ARC_POWER           (1100)
 
 /* Open loop (LINE_CLOSED_LOOP 0): a curve turn is a near spin on the
  * spot, forward speed TURN_SPEED permille of the straight speed (100 =
- * 10 %), wheels base +- TURN_SPIN in opposite directions. Before
- * SPEED_SCALE: 35 +- 235 = 270 / -200, motors ~202 / -150, both out of
- * the dead band, ~130 deg/s. */
+ * 10 %), wheels base +- TURN_SPIN in opposite directions. */
 #define TURN_SPEED          (100)
 #define TURN_SPIN           (235)
 /* Open loop: the inner wheel never goes below this duty. Between about
@@ -103,14 +86,9 @@
  * curve ends when the OTHER sensor sees
  * the line (turned enough or a little past - it then corrects back), or
  * after CURVE_HOLD samples of 0/0.
- * Arc wheels for radius R, wheel spacing W: outer / inner = (R + W/2) /
- * (R - W/2), inner at TURN_INNER_MIN. ARC_SPEED_CAL_L/R correct for the
- * open-loop duty-to-speed curve of each motor (measured below). */
-/* A drift recentres within ~150 ms; a 140 mm corner keeps the line on
+ * A drift recentres within ~150 ms; a 140 mm corner keeps the line on
  * one side longer. Shorter values make ordinary drifts on a straight
  * commit arcs, and the car zig-zags. */
-/* 160 ms: the same distance along the line as 80 ms at twice the line
- * speed. */
 #define CURVE_AFTER         (16U)
 #define CURVE_HOLD          (30U)
 /* A 0/0 shorter than this (100 ms) does not reset the CURVE_AFTER count:
@@ -127,7 +105,7 @@
 #define ESCAPE_MIN          (6U)
 #define ESCAPE_MAX          (14U)   /* must stay below CURVE_AFTER */
 /* ...and only if the line had sat between the sensors for this many
- * samples (250 ms) before that reading: a real curve starts from a
+ * samples before that reading: a real curve starts from a
  * settled straight. Without this, every swing of a weave looks like an
  * escape, commits a full arc and swings the car back across. */
 #define ESCAPE_SETTLED      (15U)   /* 150 ms */
@@ -167,15 +145,11 @@
  * the left (outer) wheel unchanged. Right turns on the 140 mm curves need
  * the right motor ~5 % faster. */
 #define ARC_RIGHT_INNER_PERMILLE (1050)
-/* Open loop, per direction, permille: the motors differ at low duty. At
- * 150 inner, right turns run 275 / 130 mm/s (ratio 2.1) and left turns
- * 275 / 160 (ratio 1.8, R ~190 mm). Scaled so both reach the 2.33 ratio
- * of R = 140 mm. */
+/* Open loop, per turn direction, permille: the motors differ at low duty
+ * (at 150 inner, right turns ran 275 / 130 mm/s and left turns 275 / 160).
+ * Only their ratio is used, by STEER_TRIM_L. */
 #define ARC_SPEED_CAL_R     (1210)  /* right turn: left motor is outer */
 #define ARC_SPEED_CAL_L     (1410)  /* left turn: right motor is outer */
-#define ARC_OUTER(cal)      ((TURN_INNER_MIN * (ARC_RADIUS_MM \
-                              + (int32_t)RC_WHEEL_BASE_MM / 2) * (cal)) \
-                             / ((ARC_RADIUS_MM - (int32_t)RC_WHEEL_BASE_MM / 2) * 1000))
 
 /* Both sensors black: a crossing line (the middle of a figure of 8) or a
  * barcode bar clears in under ~100 ms and is crossed straight. A 1/1 that
@@ -184,16 +158,13 @@
 #define CROSS_AFTER         (15U)
 
 /* FR9 / FR12 line search. Once LOST the car spins in place
- * SEARCH_SWEEP_DEG left,
- * then back right to SEARCH_SWEEP_DEG right of where it started, at
- * SEARCH_SPIN_MM_S per wheel (closed loop). The first sample with either
- * sensor on the line ends the search: the spin stops, the car drives
- * forward toward the line and the normal correction takes over. Line not
+ * SEARCH_SWEEP_DEG left, then back right to SEARCH_SWEEP_DEG right of
+ * where it started, at SEARCH_SPIN_MM_S per wheel (closed loop). The
+ * first sample with either sensor on the line ends the search: the spin
+ * stops and the normal correction takes over. Line not
  * found by the end of the right sweep: brake and report RECOVERY_FAILED.
  * The angle comes from the encoder clicks (both wheels, any direction):
- * a wheel travels (W/2) * pi / 180 = 977 um per degree of spin. Does not
- * apply in SEARCHING: there sub_nav owns the search (RECOVERING, after a
- * bypass). */
+ * a wheel travels (W/2) * pi / 180 = 977 um per degree of spin. */
 #define SEARCH_SWEEP_DEG    (135)
 /* sub_line_find() passes its own limit: after a junction turn the branch
  * line is close, so sub_nav sweeps only 35 degrees. */
@@ -218,10 +189,8 @@ static rc_line_state_t state = RC_LINE_TRACKING;
 static bool     enabled;
 /* true once a LOST search timed out: no output until re-enabled */
 static bool     gave_up;
-/* forward speed while tracking, in permille (parts per 1000 of full speed).
- *  At 350 the car stalled on
- * the ridge between two foam tiles, so the
- * joint must be taped; 400 if it still stalls. */
+/* forward speed while tracking, in permille (parts per 1000 of full
+ * speed); line_drive() converts it */
 static int16_t  base_permille = 175;
 /* consecutive samples with neither sensor on the line */
 static uint32_t lost_count;
@@ -460,7 +429,7 @@ static void search_step(void)
     }
     if ((sweep == SWEEP_RIGHT) && (h >= sweep_limit)) {
         /* FR9 / FR12: not found either side. Brake and report it; stay
-         * silent until sub_line_enable() or sub_line_begin_search(). */
+         * silent until sub_line_enable(). */
         sweep   = SWEEP_NONE;
         gave_up = true;
         (void)sub_motion_stop(true);
@@ -475,15 +444,15 @@ static void search_step(void)
 }
 
 /* A sensor sees the line again (1/0, 0/1 or 1/1). Report §6.5: "any
- * sensor seeing the line -> LINE_REACQUIRED", after a real loss (LOST) as
- * well as after a deliberate search (SEARCHING), and before the junction
- * check, because re-entering the line at an angle often reads 1/1. */
+ * sensor seeing the line -> LINE_REACQUIRED" after a loss (LOST), before
+ * the junction check, because re-entering the line at an angle often
+ * reads 1/1. */
 static void line_seen(void)
 {
     lost_count = 0U;
     sweep      = SWEEP_NONE;    /* a search spin ends here */
 
-    if ((state == RC_LINE_LOST) || (state == RC_LINE_SEARCHING)) {
+    if (state == RC_LINE_LOST) {
         state = RC_LINE_TRACKING;
         publish_id(RC_EVT_LINE_REACQUIRED);
     }
@@ -610,13 +579,6 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         both_count = 0U;
         lost_count++;
 
-        if (state == RC_LINE_SEARCHING) {
-            /* Deliberately off-line. Keep whatever sub_nav commanded,
-             * do not steer and do not declare it lost; sub_nav times
-             * this search out itself (FR9). */
-            return;
-        }
-
         if (reading && (lost_count >= LOST_THRESHOLD)) {
             /* Reading a barcode: the white spaces between the bars are
              * not a lost line. Hold the count just short of LOST, so the
@@ -723,34 +685,6 @@ rc_result_t sub_line_enable(bool on)
     return RC_OK;
 }
 
-/* Left the line on purpose so it looks for the
- * line again instead of immediately declaring it lost. */
-rc_result_t sub_line_begin_search(void)
-{
-    state       = RC_LINE_SEARCHING;
-    gave_up     = false;
-    lost_count  = 0U;
-    steer_level = 0;
-    curve_dir   = 0;
-    d_term      = 0;
-    prev_err    = 0;
-    return RC_OK;
-}
-
-/* Reports the current line-follow mode (tracking / lost / searching /
- * junction) so other modules can react. */
-rc_line_state_t sub_line_state(void)
-{
-    return state;
-}
-
-/* Sets the forward cruising speed used while tracking, in permille*/
-rc_result_t sub_line_set_base(int16_t permille)
-{
-    base_permille = permille;
-    return RC_OK;
-}
-
 /* sub_barcode calls this when a read starts (on) and ends (off). Only
  * the LOST declaration is held off; steering is unchanged. */
 rc_result_t sub_line_set_reading(bool on)
@@ -772,8 +706,8 @@ bool sub_line_reading(void)
 
 /* sub_nav: find the line now, with the in-place sweep (left then right,
  * no nudge: there is no last-seen side yet). For the start of a run and
- * after a junction turn. The first sample with a
- * sensor on the line ends it, as after LOST; not found: RECOVERY_FAILED.
+ * after a junction turn. The first sample with a sensor on the line ends
+ * it, as after LOST; not found: RECOVERY_FAILED.
  * sweep_deg: how far each side (SEARCH_SWEEP_DEG for a full search).
  * Call after sub_line_enable(true). */
 rc_result_t sub_line_find(int16_t sweep_deg)

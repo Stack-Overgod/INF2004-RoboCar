@@ -2,14 +2,15 @@
  *  rc_sense.c  -  the shared Sense task. See rc_sense.h.
  *
  *  Shared so that neither subsystem 3 nor 4 depends on the other. The
- *  line pair, the barcode sensor and the IMU are all sampled every 10 ms
- *  (NFR1, one 10 ms kernel tick).
+ *  line pair and the IMU are sampled every 10 ms (NFR1, one 10 ms kernel
+ *  tick), and the barcode ADC too when RC_BAR_ADC_FIFO is 0.
  */
 #include "rc_prelude.h"
 #include "rc_config.h"
 #include "rc_sense.h"
 #include "rc_period.h"
 #include "rc_time.h"
+#include "rc_wdog.h"
 #include "subsystem3/drv_ir.h"
 #include "subsystem4/drv_imu.h"
 
@@ -72,14 +73,17 @@ static void timed(void (*fn)(void), volatile uint32_t *max_us)
 #define SENSE_IMU()   drv_imu_sample()
 #define SENSE_BAR()   drv_ir_sample_barcode()
 #endif
+#if RC_BAR_ADC_FIFO
+#undef SENSE_BAR
+#define SENSE_BAR()   ((void)0)     /* the ADC FIFO interrupt samples it */
+#endif
 
 /*
  * Wakes every RC_PERIOD_LINE_MS. drv_ir_sample_line() publishes
  * RC_EVT_LINE_SAMPLE (sub_line on FAST, telemetry on SLOW). On every
  * SENSE_IMU_EVERY-th tick drv_imu_sample() publishes RC_EVT_IMU_SAMPLE
  * (sub_terrain); it returns at once while the IMU is not open, so a
- * missing IMU does not delay the line samples. tk_dly_tsk() can only fail
- * if the task is released early, which nothing does.
+ * missing IMU does not delay the line samples.
  */
 static void sense_task(INT stacd, void *exinf)
 {
@@ -91,6 +95,12 @@ static void sense_task(INT stacd, void *exinf)
     for (;;) {
         sense_overruns += rc_period_wait();
         tick++;
+#if RC_WDOG_STALL_TEST
+        if (tick < (30000U / RC_PERIOD_LINE_MS))
+#endif
+        {
+            rc_wdog_checkin(RC_WDOG_SENSE);
+        }
 
         /* Barcode AO, before the test hold: it only queues edges while
          * armed, and the S3 hand test reads its level. */

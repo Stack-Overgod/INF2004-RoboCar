@@ -20,11 +20,11 @@ Going the other way, Buddy 1 puts two things on the bus for you:
 ```
 Buddy 2 ─┐ ODOMETRY, MOTION_DONE                      ┌─> car/01/state   every 250 ms
 Buddy 3 ─┤ LINE_SAMPLE, LINE_LOST/REACQUIRED, BARCODE ├─> car/01/status  every 2 s
-Buddy 4 ─┼ IMU_SAMPLE, MOTION_CLASS, HUMP_END, IMPACT ├─> car/01/barcode, hump, ...  on the event
+Buddy 4 ─┼ IMU_SAMPLE, MOTION_CLASS, HUMP/RAMP, LIFTED├─> car/01/barcode, hump, ...  on the event
 Buddy 5 ─┘ ULTRA_RESULT, OBSTACLE_PROFILE, AVOID_PLAN │
              (rc_event, SLOW lane)  ──>  Buddy 1  ─────┘   (s1_mbf_tx -> kernel MQTT -> broker)
 
-dashboard -> car/01/cmd -> kernel -> s1_mbf_rx -> Buddy 1 -> RC_EVT_COMMAND_RX -> vehicle controller
+dashboard -> car/01/cmd -> kernel -> s1_mbf_rx -> Buddy 1 -> RC_EVT_COMMAND_RX -> sub_nav
                                                            -> car/01/ack (echo)
 ```
 
@@ -48,9 +48,9 @@ into them the same way:
 
 | Phase | Who | What Buddy 1 does there |
 |---|---|---|
-| 0 | `app_main.c` | starts the shared layer: `rc_defer_init()`, `rc_event_init()`, `rc_gpioirq_init()`. The bus is running before anyone subscribes. |
-| 1 | `subsystem1_init()` | `sub_telemetry_init()`: subscribes to the 13 events in `subs[]` and, in an MQTT build, creates the two message buffers. **No tasks yet.** |
-| 2 | `subsystem1_start()` | `sub_telemetry_start_task()`: starts the `telemetry` task at priority 12 (S1's band is 12–13). |
+| 0 | `app_main.c` | starts the shared layer: `rc_defer_init()`, `rc_event_init()`, `rc_gpioirq_init()`, `rc_fault_init()`. The bus is running before anyone subscribes. |
+| 1 | `subsystem1_init()` | `sub_telemetry_init()`: subscribes to the 18 events in `subs[]` and, in an MQTT build, creates the two message buffers. **No tasks yet.** |
+| 2 | `subsystem1_start()` | `sub_telemetry_start_task()`: starts the `telemetry` task at priority 12 (`S1_PRI_TELEMETRY` = `RC_PRI_TELEMETRY`, the lowest application priority). |
 
 `subsystem1.c` is just those two calls. The work lives in `sub_*.c` files,
 and `rc_result_t` is turned into the `ER` the template wants:
@@ -69,7 +69,7 @@ EXPORT ER subsystem1_start(void)
 
 Your subsystem has the same shape. `subsystemN_init()` calls your `drv_*_init()` /
 `sub_*_init()` (they create objects and **subscribe**), and `subsystemN_start()`
-starts your tasks with `app_start_task(entry, SN_PRI_..., core, "name")`.
+starts your tasks with `app_start_task(entry, RC_PRI_..., core, "name")` (priorities from `rc_config.h`).
 Subscribe in `_init`, never in `_start`. On the dual-core build another task
 can run the moment you start one, so every subscription has to exist first.
 
@@ -94,16 +94,21 @@ message, and return.
 | **Buddy 2** | `RC_EVT_ODOMETRY` | every 20 ms | `speed_l_mm_s`, `speed_r_mm_s`, `dist_l_mm`, `dist_r_mm` | `state`: `spd_l`, `spd_r`, `dist` (average of both wheels) · `status`: live flag 1 |
 | | `RC_EVT_MOTION_DONE` | a queued move finishes or aborts | `move_id`, `completed`, `travelled_mm` | `car/01/move` |
 | | `drv_encoder_count()`, `drv_motor_get()` | read every 250 ms | (direct calls, no event exists) | `state`: `enc_l`, `enc_r`, `m_l`, `m_r` |
-| **Buddy 3** | `RC_EVT_LINE_SAMPLE` | every 5 ms | `on_line_l`, `on_line_r` | `state`: `line` ("10" = left on black) · live flag 2 |
+| **Buddy 3** | `RC_EVT_LINE_SAMPLE` | every 10 ms | `on_line_l`, `on_line_r` | `state`: `line` ("10" = left on black) · live flag 2 |
 | | `RC_EVT_LINE_LOST` / `RC_EVT_LINE_REACQUIRED` | on the change | (none) | `car/01/line` `{"lost":1}` / `{"lost":0}` |
-| | `RC_EVT_BARCODE_DECODED` | a character decodes | `symbol`, `command`, `reversed` | `car/01/barcode` · `state`: `bc` |
+| | `RC_EVT_BARCODE_DECODED` | a character decodes | `sym`, `command`, `reversed` | `car/01/barcode` · `state`: `bc` |
+| | `RC_EVT_BARCODE_SCAN`, `RC_EVT_BARCODE_RAW` | each decode attempt | all fields | `car/01/bcscan`, `car/01/bcbits` |
 | **Buddy 4** | `RC_EVT_IMU_SAMPLE` | every 10 ms | (only that it arrives) | `status`: live flag 3. A `0` here is how "IMU unavailable" shows (FR15). |
 | | `RC_EVT_MOTION_CLASS` | **only when the class changes** | `cls` | `state`: `cls` · `car/01/motion` (FR14) |
 | | `RC_EVT_HUMP_END` | a hump finishes | `peak_mm`, `duration_ms`, `max_pitch_deg` | `car/01/hump` · `state`: `peak` (highest so far) |
-| | `RC_EVT_IMPACT` | a collision | (none) | `car/01/impact` |
-| **Buddy 5** | `RC_EVT_ULTRA_RESULT` | each ping | `angle_deg`, `range_mm`, `valid` | `state`: `rng`, **only readings at 90° ± 5°** (straight ahead); `valid = false` reads as 0 · live flag 4 |
+| | `RC_EVT_RAMP_END` | a slope finishes | all four fields | `car/01/ramp` |
+| | `RC_EVT_LIFTED` | the car is picked up, tilted or overturned | `why`, `h_mm`, `v_cm_s`, `ref_mg` | `car/01/lifted` |
+| | `sub_terrain_height_mm()` | read every 250 ms | (direct call, no event) | `state`: `h` |
+| **Buddy 5** | `RC_EVT_ULTRA_RESULT` | each ping | `angle_deg`, `range_mm` | `state`: `rng`, **only readings at 90° ± 5°** (straight ahead); range 0 = no echo · live flag 4 |
 | | `RC_EVT_OBSTACLE_PROFILE` | a scan completes | all six fields | `car/01/obstacle` |
 | | `RC_EVT_AVOIDANCE_PLAN` | right after the profile | `action`, `lateral_mm`, `forward_mm` | `car/01/avoid` |
+| | `RC_EVT_SPIN_EDGES` | right after the plan | all fields | `car/01/spin` |
+| **nav** | `sub_nav_state()`, `rc_fault_get()` | read every 250 ms | (direct calls, no event) | `state`: `nav`, `flt` |
 
 Publishing is what you already do:
 
@@ -119,9 +124,8 @@ evt.u.hump.max_pitch_deg = (int16_t)(peak_pitch / 10);
 
 ### Things that break the link (please check yours)
 
-1. **Your code isn't started.** On main, `subsystem2..5_init/start` are still
-   the empty template, so nothing you publish exists yet. Wire your
-   `_init`/`_start` like the table above. The status message's `"live"` flags
+1. **Your code isn't started.** If `subsystemN_init/start` don't start your
+   code, nothing you publish exists. The status message's `"live"` flags
    show it straight away (`"live":"1000"` = only Buddy 2's odometry is arriving).
 2. **A field left unset.** Buddy 1 sends what it's given. Start from
    `rc_event_t evt = {0};`.
@@ -141,8 +145,10 @@ evt.u.hump.max_pitch_deg = (int16_t)(peak_pitch / 10);
 
 ### Commands from the dashboard: `RC_EVT_COMMAND_RX`
 
-The vehicle controller (mission state, whoever owns it) subscribes on the
-**FAST** lane:
+The vehicle controller, `sub_nav.c` (`on_command_rx`), subscribes on the
+**FAST** lane. It takes STOP from any running state, START (`G`) from IDLE or
+STOPPED, and turn / straight / U-turn only while following the line
+(FOLLOWING or READING_BARCODE). The pattern, for any subscriber:
 
 ```c
 #include "../rc_event.h"
@@ -207,9 +213,10 @@ flags are always false.
 2. **For real, on the car:** `make NET=lwip MQTT=1 -j8` (needs
    `config/wifi_secrets.h`, see [`MQTT.md`](MQTT.md)). Then watch the broker:
    ```
-   mosquitto_sub -h broker.hivemq.com -t 'car/01/#' -v
+   python -I dashboard/dashboard.py --start-broker
    ```
-   or the HiveMQ web client / MQTTX, subscribed to `car/01/#`.
+   (the broker log and the dashboard show each binary frame decoded by
+   `scripts/tm_frames.py`).
    - `car/01/status` → `"live":"1111"` means all four streams arrive.
    - Push the car or wave at a sensor and watch your field in `car/01/state` change.
    - Publish `X` to `car/01/cmd` → `car/01/ack` `{"rx":"X","cmd":5}` comes back,
@@ -225,10 +232,10 @@ into TEAM.md, so the team can agree them in one go:
 | §1 Members | `1` · WiFi communication, commands and telemetry · 2503331 · Rexzer · `app_program/subsystem1/` · `testing/subsystem1/` |
 | §2 Pins | none (the radio's GP23/24/25/29 are already *reserved*) |
 | §3 Peripherals | none. WiFi/TCP-IP/MQTT stay with the kernel's `cyw43_utk_task`. |
-| §4 Priorities | `1` · 12–13 · `telemetry` – 12 – any |
+| §4 Priorities | `telemetry` – `RC_PRI_TELEMETRY` 12 – any |
 | §5 Interfaces | `IF-12` · S1 → kernel · message buffer (owned by S1) · `s1_mbf_tx` · `"<topic>\0<payload>"`, ≤ 240 bytes, `TMO_POL` both sides |
 | | `IF-13` · kernel → S1 · message buffer (owned by S1) · `s1_mbf_rx` · raw `car/01/cmd` payload, ≤ 16 bytes |
-| | S2–S5 → S1 · `rc_event`, SLOW lane · the 13 events in `subsystem1.h` · fields as in the table above |
+| | S2–S5 → S1 · `rc_event`, SLOW lane · the 18 events in `subsystem1.h` · fields as in the table above |
 | | S1 → vehicle controller · `rc_event` · `RC_EVT_COMMAND_RX`, `RC_EVT_LINK_STATE` |
 | §6 Objects | S1: Task 1, Message buffer 2 (MQTT builds only) |
 
@@ -246,10 +253,4 @@ Results go in `testing/subsystem1/TEST_LOG.md`, and the console logs go in
 
 ## Not Buddy 1's (yet), so you know
 
-- **Nobody acts on commands yet.** No vehicle controller (`sub_nav`) is in this
-  repo, so `RC_EVT_COMMAND_RX` has no subscriber. Commands arrive, are acked,
-  and stop there until the mission-state owner subscribes as shown above.
-- **The mission state isn't reported.** FR10a lists "robot state". There's no
-  event for the controller's state yet. When there is one (a new id in the
-  shared `rc_types.h`), Buddy 1 adds a field for it.
 - **Commands are one character.** Only the first byte counts, and `arg` is 0.

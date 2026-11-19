@@ -37,7 +37,7 @@ The table covers every application field in the CR1 scope:
 | Wheel speed L/R | ±1023 mm/s (car max ≈ 530) | 11 signed | `rc_pl_odometry_t` bit-field, `RC_SAT_S` in `sub_motion.c` | `int32_t` |
 | Odometer L/R | 0..65535 mm, wraps (per move) | 16 | `uint16_t` (exact type fits) | `uint32_t` |
 | Encoder count L/R | 0..2³²−1 | 32 | Unchanged by team decision: single-writer ISR words, read without a lock | `uint32_t` |
-| Encoder edge gap | 0..131071 µs (stall timeout 100 ms) | 17 | `rc_pl_encoder_t` bit-field | `uint32_t` |
+| Encoder edge gap | 0..131071 µs (stall timeout 100 ms) | — | No longer an event field: the encoder edge event and its payload are gone; `drv_encoder.c` keeps the period internally (`drv_encoder_period_us()`) and `sub_motion` reads counts and speed from it every control period | `uint32_t` |
 | Motor duty L/R | −1000..1000 ‰ | 11 signed | Telemetry frame field | `int16_t` |
 | Move id | 1..32767, wraps | 15 | `rc_pl_motion_done_t`; `sub_motion` wraps ids at 2¹⁵ | `uint32_t` |
 | Move completed | 0/1 | 1 | Bit-field | `bool` (8) |
@@ -66,7 +66,7 @@ The table covers every application field in the CR1 scope:
 | Command arg | ±2²⁸ (always 0 today) | 29 signed | Bit-field | `int32_t` |
 | Link state | WiFi 0/1, broker 0/1 | 2 | `rc_pl_link_t` 1-bit each | 2×`bool` |
 | Nav state | 7 states | 3 | Telemetry field `nav` (`sub_nav_state()`) | (not sent) |
-| Fault bitmask | 7 faults | 8 (7 used) | Event flag (`rc_fault.h`); telemetry field `flt` | (none) |
+| Fault bitmask | 8 faults | 8 | Event flag (`rc_fault.h`); telemetry field `flt` | (none) |
 | Barcode diagnostics (`bcscan`, `bcbits`, `spin`) | 8-bit counters (saturate at 255), 16-bit 10 µs widths | As listed | Already byte-packed; on MQTT as exact-width frames | (same) |
 
 ### 2.1 Fault bitmask (`rc_fault.h`)
@@ -75,11 +75,12 @@ The table covers every application field in the CR1 scope:
 |---|---|---|---|---|
 | 0 | MOTOR_STALL | Buddy 2 `sub_motion.c` | A wheel pushed at ≥ 500 ‰ shows no movement for 0.6 s, and the other wheel is not turning either | The next move starts |
 | 1 | ENCODER | Buddy 2 `sub_motion.c` | The same, but the other wheel **is** turning, so this encoder is most likely dead | The next move starts |
-| 2 | IMU | Buddy 4 `drv_imu.c` | IMU not ready, or a read failed | A read succeeds |
+| 2 | IMU | Buddy 4 `drv_imu.c` | IMU not ready, a read failed, or the readings are frozen | A read succeeds |
 | 3 | NO_ECHO | Buddy 5 `drv_ultrasonic.c` | The latest ping timed out or was out of range | A valid echo |
 | 4 | WIFI_LOSS | Buddy 1 `sub_telemetry.c` | WiFi or broker down (MQTT sink) | Link back up |
-| 5 | LIFTED | Buddy 4 `sub_terrain.c` | Car lifted or overturned (replaced the 1500 mg IMPACT bit; frame `lifted`, TM_VER 3) | START command (`sub_nav.c`) |
+| 5 | LIFTED | Buddy 4 `sub_terrain.c` | Car lifted or overturned (frame `lifted`) | START command (`sub_nav.c`) |
 | 6 | BARCODE_ADC | Buddy 3 `drv_ir.c` | ADC open failed at boot | Never |
+| 7 | WDOG_RESET | shared `rc_wdog.c` | The car rebooted because the watchdog expired (`docs/rtos/README.md` §3) | START command (`sub_nav.c`) |
 
 ## 3. Race safety (packed shared data)
 
@@ -99,7 +100,7 @@ The table covers every application field in the CR1 scope:
 
 | Bytes | Content |
 |---|---|
-| 0 | `[ver:3 \| type:5]`: `TM_VER` = 1; type 1..15 |
+| 0 | `[ver:3 \| type:5]`: `TM_VER` = 4; type 1..16 |
 | 1 | seq, 8 bits, wraps. State frames count state ticks; all other frames share one event counter. |
 | 2.. | The type's fields, back to back. Least significant bit first: body bit *i* is bit *i % 8* of body byte *i / 8*. Signed fields are two's complement in their own width. Out-of-range values are clamped. |
 
@@ -165,8 +166,8 @@ The other frame layouts are in the `tm_frame.c` table.
 | T1 on car (S1-U30) | Same 24 cases on the RP2040 | `subsystem1_test.c` | Owed (TEST build) |
 | S1 suite (S1-U/I) | The capture sink decodes every frame back to the pre-CR1 JSON, so the existing exact-text checks keep running. S1-I10 now checks clamping: speeds → −1024, hump 127, range 4095. | `subsystem1_test.c` | Owed |
 | T2 (CR1-T2) | Task A on core 0 and task B on core 1 each set and clear their own fault bit 10,000×, checking every read-back. A cyclic handler sets a third bit at the same time, and every one of its sets must be seen. | `rc_fault_test.c` | Owed |
-| T3 (CR1-T3) | Sense task over 3 s with the ADC read added: 0 missed 10 ms periods, ADC read + threshold < 1 ms. Also compare line/IMU timing against the 18 Oct numbers. | `rc_fault_test.c` | Owed |
-| T4 | STOP over MQTT while driving; IMPACT shows `flt` bit 5 on the dashboard; START clears it | Track | Owed |
+| T3 (CR1-T3) | Sense task over 3 s: 0 missed 10 ms periods, and the longest barcode ADC read made by Sense < 1 ms (0 with `RC_BAR_ADC_FIFO` 1, where the ADC FIFO interrupt samples the barcode instead). Also compare line/IMU timing against the 18 Oct numbers. | `rc_fault_test.c` | Owed |
+| T4 | STOP over MQTT while driving; lifting the car stops it and shows LIFTED (`flt` bit 5) on the dashboard; START clears it | Track | Owed |
 
 ### 5.1 RAM before vs after
 
@@ -224,22 +225,22 @@ Flash grew by 4,968 B (SMP0) and 5,332 B (track image), from the frame codec, th
    - state frames are 20/28 B (dashboard "State frame" row);
    - ramp height (§8): drive over a ramp, compare the dashboard's Rise with a ruler;
    - nav state and fault names show;
-   - T4: STOP, IMPACT → START.
+   - T4: STOP, lift → LIFTED → START.
 3. ADC barcode on the car (§7): sensor at 2 mm; the peak/valley detector and the `*`-first rule still need a track run.
 4. Fill the T-rows in §5 with the log results, and add the report's data representation table (Week 13 doc) from §2.
 
 ## 7. Barcode sensor on the ADC
 
 Barcode reading now uses the analogue output instead of the comparator output:
-- **Pins:** the AO pin (GP26, ADC0) is read by the Sense task every 10 ms. GP27 (DO) is no longer configured and has no IRQ, so its trim pot does not matter.
+- **Pins:** the AO pin (GP26, ADC0) is sampled by the ADC itself: with `RC_BAR_ADC_FIFO` 1 it converts continuously at `RC_BAR_ADC_HZ` × `RC_BAR_ADC_OVERSAMPLE` (8 kHz) into its FIFO, the FIFO interrupt averages each 8 readings into one 1 kHz value, and the edge detector runs in the defer task (`docs/rtos/README.md` §2). With `RC_BAR_ADC_FIFO` 0 the Sense task reads it once every 10 ms. GP27 (DO) is not configured and has no IRQ, so its trim pot does not matter.
 - **Edge detector (peaks and valleys, not one threshold):**
   - A bar starts once the reading rises `RC_BAR_ADC_PROM` (400 counts) above the lowest point of the space before it; a space starts once it falls 400 below the bar's peak.
-  - A bar only counts if its peak is `RC_BAR_ADC_MIN_BAR` (800) above the white level (running minimum, creeping up 1 count per sample), so mat texture is not read as bars.
+  - A bar only counts if its peak is `RC_BAR_ADC_MIN_BAR` (800) above the white level (running minimum, creeping up 100 counts a second), so mat texture is not read as bars.
   - Why: the sensor spot is about as wide as a 3 mm element, so a narrow space between two bars only dips to ~2200-2900 while bars read ~3600-3950 and paper ~1050-1700. A midpoint threshold (~2500 ± 375) caught those dips on some passes and merged bars on others.
-- **Edge timing:** each edge is timed where the reading crosses halfway between the peak and the valley either side of it, interpolated between two samples from a 64-sample history. Edges are therefore sent one element late; a bar's falling edge is sent after 300 ms of space at the latest.
-  - The old 10 ms level-debounce now rejects only a one-sample speck (15 ms).
+- **Edge timing:** each edge is timed where the reading crosses halfway between the peak and the valley either side of it, interpolated between two samples from a history of at least 1 s (1024 samples at 1 kHz, 128 at 100 Hz). Edges are therefore sent one element late; a bar's falling edge is sent after 300 ms of space at the latest.
+  - A level debounce rejects specks shorter than 15 ms.
   - Edges go through the same ring → defer task → `RC_EVT_BARCODE_EDGE`, so `sub_barcode.c`'s decoder is unchanged.
-- **Timing margin:** a narrow element is about 95 ms at 31 mm/s, so 10 ms sampling gives roughly 10 samples per element.
+- **Timing margin:** a narrow element is about 95 ms at 31 mm/s, so 1 kHz sampling gives roughly 95 samples per element (about 10 at 100 Hz with `RC_BAR_ADC_FIFO` 0).
 - **Verified on the car (6 Nov, track speed ~33 mm/s):** black reads high (`RC_BAR_ADC_BLACK_HIGH` 1). With the sensor **2 mm** above the mat and the midpoint threshold, small (3 mm / 7 mm bars) `*H*` and large (4 mm / 14 mm) `*E` decoded at 19:10-19:12, but the 20:40-20:50 run read mostly wrong letters (E, A, G, X, S, C, Q, I, N, W, L), one of them acted on as a left turn.
 - **Replay of the logged samples** (`test/bartrace/host_peak.py` builds the real `drv_ir.c` sampler on the PC; `sim_car.py` follows `sub_barcode.c`):
 
@@ -294,4 +295,4 @@ Short humps read low because the chassis bridges the peak (80 mm between axles) 
 
 **Cost:** +224 B static RAM (the 21-sample window `ramp`, 216 B) and ~1.1 KB flash (`ramp_step` 988 B), track image. Static RAM is now 90,280 B (§5.1 numbers are before this).
 
-**Owed (car):** ramp polarity (nose-up must read +a_x; `drv_imu_pitch_ddeg()` already assumes that), a ruler check of rise on the track ramp, and the S1-I21 check in the TEST run.
+**Owed (car):** ramp polarity (nose-up must read +a_x, as `terrain_ramp.c` and `sub_terrain.c` assume), a ruler check of rise on the track ramp, and the S1-I21 check in the TEST run.

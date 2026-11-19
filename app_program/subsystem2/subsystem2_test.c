@@ -9,10 +9,10 @@
  *	S2_TEST_MOTORS to 0 below to run only the tests that keep the motors
  *	off (S2-U01..U05).
  *
- *	The expected values use the DEFAULT, not-yet-measured settings in
+ *	The expected values are worked out from the measured settings in
  *	rc_config.h (RC_ENC_TICKS_PER_REV, RC_WHEEL_DIAM_MM, RC_WHEEL_BASE_MM)
- *	and sub_motion.c (TURN_SLIP_PERMILLE).  Every line to change after
- *	measuring has a "#TODO" comment directly above it.
+ *	and sub_motion.c (TURN_SLIP_PERMILLE).  Lines still to confirm have a
+ *	"#TODO" comment directly above them.
  */
 
 #include "../rc_prelude.h"
@@ -33,15 +33,12 @@
 #define S2_TEST_MOTORS		1
 #endif
 
-/* 0 = the accuracy checks (S2-U14, S2-U18) only print what they measured.
- * With the placeholder RC_ENC_TICKS_PER_REV (20) the code thinks one tick
- * is about 10 mm, but the real encoder gives hundreds of ticks per wheel
- * turn, so speed and distance are badly off and those checks would fail
- * for a reason that is not a bug. */
-#ifndef S2_CALIBRATED
 /* 1 = RC_ENC_TICKS_PER_REV, RC_WHEEL_DIAM_MM, RC_WHEEL_BASE_MM and
- * TURN_SLIP_PERMILLE are measured values, so the tests check against
- * them. */
+ * TURN_SLIP_PERMILLE are measured values, so the accuracy checks (S2-U14,
+ * S2-U18) compare against them.  0 = those checks only print what they
+ * measured (uncalibrated settings would fail them for a reason that is
+ * not a bug). */
+#ifndef S2_CALIBRATED
 #define S2_CALIBRATED		1
 #endif
 
@@ -67,8 +64,8 @@
 #define S2_EXP_UM_PER_TICK	(333UL)
 
 /* S2-U09: the wheels spin at S2_SPIN_PERMILLE for S2_SPIN_MS, and each
- * must give at least S2_MIN_SPIN_TICKS ticks.  20 passes any working
- * encoder; the test prints the real counts. */
+ * must give at least S2_MIN_SPIN_TICKS ticks.  The test prints the real
+ * counts. */
 #define S2_SPIN_PERMILLE	(400)
 #define S2_SPIN_MS		(1000)
 /* About half of what S2-U09 printed on the car (L 977, R 945). */
@@ -312,7 +309,8 @@ EXPORT void subsystem2_test(void)
 	uint32_t	odo;
 
 #if S2_TEST_MOTORS && S2_TURN_CAL
-	/* Calibration image only: do the floor turns and nothing else. */
+	/* Calibration image only: run the selected calibration and nothing
+	 * else. */
 	(void)test_pass_;
 	(void)test_fail_;
 	(void)h_odo;

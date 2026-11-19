@@ -44,6 +44,4 @@ rc_result_t rc_pwm_set_duty(uint32_t pin, uint16_t permille);
  * specifies microseconds rather than duty. */
 rc_result_t rc_pwm_set_pulse_us(uint32_t pin, uint32_t pulse_us);
 
-rc_result_t rc_pwm_enable(uint32_t pin, bool on);
-
 #endif /* RC_PWM_H */

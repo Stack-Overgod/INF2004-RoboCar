@@ -24,19 +24,27 @@
  *   Buddy 3   RC_EVT_LINE_SAMPLE       on_line_l, on_line_r    state: line
  *   Buddy 3   RC_EVT_LINE_LOST,        (none)                  car/01/line
  *             RC_EVT_LINE_REACQUIRED
- *   Buddy 3   RC_EVT_BARCODE_DECODED   symbol, command,        car/01/barcode,
- *                                      reversed                state: bc
+ *   Buddy 3   RC_EVT_BARCODE_DECODED   sym, command, reversed  car/01/barcode,
+ *                                                              state: bc
+ *   Buddy 3   RC_EVT_BARCODE_SCAN,     all fields              car/01/bcscan,
+ *             RC_EVT_BARCODE_RAW                               car/01/bcbits
  *   Buddy 4   RC_EVT_IMU_SAMPLE        (only that it arrives)  status: live
  *   Buddy 4   RC_EVT_MOTION_CLASS      cls (send on change)    state: cls,
  *                                                              car/01/motion
  *   Buddy 4   RC_EVT_HUMP_END          peak_mm, duration_ms,   car/01/hump,
  *                                      max_pitch_deg           state: peak
- *   Buddy 4   RC_EVT_LIFTED            why                     car/01/lifted
- *   Buddy 5   RC_EVT_ULTRA_RESULT      angle_deg, range_mm,    state: rng
- *                                      valid (90 +/- 5 only)
+ *   Buddy 4   RC_EVT_RAMP_END          all four fields         car/01/ramp
+ *   Buddy 4   RC_EVT_LIFTED            why, h_mm, v_cm_s,      car/01/lifted
+ *                                      ref_mg
+ *   Buddy 4   sub_terrain_height_mm()  (read-back, no event)   state: h
+ *   Buddy 5   RC_EVT_ULTRA_RESULT      angle_deg, range_mm     state: rng
+ *                                      (kept at 90 +/- 5 only)
  *   Buddy 5   RC_EVT_OBSTACLE_PROFILE  all six fields          car/01/obstacle
  *   Buddy 5   RC_EVT_AVOIDANCE_PLAN    action, lateral_mm,     car/01/avoid
  *                                      forward_mm
+ *   Buddy 5   RC_EVT_SPIN_EDGES        all fields              car/01/spin
+ *   nav       sub_nav_state()          (read-back, no event)   state: nav
+ *   all       rc_fault_get()           (read-back, no event)   state: flt
  *
  * Fill in every field you see listed: Buddy 1 sends what it's given, so a
  * field left unset goes out as garbage. The status message's "live" flags
@@ -46,8 +54,8 @@
  * -----------------------------
  *   RC_EVT_COMMAND_RX   a command from the dashboard (car/01/cmd), already
  *                       decoded: u.command.command is an rc_nav_cmd_t
- *                       (RC_CMD_STOP for X or P, RC_CMD_START for G),
- *                       u.command.arg is 0.
+ *                       (sub_telemetry_parse_cmd: e.g. RC_CMD_STOP for X
+ *                       or P, RC_CMD_START for G), u.command.arg is 0.
  *                       The vehicle controller subscribes on the FAST lane.
  *   RC_EVT_LINK_STATE   the network link changed: u.link.connected (WiFi
  *                       joined) and u.link.broker_up (MQTT session live).
@@ -69,10 +77,11 @@
 #define SUBSYSTEM1_H
 
 #include "../app.h"
+#include "../rc_config.h"
 #include "sub_telemetry.h"
 
-#define S1_PRI_TELEMETRY  12    /* band 12-13 (TEAM.md) */
-#define S1_MSG_MAX        240   /* longest topic + '\0' + PAYLOAD_MAX 224 */
+#define S1_PRI_TELEMETRY  RC_PRI_TELEMETRY  /* rc_config.h */
+#define S1_MSG_MAX        240   /* topic + '\0' + payload; = MQTT_UTK_MSG_MAX */
 #define S1_CMD_MAX        16
 
 /* The two message buffers that carry data to/from the kernel's MQTT task.

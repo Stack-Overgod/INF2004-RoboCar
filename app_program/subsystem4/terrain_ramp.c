@@ -132,13 +132,11 @@ bool ramp_step(ramp_t *r, int32_t d_ticks2, int16_t ax, int16_t az,
     int32_t gz = sum_az / (int32_t)(2U * RAMP_WIN);
     uint32_t mag = isqrt32((uint32_t)((gx * gx) + (gz * gz)));
     /* under ~0.2 g total the car is lifted or falling: no slope reading */
-    int32_t s_pm = (mag < 200U) ? 0 : (int32_t)((gx * 1000) / (int32_t)mag);
+    int32_t s_pm = (mag < 200U) ? 0
+                   : ((int32_t)((gx * 1000) / (int32_t)mag) - (r->zero16 / 16));
     int32_t ds_um = ticks2_to_um(r->odo2[at(r, RAMP_WIN)] -
                                  r->odo2[at(r, RAMP_WIN + 1U)]);
 
-    if (mag >= 200U) {
-        s_pm -= r->zero16 / 16;
-    }
     r->last_pm = s_pm;
 
     if (!r->on_slope) {

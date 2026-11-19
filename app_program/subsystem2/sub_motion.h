@@ -8,9 +8,7 @@
  *  sub_motion_stop(). The obvious implementation of those blocks until
  *  the move finishes, and that cannot work here: the line follower needs
  *  to keep steering while the car drives, and the scanner needs to keep
- *  pinging. See TEAM_GUIDE.md §1.3 ("Non-blocking - the one rule that
- *  shapes everything") for why this pattern is used everywhere in this
- *  project, not just here.
+ *  pinging. The same non-blocking pattern is used throughout the project.
  *
  *  So every command here is a request that returns immediately and
  *  reports completion through a callback (a "callback" is just a
@@ -62,8 +60,7 @@
  *                  global variables.
  * Runs in the fast-lane dispatcher task (not inside an interrupt, and not
  * inside sub_motion), after RC_EVT_MOTION_DONE is published - so it may
- * start the next move straight away. Must not block - see TEAM_GUIDE.md
- * §1.2/§1.3. */
+ * start the next move straight away. Must not block. */
 typedef void (*sub_motion_done_cb_t)(uint32_t move_id,
                                      bool completed,
                                      uint32_t travelled_mm,
@@ -86,7 +83,7 @@ uint16_t sub_motion_get_speed(void);
  *  Queued moves. Each returns a move id (used to match it up with the
  *  completion callback/event later), or 0 if the request was rejected.
  *  Passing cb = NULL is fine if you only want the RC_EVT_MOTION_DONE
- *  event (published on the event bus - see TEAM_GUIDE.md §1.2) instead
+ *  event (published on the event bus) instead
  *  of a direct callback.
  *
  *  sub_motion_turn_deg spins the car in place: deg < 0 turns left
@@ -100,7 +97,7 @@ uint32_t sub_motion_turn_deg(int16_t deg, sub_motion_done_cb_t cb, void *ctx);
 /*
  *  Continuous mode, for the line follower. Sets a base speed and a
  *  steering bias in permille (parts per thousand - this codebase's
- *  integer-only stand-in for a percentage, see TEAM_GUIDE.md §5); no
+ *  integer-only stand-in for a percentage); no
  *  distance target, no completion callback - it just keeps driving until
  *  told otherwise. This is the mode the car spends most of its run in.
  *  steer > 0 steers right (left wheel faster), steer < 0 steers left.
@@ -130,8 +127,12 @@ bool sub_motion_busy(void);
 
 /* The speed the controller is asking one wheel for right now, mm/s,
  * negative when reversing; 0 when idle or in open-loop drive. For logs
- * such as the motion bench's step response - it changes nothing. */
+ * and tests such as a step response - it changes nothing. */
 int32_t sub_motion_target_mm_s(rc_side_t side);
+
+/* Control periods missed since boot (the task ran late by a whole
+ * period or more). */
+uint32_t sub_motion_overruns(void);
 
 #if APP_TEST
 /* TEST BUILD ONLY: hold = true stops the control task publishing
@@ -140,6 +141,10 @@ int32_t sub_motion_target_mm_s(rc_side_t side);
  * PID, stall/timeout safety) keeps running, and the encoder ISRs keep
  * counting, so no ticks are lost. Always release it (false) afterwards. */
 void sub_motion_test_hold_odometry(bool hold);
+
+/* TEST BUILD ONLY: longest control cycle so far (speed measurement, PID,
+ * safety checks), us. For the response-time table. */
+uint32_t sub_motion_wcet_us(void);
 #endif
 
 #endif /* SUB_MOTION_H */

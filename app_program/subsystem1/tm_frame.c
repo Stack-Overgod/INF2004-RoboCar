@@ -174,7 +174,13 @@ static const field_t f_avoid[] =
     { "fwd_mm", RC_BITS_MM,  K_U }
 };
 
-static const field_t f_lifted[] = { { "why", RC_BITS_LIFT, K_U } };
+static const field_t f_lifted[] =
+{
+    { "why",    RC_BITS_LIFT,     K_U },
+    { "h_mm",   RC_BITS_LIFT_H,   K_U },
+    { "v_cm_s", RC_BITS_LIFT_V,   K_U },
+    { "ref_mg", RC_BITS_LIFT_REF, K_S }
+};
 static const field_t f_motion[] = { { "cls", RC_BITS_CLS, K_U } };
 static const field_t f_line[]   = { { "lost", 1, K_U } };
 

@@ -18,7 +18,7 @@
  *
  *  Timing comes from the free-running microsecond counter inside the
  *  edge ISR (Interrupt Service Routine - code the chip jumps to the
- *  instant the sensor pin changes state, see TEAM_GUIDE.md §1.2), not
+ *  instant the sensor pin changes state), not
  *  from the kernel tick, so speed is usable down to very low RPM without
  *  a long averaging window.
  *
@@ -32,9 +32,8 @@
 #include "../rc_types.h"
 
 /* Call once at boot. Attaches the interrupt handlers to both encoder
- * pins and registers the deferred ("bottom half") worker that turns raw
- * edges into published events - see drv_encoder.c for why the real work
- * can't happen inside the interrupt itself. */
+ * pins. The handler only counts and timestamps edges; sub_motion reads
+ * the counts every control period. */
 rc_result_t drv_encoder_init(void);
 
 /* Total edges (wheel-clicks) seen since boot, monotonic (only ever goes

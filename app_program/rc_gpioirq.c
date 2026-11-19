@@ -13,7 +13,6 @@
 
 #include "rc_prelude.h"
 #include "rc_gpioirq.h"
-#include "rc_config.h"
 #include "rc_time.h"
 
 /* IO_BANK0 interrupt registers, offsets from IO_BANK0_BASE. */
@@ -25,9 +24,11 @@
 #define EDGE_LOW_BIT        (2U)
 #define EDGE_HIGH_BIT       (3U)
 
-/* IO_IRQ_BANK0 is RP2040 interrupt 13. */
+/* IO_IRQ_BANK0 is RP2040 interrupt 13. Priority 3 is the same level as
+ * PendSV, so the handler (it calls kernel services) cannot preempt a task
+ * switch. */
 #define INTNO_IO_BANK0      (13U)
-#define INTPRI_IO_BANK0     (2)
+#define INTPRI_IO_BANK0     (3)
 
 #define PIN_MAX             (30U)
 
@@ -50,6 +51,8 @@ static volatile uint8_t reg_used[4];
  * a tighter figure toggle a scope pin instead. */
 static volatile uint32_t irq_max_us;
 static volatile uint32_t irq_total;
+/* worst-case time inside each pin's callback, us (rc_gpioirq_pin_max_us) */
+static volatile uint32_t cb_max_us[PIN_MAX];
 #endif
 
 /* ------------------------------------------------------------------ *
@@ -99,15 +102,8 @@ static void gpio_bank0_handler(UINT intno)
 
     (void)intno;
 
-    /*
-     *  Only the registers that actually have a registered pin are read,
-     *  and within one register only the bits that fired are visited. The
-     *  earlier version walked all 8 pin slots of all 4 registers on every
-     *  interrupt, which is 32 iterations to service one encoder edge.
-     *
-     *  The timestamp is taken once at entry so every pin in the same batch
-     *  shares a consistent time.
-     */
+    /* Only the registers that have a registered pin are read, and within
+     * one register only the pins that fired are visited. */
     for (reg = 0U; reg < 4U; reg++) {
         if (reg_used[reg] == 0U) {
             continue;
@@ -142,7 +138,16 @@ static void gpio_bank0_handler(UINT intno)
                 if ((gp < PIN_MAX) && pins[gp].in_use
                     && (pins[gp].cb != NULL)) {
                     bool level = (gpio_get_val(gp) != 0U);
+#if APP_TEST
+                    uint32_t t_cb = rc_time_us();
+#endif
                     pins[gp].cb(gp, level, t_us, pins[gp].ctx);
+#if APP_TEST
+                    t_cb = rc_time_since(t_cb);
+                    if (t_cb > cb_max_us[gp]) {
+                        cb_max_us[gp] = t_cb;
+                    }
+#endif
                 }
             }
         }
@@ -163,7 +168,22 @@ static void gpio_bank0_handler(UINT intno)
 #if APP_TEST
 uint32_t rc_gpioirq_max_us(void)    { return irq_max_us; }
 uint32_t rc_gpioirq_irq_count(void) { return irq_total; }
-void rc_gpioirq_probe_reset(void)   { irq_max_us = 0U; irq_total = 0U; }
+
+uint32_t rc_gpioirq_pin_max_us(uint32_t pin)
+{
+    return (pin < PIN_MAX) ? cb_max_us[pin] : 0U;
+}
+
+void rc_gpioirq_probe_reset(void)
+{
+    uint32_t i;
+
+    irq_max_us = 0U;
+    irq_total = 0U;
+    for (i = 0U; i < PIN_MAX; i++) {
+        cb_max_us[i] = 0U;
+    }
+}
 #endif
 
 /* ------------------------------------------------------------------ *
@@ -260,24 +280,6 @@ rc_result_t rc_gpioirq_attach(uint32_t pin,
     EI(sts);
 
     return rc_gpioirq_enable(pin, true);
-}
-
-rc_result_t rc_gpioirq_detach(uint32_t pin)
-{
-    uint32_t sts;
-
-    if (pin >= PIN_MAX) {
-        return RC_ERR_PARAM;
-    }
-
-    (void)rc_gpioirq_enable(pin, false);
-
-    DI(sts);
-    pins[pin].in_use = false;
-    pins[pin].cb     = NULL;
-    EI(sts);
-
-    return RC_OK;
 }
 
 rc_result_t rc_gpioirq_enable(uint32_t pin, bool on)

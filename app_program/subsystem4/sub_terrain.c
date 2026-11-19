@@ -1,7 +1,7 @@
 /*
- *  sub_terrain.c
+ *  sub_terrain.c  -  Buddy 4
  *
- *  Buddy 4: Terrain and motion event classification.
+ *  Terrain and motion event classification.
  *  Uses the LSM303D accelerometer to detect speed humps, estimate peak
  *  height via chassis geometry cross-checked with wheel odometry, and tell
  *  when the car has been lifted or overturned (lift_step), which stops the
@@ -9,6 +9,7 @@
  */
 
 #include "../rc_prelude.h"
+#include <tm/tmonitor.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -42,7 +43,7 @@
 #define LIFT_CALM_MG            (150)    /* within this of 1 g counts calm  */
 #define LIFT_CLEAR_MS           (500U)   /* upright and calm this long ends */
 /* lift_height(): vertical accel integrated twice, with leaks */
-#define LIFT_DEAD_MG            (20)     /* smaller wobbles are ignored     */
+#define LIFT_DEAD_MG            (30)     /* smaller wobbles are ignored     */
 #define LIFT_CLIP_MG            (250)    /* one bump counts at most this    */
 #define LIFT_V_TAU_MS           (600)    /* speed estimate leaks away       */
 #define LIFT_H_TAU_MS           (2000)   /* height estimate leaks away      */
@@ -55,7 +56,6 @@
 #ifndef S4_IMU_PRINT
 #define S4_IMU_PRINT            (0)
 #endif
-#include <tm/tmonitor.h>
 
 #define ACCEL_LINEAR_MG         (250)    /* Linear push threshold on X      */
 #define TURN_SPEED_DIFF_MM_S    (150)    /* Wheel speed diff for turning    */
@@ -93,6 +93,8 @@ static int32_t               lift_az_x16;
 static uint32_t              lift_tilt_ms;
 static uint32_t              lift_calm_ms;
 static rc_lift_t             lift_on;       /* RC_LIFT_NONE = on the ground */
+static int32_t               lift_fire_h_um;    /* rise when it fired */
+static int32_t               lift_fire_v_um_s;  /* rise speed when it fired */
 /* lift_height(): 1 g reference (mg x 1024), speed um/s, height um */
 static int32_t               lift_lvl_x1024;
 static int32_t               lift_v_um_s;
@@ -107,8 +109,9 @@ static bool                  is_subscribed = false;
 static sub_terrain_hump_cb_t hump_cb;
 static void                 *hump_cb_ctx;
 
-/* Ramp height (terrain_ramp.c). Only on_sample() touches `ramp`; the
- * height is copied out to one halfword for other tasks to read. */
+/* Ramp height (terrain_ramp.c). on_sample() steps `ramp` (reset and
+ * level_here restart it); the height is copied out to one halfword for
+ * other tasks to read. */
 static ramp_t                ramp;
 static uint32_t              ramp_cnt[2];   /* encoder counts last sample */
 static volatile int16_t      height_mm;
@@ -169,6 +172,19 @@ static void ramp_sample(int16_t ax, int16_t az, uint32_t now_ms)
  *  Mathematical Modeling: Small-Angle Geometry
  * ------------------------------------------------------------------ */
 
+/* Accelerometer reading (mg, 1 g = 1000) to tilt in deci-degrees, by the
+ * small-angle rule: radians ~= mg / 1000, and 1 rad = 573 ddeg. */
+static int32_t mg_to_ddeg(int16_t mg)
+{
+    return ((int32_t)mg * 573) / 1000;
+}
+
+/* Deci-degrees to milliradians: 1 ddeg = pi / 1800 rad ~= 1.745 mrad. */
+static int32_t ddeg_to_mrad(int16_t ddeg)
+{
+    return ((int32_t)ddeg * 1745) / 1000;
+}
+
 /*
  * Converts peak pitch in deci-degrees (0.1 deg) into vertical rise in mm
  * using the car's front-to-rear axle distance (RC_AXLE_DIST_MM, FR5).
@@ -185,14 +201,10 @@ static uint16_t pitch_to_height_mm(int16_t peak_ddeg)
         return 0U;
     }
 
-    /* Convert tenths of a degree to milliradians */
-    int32_t peak_mrad = ((int32_t)peak_ddeg * 1745) / 1000;
-
-    /* FR5: rise = L * sin(pitch), L = front-to-rear axle distance */
-    int32_t rise_mm = ((int32_t)RC_AXLE_DIST_MM * peak_mrad) / 1000;
-    if (rise_mm < 0) {
-        rise_mm = 0;
-    }
+    /* FR5: rise = L * sin(pitch), L = front-to-rear axle distance; both
+     * factors are >= 0 here, so the rise is too */
+    int32_t rise_mm = ((int32_t)RC_AXLE_DIST_MM * ddeg_to_mrad(peak_ddeg))
+                      / 1000;
 
     return (uint16_t)rise_mm;
 }
@@ -238,7 +250,7 @@ static void hump_publish(uint16_t height_mm, uint32_t duration,
                          int16_t peak_ddeg)
 {
     if (height_mm < HUMP_MIN_REPORT_MM) {
-        return;     /* a jolt (the START jerk reads ~2 mm), not a hump */
+        return;     /* a jolt (e.g. the START jerk), not a hump */
     }
     if (height_mm > max_peak_height_mm) {
         max_peak_height_mm = height_mm;
@@ -296,8 +308,7 @@ static void hump_finish(uint32_t now_ms, bool need_travel)
 
             /* Secondary estimate: Distance Travelled * sin(pitch) */
             if (encoders_active) {
-                int32_t peak_mrad =
-                    ((int32_t)hump_peak_pitch * 1745) / 1000;
+                int32_t peak_mrad = ddeg_to_mrad(hump_peak_pitch);
                 uint32_t dist_ramp = dist_travelled / 2U;
                 uint32_t h_odo =
                     (uint32_t)(((int32_t)dist_ramp * peak_mrad) /
@@ -312,8 +323,7 @@ static void hump_finish(uint32_t now_ms, bool need_travel)
 }
 
 /* Hump under ONE wheel: the car rolls sideways instead of pitching
- * (the track's hump is met by the right wheel, so the car leans left;
- * the side does not matter here, |roll| is used). A rise h under one
+ * (either side; |roll| is used). A rise h under one
  * wheel rolls the car by asin(h / RC_WHEEL_BASE_MM), ~5 deg for 10 mm,
  * so h = RC_WHEEL_BASE_MM x sin(peak roll). Same enter / level-for-
  * HUMP_FLAT_ABORT_MS / distance rules as the pitch state machine; the
@@ -323,7 +333,7 @@ static void roll_step(int16_t ay, uint32_t now_ms)
 {
     int32_t roll;
 
-    roll_x16 += ((((int32_t)ay * 573) / 1000) * 16 - roll_x16) / PITCH_SMOOTH_N;
+    roll_x16 += ((mg_to_ddeg(ay) * 16) - roll_x16) / PITCH_SMOOTH_N;
     roll = level_dev(roll_x16, &roll_lvl_x256, !roll_on);
     if (roll < 0) {
         roll = -roll;
@@ -355,7 +365,7 @@ static void roll_step(int16_t ay, uint32_t now_ms)
 
         roll_on = false;
         if ((d >= roll_dist0) && ((d - roll_dist0) >= MIN_HUMP_TRAVEL_MM)) {
-            int32_t mrad = ((int32_t)roll_peak * 1745) / 1000;
+            int32_t mrad = ddeg_to_mrad(roll_peak);
             int32_t h = ((int32_t)RC_WHEEL_BASE_MM * mrad) / 1000;
 
             hump_publish((uint16_t)h, now_ms - roll_start_ms, roll_peak);
@@ -437,7 +447,10 @@ static int32_t lift_height(int16_t az, uint32_t now_ms)
  * past 90 deg). Returns why the car has just been lifted, once per
  * episode, else RC_LIFT_NONE. The episode lasts until the car stands
  * upright and calm for LIFT_CLEAR_MS.
- *   raised:  lift_height() >= RC_LIFT_UP_MM;
+ *   raised:  lift_height() >= RC_LIFT_UP_MM while still rising at
+ *            RC_LIFT_V_MM_S or faster: a hand lift is fast, while a small
+ *            accelerometer offset or lopsided vibration only creeps the
+ *            estimate up;
  *   tilted:  on ~40 ms averages, horizontal^2 > vertical^2 x
  *            tan^2(35 deg), or az <= 0, for RC_LIFT_TILT_MS; az < 0 is
  *            reported as overturned. */
@@ -463,7 +476,8 @@ static rc_lift_t lift_step(int16_t ax, int16_t ay, int16_t az,
     horiz2 = (sx * sx) + (sy * sy);
     tilted = (sz <= 0)
              || (horiz2 > (((sz * sz) / 1000) * RC_LIFT_TAN2_PERMILLE));
-    raised = (lift_height(az, now_ms) >= (RC_LIFT_UP_MM * 1000));
+    raised = (lift_height(az, now_ms) >= (RC_LIFT_UP_MM * 1000))
+             && (lift_v_um_s >= (RC_LIFT_V_MM_S * 1000));
     calm   = !tilted && ((sz - 1000) < LIFT_CALM_MG)
              && ((sz - 1000) > -LIFT_CALM_MG);
 
@@ -485,7 +499,9 @@ static rc_lift_t lift_step(int16_t ax, int16_t ay, int16_t az,
     } else {
         return RC_LIFT_NONE;
     }
-    lift_calm_ms = 0U;
+    lift_calm_ms     = 0U;
+    lift_fire_h_um   = lift_h_um;
+    lift_fire_v_um_s = lift_v_um_s;
     return lift_on;
 }
 
@@ -549,7 +565,7 @@ static void on_sample(const rc_event_t *evt, void *ctx)
     int16_t  ax     = evt->u.imu.acc_x;
     int16_t  ay     = evt->u.imu.acc_y;
     /* Pitch in deci-degrees from acc_x, smoothed (smooth_pitch) */
-    int16_t  pitch  = smooth_pitch((int16_t)(((int32_t)ax * 573) / 1000));
+    int16_t  pitch  = smooth_pitch((int16_t)mg_to_ddeg(ax));
     uint32_t now_ms = rc_time_ms();
     rc_lift_t lifted = lift_step(ax, ay, evt->u.imu.acc_z, now_ms);
 
@@ -560,7 +576,13 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         tm_printf((UB *)"[s4] lifted (%d)\n", (INT)lifted);
         rc_fault_set(RC_FAULT_LIFTED);      /* cleared by START (sub_nav) */
         lift_evt.id = RC_EVT_LIFTED;
-        lift_evt.u.lifted.why = (uint8_t)lifted;
+        lift_evt.u.lifted.why    = (uint32_t)lifted;
+        lift_evt.u.lifted.h_mm   = RC_SAT_U(lift_fire_h_um / 1000,
+                                            RC_BITS_LIFT_H);
+        lift_evt.u.lifted.v_cm_s = RC_SAT_U(lift_fire_v_um_s / 10000,
+                                            RC_BITS_LIFT_V);
+        lift_evt.u.lifted.ref_mg = RC_SAT_S((lift_lvl_x1024 / 1024) - 1000,
+                                            RC_BITS_LIFT_REF);
         (void)rc_event_publish(&lift_evt);
         /* a hump begun while being picked up is not one */
         hump_state = H_FLAT;

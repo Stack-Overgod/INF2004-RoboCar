@@ -1,10 +1,10 @@
 /*
  * sub_telemetry_mqtt.c  --  Buddy 1 / subsystem 1
  *
- * The MQTT sink, rewritten for the course template. We're not allowed to
- * touch cyw43/lwIP/MQTT from a student task -- the kernel's own task owns
- * the radio and the broker. So this sink never talks to the network. It
- * just hands messages to the kernel through two message buffers:
+ * The MQTT sink. The course template doesn't allow a student task to
+ * touch cyw43/lwIP/MQTT -- the kernel's own task owns the radio and the
+ * broker. So this sink never talks to the network. It just hands
+ * messages to the kernel through two message buffers:
  *
  *   publish()  packs "<topic>\0<payload>" into s1_mbf_tx (IF-12).
  *              mqtt_utk.c drains it and does the real publish.
@@ -38,7 +38,8 @@ rc_result_t sub_telemetry_mqtt_init(void)
 {
     T_CMBF cmbf = {0};
 
-    /* Outgoing telemetry: room for ~8-10 state messages of backlog. */
+    /* Outgoing telemetry: topic + frame is under 50 bytes, so 2 KB holds
+     * a backlog of several dozen messages. */
     cmbf.mbfatr = TA_TFIFO;
     cmbf.bufsz = 2048;
     cmbf.maxmsz = S1_MSG_MAX;

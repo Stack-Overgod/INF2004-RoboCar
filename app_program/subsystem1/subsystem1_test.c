@@ -12,8 +12,8 @@
  * with it. That makes the S1-I tests the contract the other buddies link
  * to (subsystem1.h has it as a table).
  *
- *   S1-U01..U29  unit: sinks, command decoding, framing, timing, the link
- *   S1-I01..I20  integration: event-bus contracts with Buddies 2-5 + nav
+ *   S1-U01..U30  unit: sinks, command decoding, framing, timing, the link
+ *   S1-I01..I21  integration: event-bus contracts with Buddies 2-5 + nav
  *   S1-W01..W10  WiFi/MQTT: only in an MQTT=1 build, SKIP otherwise
  *
  * What each Buddy 1 task in the project brief is proven by:
@@ -492,8 +492,8 @@ static bool check_task_priority(void)
            (rtsk.tskpri == S1_PRI_TELEMETRY);
 }
 
-/* Look at the task 10 times over ~1 s. Between ticks it should be asleep
- * in tk_dly_tsk, not spinning. */
+/* Look at the task 10 times over ~1 s. Between ticks it should be waiting
+ * (a sleep, or the command buffer in an MQTT build), not spinning. */
 static bool check_task_sleeps(void)
 {
     T_RTSK rtsk;
@@ -652,9 +652,13 @@ static bool check_lifted_frame(void)
     rc_event_t e;
 
     make_simple(&e, RC_EVT_LIFTED);
-    e.u.lifted.why = RC_LIFT_RAISED;
+    e.u.lifted.why    = RC_LIFT_RAISED;
+    e.u.lifted.h_mm   = 23U;
+    e.u.lifted.v_cm_s = 15U;
+    e.u.lifted.ref_mg = -12;
     return frame_event(&e) &&
-           snap_is(RC_TOPIC_BASE "/lifted", "{\"why\":1}");
+           snap_is(RC_TOPIC_BASE "/lifted",
+                   "{\"why\":1,\"h_mm\":23,\"v_cm_s\":15,\"ref_mg\":-12}");
 }
 
 static bool check_line_frames(void)
@@ -776,7 +780,7 @@ static void measure_schedule(void)
 }
 
 /* A state message every 250 ms (rc_config.h; a few ms over is normal:
- * the work itself plus the 1 ms tick), and "seq" accounts for every one
+ * the work itself plus the kernel tick), and "seq" accounts for every one
  * of them, so none were skipped. Timed by the kernel clock. */
 static bool check_state_schedule(void)
 {
@@ -794,8 +798,8 @@ static bool check_state_schedule(void)
 
 /* The "t" timestamps in the messages move at the same speed as real time
  * (within 5 %). A dashboard plots against "t", so a slow clock would
- * squash every graph. This is what caught the 42.7x slow TIMER after a
- * cold power-on (fixed in rc_time_init()). */
+ * squash every graph. A TIMER running at the wrong rate after a cold
+ * power-on (see rc_time_init()) shows up here. */
 static bool check_timestamps_real_time(void)
 {
     uint32_t car_per;
@@ -867,7 +871,7 @@ static bool check_heartbeat(void)
 
 /* FR11a asks for a link-state heartbeat, so status also carries the WiFi
  * and broker state, commands received, link retries and the four "live"
- * flags. Its longest is 185 characters, well inside the buffer. */
+ * flags, and its JSON must fit the capture buffer (ends in '}'). */
 static bool check_heartbeat_link(void)
 {
     uint32_t c = cap_count(&cap_status);
@@ -1037,9 +1041,13 @@ static bool check_bus_lifted(void)
     rc_event_t e;
 
     make_simple(&e, RC_EVT_LIFTED);
-    e.u.lifted.why = RC_LIFT_OVERTURNED;
+    e.u.lifted.why    = RC_LIFT_OVERTURNED;
+    e.u.lifted.h_mm   = 0U;
+    e.u.lifted.v_cm_s = 0U;
+    e.u.lifted.ref_mg = 0;
     return bus_event(&e) &&
-           snap_is(RC_TOPIC_BASE "/lifted", "{\"why\":3}");
+           snap_is(RC_TOPIC_BASE "/lifted",
+                   "{\"why\":3,\"h_mm\":0,\"v_cm_s\":0,\"ref_mg\":0}");
 }
 
 static bool check_bus_obstacle(void)
@@ -1301,8 +1309,8 @@ static const t1_case_t t1_cases[] =
     { TM_T_OBSTACLE, 6, 10, { 64, 4096, 256, 5000, 1024, 2000 },
       { 63, 4095, 255, 4095, 1023, 1023 } },
     { TM_T_AVOID, 3, 6, { 6, 4095, 4095 }, { 6, 4095, 4095 } },
-    { TM_T_LIFTED, 1, 3, { 3 }, { 3 } },
-    { TM_T_LIFTED, 1, 3, { 4 }, { 3 } },
+    { TM_T_LIFTED, 4, 5, { 3, 127, 63, -128 }, { 3, 127, 63, -128 } },
+    { TM_T_LIFTED, 4, 5, { 4, 200, 100, -300 }, { 3, 127, 63, -128 } },
     { TM_T_MOTION, 1, 3, { 7 }, { 7 } },
     { TM_T_LINE, 1, 3, { 1 }, { 1 } },
     { TM_T_MOVE, 3, 6, { 32767, 1, 65535 }, { 32767, 1, 65535 } },
@@ -1581,7 +1589,7 @@ static bool check_inbound_garbage(void)
  * command topic, the broker sends it straight back (the car is subscribed
  * to that topic), mqtt_utk.c drops it into s1_mbf_rx, and Buddy 1 decodes
  * it as turn-left. Car -> WiFi -> broker -> WiFi -> car, no PC involved.
- * Retries once, because a public broker can be slow on the first try. */
+ * Retries once, because the broker can be slow on the first try. */
 static bool check_broker_round_trip(void)
 {
     static const char cmd[] = "L";

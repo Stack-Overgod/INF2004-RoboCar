@@ -1,5 +1,5 @@
 /*
- *  drv_motor.c
+ *  drv_motor.c  -  Buddy 2 hardware layer
  *
  *  Turns permille duty commands into actual PWM signals on the motor
  *  driver pins. This file does NOT know how fast the wheel is turning -

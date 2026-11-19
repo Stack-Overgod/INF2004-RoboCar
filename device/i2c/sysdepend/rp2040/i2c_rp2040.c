@@ -64,6 +64,7 @@ typedef struct {
 	UW	err_reason;	// Error reason
 	UW	sdat_num;	// Number of send data
 	UW	rdat_num;	// Number of receive data
+	UW	rcmd_num;	// Read commands not yet queued
 	UB	*sbuf;		// Send buffer
 	UB	*rbuf;		// Receive buffer
 } T_I2C_LLDCB;
@@ -94,6 +95,34 @@ EXPORT volatile UW	dev_i2c_diag[7];
 LOCAL volatile UW	diag_isr_us;
 #define DIAG_NOW()	in_w(TIMER_TIMERAWL)
 #endif
+
+/* Depth of the controller's TX (command) and RX FIFOs */
+#define I2C_FIFO_DEPTH	16
+
+/*
+ * Queue read commands for the next bytes, at most a FIFO's worth, with
+ * STOP on the transfer's last byte, and set the RX threshold so that one
+ * RX_FULL interrupt fires when every queued byte has arrived.  Called with
+ * the lock held, once all earlier queued bytes have been read out.
+ */
+LOCAL void queue_reads(INT unit, T_I2C_LLDCB *p_cb)
+{
+	UW	n = p_cb->rcmd_num;
+	UW	cmd;
+
+	if(n == 0) return;
+	if(n > I2C_FIFO_DEPTH) n = I2C_FIFO_DEPTH;
+	p_cb->rcmd_num -= n;
+	out_w(I2C_RX_TL(unit), n - 1);
+	while(n > 0) {
+		n--;
+		cmd = I2C_DATA_CMD_CMD_READ;
+		if((n == 0) && (p_cb->rcmd_num == 0)) {
+			cmd |= I2C_DATA_CMD_STOP;	// Last byte of the transfer
+		}
+		out_w(I2C_DATA_CMD(unit), cmd);
+	}
+}
 
 /*-------------------------------------------------------
  * Interrupt handler
@@ -147,14 +176,16 @@ LOCAL void i2c_inthdr( UINT intno )
 		break;
 	case I2C_STS_RECV:
 		if(i2c_sts & I2C_INT_RX_FULL) {
-			*(p_cb->rbuf)++ = in_w(I2C_DATA_CMD(unit)) & I2C_DATA_CMD_DAT;
-			if(--(p_cb->rdat_num)) {
-				cmd = I2C_DATA_CMD_CMD_READ;
-				out_w(I2C_DATA_CMD(unit), cmd);
-			} else {	// Last data
+			while((p_cb->rdat_num > 0) && (in_w(I2C_RXFLR(unit)) > 0)) {
+				*(p_cb->rbuf)++ = in_w(I2C_DATA_CMD(unit)) & I2C_DATA_CMD_DAT;
+				p_cb->rdat_num--;
+			}
+			if(p_cb->rdat_num == 0) {	// Last data
 				clr_w(I2C_INTR_MASK(unit), I2C_INT_RX_FULL);
 				p_cb->state = I2C_STS_STOP;
 				wup = TRUE;
+			} else if(p_cb->rdat_num == p_cb->rcmd_num) {
+				queue_reads(unit, p_cb);	// Batch read: queue the next
 			}
 		} else {
 			abort = TRUE;	// Error
@@ -200,7 +231,6 @@ LOCAL void i2c_inthdr( UINT intno )
  */
 LOCAL ER i2c_trans(INT unit, T_I2C_LLDCB *p_cb)
 {
-	UW	cmd;
 	UINT	imask;
 	UINT	flgptn;
 	ER	err;
@@ -223,15 +253,15 @@ LOCAL ER i2c_trans(INT unit, T_I2C_LLDCB *p_cb)
 		if(p_cb->sdat_num > 0 ) {	/* Send */
 			set_w(I2C_INTR_MASK(unit), I2C_INT_TX_EMPTY|I2C_INT_ERROR);
 			p_cb->state = I2C_STS_SEND;
-		} else {			/* Receive */
-			if(p_cb->rdat_num > 1) {
-				cmd = I2C_DATA_CMD_CMD_READ;
-			} else {	// Last data
-				cmd = I2C_DATA_CMD_CMD_READ | I2C_DATA_CMD_STOP;
-			}
+		} else if(p_cb->rdat_num > 0) {	/* Receive */
+			p_cb->rcmd_num = p_cb->rdat_num;
+			queue_reads(unit, p_cb);
 			set_w(I2C_INTR_MASK(unit), I2C_INT_RX_FULL|I2C_INT_ERROR);
-			out_w(I2C_DATA_CMD(unit), cmd);				
 			p_cb->state = I2C_STS_RECV;
+		} else {			/* Nothing to receive */
+			p_cb->state = I2C_STS_STOP;
+			I2C_UNLOCK(unit, imask);
+			break;
 		}
 		I2C_UNLOCK(unit, imask);
 

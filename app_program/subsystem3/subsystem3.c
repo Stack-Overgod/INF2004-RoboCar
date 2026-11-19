@@ -4,17 +4,16 @@
  *
  * subsystem3_init()  sets up the IR driver, the line follower and the
  *                    barcode decoder: their event-bus subscriptions and the
- *                    barcode edge interrupt (left masked). No thread yet.
+ *                    barcode ADC (edge reporting left disarmed). No thread.
  * subsystem3_start() nothing to start: the line pair is sampled every
  *                    RC_PERIOD_LINE_MS (10 ms, 100 Hz) by the shared Sense
  *                    task in ../rc_sense.c, which app_main.c starts after
  *                    every subsystem (report §3, single Sense task).
  *
- * Both need the shared layer (rc_defer, rc_event, rc_gpioirq) running
- * first. app_main.c starts it in "Phase 0", before any subsystem.
+ * Both need the shared layer (rc_defer, rc_event) running first. app_main.c starts it in "Phase 0", before any subsystem.
  *
  * Nothing here turns on steering or barcode reading. That is the job of
- * the mission logic (sub_nav, not yet ported) or of a test, through
+ * the mission logic (sub_nav) or of a test, through
  * sub_line_enable() and sub_barcode_arm(). See S3_FOLLOW_AT_START.
  *
  * NOTE: Kernel types and calls (ID, ER, INT, UB, T_CTSK, tk_*) keep their
@@ -32,8 +31,7 @@
 /*
  * 1: enable line following as soon as subsystem3_start() runs.
  * 0: leave steering off until sub_line_enable(true) is called.
- * Keep 0 on the bench: once Buddy 2's motors are wired, 1 makes the car
- * drive away at power-up.
+ * Keep 0: with the motors wired, 1 makes the car drive away at power-up.
  */
 #define S3_FOLLOW_AT_START (0)
 
@@ -56,7 +54,7 @@ static bool step_ok (rc_result_t result, UB const * p_name);
 /*!
  * @brief  Create subsystem 3's kernel objects. Does not start threads.
  *
- * Order matters: drv_ir first (it owns the pins and the barcode IRQ),
+ * Order matters: drv_ir first (it owns the pins and the barcode ADC),
  * then the two consumers of its events.
  *
  * @return E_OK on success, E_SYS if any step failed.

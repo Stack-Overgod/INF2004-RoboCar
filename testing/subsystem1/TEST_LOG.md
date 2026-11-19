@@ -38,12 +38,12 @@ Define a test here before running it. Test IDs never change.
 | S1-U06 | A command reaches a registered callback unchanged | Command subscription | auto | `[TEST] S1-U06 PASS` |
 | S1-U07 | Telemetry task runs at its TEAM.md priority (12) | TEAM.md §4 | auto | `[TEST] S1-U07 PASS` |
 | S1-U08 | Telemetry task sleeps between ticks (no busy loop) | Telemetry API | auto | `[TEST] S1-U08 PASS` |
-| S1-U09 | Barcode / hump / obstacle / impact events are accepted | Telemetry publishing | auto | `[TEST] S1-U09 PASS` |
+| S1-U09 | Barcode / hump / obstacle / lifted events are accepted | Telemetry publishing | auto | `[TEST] S1-U09 PASS` |
 | S1-U10 | An unrelated event is rejected and nothing is sent | Telemetry API | auto | `[TEST] S1-U10 PASS` |
 | S1-U11 | Barcode message: exact topic + JSON | Message structures | auto | `[TEST] S1-U11 PASS` |
 | S1-U12 | Hump message: exact topic + JSON | Message structures | auto | `[TEST] S1-U12 PASS` |
 | S1-U13 | Obstacle message: exact topic + JSON | Message structures | auto | `[TEST] S1-U13 PASS` |
-| S1-U14 | Impact message: exact topic + JSON | Message structures | auto | `[TEST] S1-U14 PASS` |
+| S1-U14 | Lifted message: exact topic + JSON | Message structures | auto | `[TEST] S1-U14 PASS` |
 | S1-U15 | State message every 250 ms, no gaps in `seq` (timed by the kernel clock) | Telemetry publishing | auto | `[TEST] S1-U15 PASS` |
 | S1-U16 | Heartbeat every ~2 s with active sink, tx/fail and drop counters | Heartbeat/status | auto | `[TEST] S1-U16 PASS` |
 | S1-U17 | Every topic is under `car/01/` | Topics | auto | `[TEST] S1-U17 PASS` |
@@ -62,7 +62,7 @@ Define a test here before running it. Test IDs never change.
 | S1-I04 | Buddy 4 motion class -> `cls` field | Telemetry publishing / B4 | auto | `[TEST] S1-I04 PASS` |
 | S1-I05 | Buddy 3 barcode decoded -> barcode message + `bc` field | Telemetry publishing / B3 | auto | `[TEST] S1-I05 PASS` |
 | S1-I06 | Buddy 4 hump end -> hump message + highest `peak` | Telemetry publishing / B4 | auto | `[TEST] S1-I06 PASS` |
-| S1-I07 | Buddy 4 impact -> impact message | Telemetry publishing / B4 | auto | `[TEST] S1-I07 PASS` |
+| S1-I07 | Buddy 4 lifted -> lifted message | Telemetry publishing / B4 | auto | `[TEST] S1-I07 PASS` |
 | S1-I08 | Buddy 5 obstacle profile -> obstacle message | Telemetry publishing / B5 | auto | `[TEST] S1-I08 PASS` |
 | S1-I09 | With no callback, a command goes out as `RC_EVT_COMMAND_RX` for sub_nav | Command subscription / nav | auto | `[TEST] S1-I09 PASS` |
 | S1-I10 | Worst-case inputs: state fits its buffer and one MQTT message; no distance overflow | Message structures | auto | `[TEST] S1-I10 PASS` |

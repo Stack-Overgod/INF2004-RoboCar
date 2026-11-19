@@ -75,10 +75,9 @@ typedef enum {
     RC_EVT_NONE = 0,
 
     /* core */
-    RC_EVT_TICK,                /* periodic, carries a sequence number   */
+    RC_EVT_TICK,                /* only S1 tests publish it (a probe)    */
 
     /* buddy 2, motion */
-    RC_EVT_ENCODER_EDGE,        /* published from ISR context            */
     RC_EVT_ODOMETRY,            /* speed and distance, RC_PERIOD_MOTION  */
     RC_EVT_MOTION_DONE,         /* a queued move finished or aborted     */
 
@@ -86,7 +85,7 @@ typedef enum {
     RC_EVT_LINE_SAMPLE,         /* raw sensor state, every LINE period   */
     RC_EVT_LINE_LOST,
     RC_EVT_LINE_REACQUIRED,
-    RC_EVT_BARCODE_EDGE,        /* published from ISR context            */
+    RC_EVT_BARCODE_EDGE,        /* from the defer task                   */
     RC_EVT_BARCODE_DECODED,
 
     /* buddy 4, IMU and terrain */
@@ -106,18 +105,18 @@ typedef enum {
     RC_EVT_COMMAND_RX,          /* a command arrived over the link       */
     RC_EVT_LINK_STATE,
 
-    /* buddy 5, navigation (sub_nav). Appended so no existing id moves. */
+    /* buddy 5, navigation (sub_nav) */
     RC_EVT_NAV_TIMEOUT,         /* sub_nav's own state timer; tick.seq   */
     RC_EVT_RECOVERY_FAILED,     /* FR9: line not found after a bypass    */
-    /* buddy 3, barcode.*/
+    /* buddy 3, barcode */
     RC_EVT_BARCODE_SCAN,        /* summary of one pass over a barcode,   */
     RC_EVT_BARCODE_RAW,         /* the same pass as wide/narrow bits     */
-    /* buddy 5, spin scan diagnostics. Appended so no existing id moves. */
+    /* buddy 5, spin scan diagnostics */
     RC_EVT_SPIN_EDGES,          /* each pass's edge, after a spin scan   */
-    /* buddy 4, ramp height. Appended so no existing id moves. */
+    /* buddy 4, ramp height */
     RC_EVT_RAMP_END,            /* one slope climbed/descended, height   */
 
-
+    /* New ids go here, so existing ids keep their values. */
     RC_EVT_COUNT                /* keep last */
 } rc_evt_id_t;
 
@@ -146,10 +145,13 @@ typedef enum {
 #define RC_BITS_CMD         (3U)    /* rc_nav_cmd_t, 7 values */
 #define RC_BITS_CLS         (3U)    /* rc_motion_class_t, 8 values */
 #define RC_BITS_LIFT        (2U)    /* rc_lift_t, 4 values */
+#define RC_BITS_LIFT_H      (7U)    /* lift rise estimate, 0..127 mm */
+#define RC_BITS_LIFT_V      (6U)    /* lift rise speed, 0..63 cm/s */
+#define RC_BITS_LIFT_REF    (8U)    /* 1 g reference less 1000, +-127 mg */
 #define RC_BITS_SYM         (5U)    /* barcode symbol code, 28 values */
 #define RC_BITS_ACC         (12U)   /* +/-2047 mg; LSM303D at +/-2 g */
-#define RC_BITS_HUMP_PEAK   (7U)    /* 0..127 mm; track humps are ~20-60 mm */
-#define RC_BITS_HUMP_MS     (13U)   /* 0..8191 ms; HUMP_MAX_MS is 5000 */
+#define RC_BITS_HUMP_PEAK   (7U)    /* 0..127 mm hump height */
+#define RC_BITS_HUMP_MS     (13U)   /* 0..8191 ms, longer humps clamp */
 #define RC_BITS_PITCH       (8U)    /* -128..+127 deg */
 #define RC_BITS_HEIGHT      (10U)   /* -512..+511 mm, live height (ramp) */
 #define RC_BITS_RAMP_RISE   (9U)    /* 0..511 mm climbed on one slope */
@@ -160,7 +162,6 @@ typedef enum {
 #define RC_BITS_WIDTH_US    (31U)   /* barcode element, up to ~35 min */
 #define RC_BITS_NPOINTS     (6U)    /* scan readings, saturates at 63 */
 #define RC_BITS_CLEAR       (10U)   /* 0..1023 mm side clearance (more = clear) */
-#define RC_BITS_ENC_DT      (17U)   /* 0..131071 us between encoder edges */
 
 #define RC_FIELD_MAX(bits)  ((uint32_t)((1UL << (bits)) - 1UL))
 
@@ -223,16 +224,6 @@ typedef struct {
     uint32_t seq;               /* full word: sub_nav's timer generation  */
 } rc_pl_tick_t;
 
-/* Encoder counts are full 32-bit words: one writer (the encoder ISR) per
- * word, so they are read without a lock. */
-typedef struct {
-    uint32_t  count;            /* running edge count for that wheel     */
-    uint32_t  delta_us:17;      /* gap since the previous edge, clamped
-                                 * (drv_encoder's stall timeout is 100 ms) */
-    uint32_t  side:1;           /* rc_side_t                             */
-    uint32_t  :14;
-} rc_pl_encoder_t;
-
 /* Distances are a 16-bit odometer that wraps every 65.5 m:
  * consumers use the difference between two samples (uint16_t subtract). */
 typedef struct {
@@ -291,17 +282,17 @@ typedef struct {
     uint8_t  f_ratio;           /* window not wide:narrow >= 2           */
     uint8_t  f_wide;            /* window without exactly 3 wide         */
     uint8_t  f_nomatch;         /* 3 wide, but not in the Code 39 table  */
-    uint8_t  f_glitch;          /* edge under ELEM_MIN_US, window reset  */
+    uint8_t  f_glitch;          /* 0: drv_ir.c merges glitches first     */
     uint16_t last_nomatch;      /* pattern of the last f_nomatch, 9 bits */
     uint16_t min_10us;          /* narrowest element, 10 us units        */
     uint16_t max_10us;          /* widest element, 10 us units           */
 } rc_pl_bar_scan_t;
 
-
 /* One scan attempt as the sensor saw it: every bar and space in order,
  * 1 = wide, 0 = narrow, each judged against its 9 neighbours (as the
  * decoder does), so a slow-down part way through does not turn every
- * later element wide. Edges under ELEM_MIN_US are left out. 16 bytes. */
+ * later element wide. Glitches are merged by drv_ir.c (BAR_GLITCH_US)
+ * before they get here. 16 bytes. */
 #define RC_BAR_RAW_MAX  (64U)
 typedef struct {
     uint8_t  n;                 /* elements recorded, <= RC_BAR_RAW_MAX  */
@@ -337,7 +328,7 @@ typedef struct {
 
 typedef struct {
     uint32_t peak_mm:7;         /* estimated peak height, clamped 127    */
-    uint32_t duration_ms:13;    /* HUMP_MAX_MS 5000 fits                 */
+    uint32_t duration_ms:13;    /* clamped to 8191                       */
     int32_t  max_pitch_deg:8;
     uint32_t :4;
 } rc_pl_hump_t;
@@ -360,7 +351,10 @@ typedef struct {
 } rc_pl_motion_class_t;
 
 typedef struct {
-    uint8_t  why:2;             /* rc_lift_t                             */
+    uint32_t why:2;             /* rc_lift_t                             */
+    uint32_t h_mm:7;            /* rise estimate when it fired, clamped  */
+    uint32_t v_cm_s:6;          /* rise speed when it fired, clamped     */
+    int32_t  ref_mg:8;          /* learnt 1 g reference less 1000 mg     */
 } rc_pl_lifted_t;
 
 /* range_mm 0 means no echo (timeout or out of range), so there is no
@@ -413,7 +407,6 @@ typedef struct {
     uint32_t    t_us;           /* microsecond stamp, filled by publish  */
     union {
         rc_pl_tick_t         tick;
-        rc_pl_encoder_t      encoder;
         rc_pl_odometry_t     odometry;
         rc_pl_motion_done_t  motion_done;
         rc_pl_line_t         line;

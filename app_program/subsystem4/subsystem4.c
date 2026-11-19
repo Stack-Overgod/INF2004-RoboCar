@@ -7,7 +7,7 @@
  *	subsystem4_start(): IMU over I2C, then the boot calibration (report
  *	                    §6.5 IDLE: the car must sit level and still).
  *	                    Sampling itself is done by the shared Sense thread
- *	                    (subsystem3.c), which calls drv_imu_sample() every
+ *	                    (rc_sense.c), which calls drv_imu_sample() every
  *	                    RC_PERIOD_IMU_MS once drv_imu_available() is true.
  *
  *	An IMU failure is NOT fatal (FR15): the car runs without hump and

@@ -1,5 +1,8 @@
 /*
- *  drv_imu.c
+ *  drv_imu.c  -  Buddy 4 hardware layer
+ *
+ *  LSM303D accelerometer + magnetometer over I2C: init, raw reads,
+ *  start-up calibration and the periodic RC_EVT_IMU_SAMPLE publisher.
  */
 #include "../rc_prelude.h"
 #include <tm/tmonitor.h>
@@ -16,10 +19,9 @@
  * like a row in a tiny built-in spreadsheet. `#define` gives each slot
  * number a readable name so the code below never has bare hex constants
  * whose meaning you'd have to look up in a datasheet every time. */
-/* LSM303D register map. Unlike the older LSM303DLHC this is a SINGLE die
- * with ONE I2C address (0x1D with SA0 high) for both accelerometer and
- * magnetometer, a different register layout, and 16-bit right-justified
- * accelerometer output (not the DLHC's 12-bit left-justified). */
+/* LSM303D register map: a single die with one I2C address (0x1D with SA0
+ * high) for both accelerometer and magnetometer, and 16-bit right-justified
+ * accelerometer output. */
 #define D_WHO_AM_I      (0x0FU)  /* identity register */
 #define D_WHO_ID        (0x49U)  /* value WHO_AM_I returns on an LSM303D */
 
@@ -67,14 +69,13 @@
 #define S4_IMU_PRINT    (0)
 #endif
 
-/* unit 0 (GP4/GP5 after the HARDWARE.md patch) - the RTOS's name for the I2C
- * bus device */
+/* the RTOS's name for I2C unit 0 (GP4/GP5, see rc_config.h) */
 #define I2C_DEVNAME     ((UB *)"iica")
 
 /* `static` here means these variables are private to this file - no
  * other .c file can see or touch them directly, only through the
  * functions below. That's how this driver keeps its internal state
- * (calibration bias, last reading) hidden from the rest of the codebase. */
+ * (calibration bias, fault state) hidden from the rest of the codebase. */
 /* device handle for the opened I2C bus, or -1 if not open */
 static ID      i2c_dd = -1;
 /* calibration offset to subtract from raw accel X (mg) */
@@ -86,12 +87,6 @@ static int16_t bias_z;
 /* +1, or -1 when the chip is mounted upside down (drv_imu_calibrate), so
  * that Z reads +1 g with the car upright and -1 g overturned */
 static int16_t z_sign = 1;
-/* most recent bias-corrected accel X reading (mg), used by pitch calc */
-static int16_t last_ax;
-/* most recent bias-corrected accel Y reading (mg) */
-static int16_t last_ay;
-/* most recent bias-corrected accel Z reading (mg) */
-static int16_t last_az;
 
 /* True once drv_imu_init() and drv_imu_calibrate() have both succeeded.
  * drv_imu_sample() does nothing until then, so the Sense thread (already
@@ -116,9 +111,8 @@ void drv_imu_test_hold(bool hold)
  *  I2C (pronounced "eye-squared-C") is a simple two-wire protocol (one
  *  data wire, one clock wire) that lets several sensor chips share the
  *  same two Pico pins, each one answering only when its own address is
- *  sent first. `sadr` below is that chip address (accelerometer and
- *  magnetometer have different ones, even though they're on the same
- *  physical board). These two helpers are the only place in this file
+ *  sent first. `sadr` below is that chip address (on the LSM303D the
+ *  accelerometer and magnetometer share one). These two helpers are the only place in this file
  *  that actually talks to the RTOS's I2C device driver; everything else
  *  calls through them.
  * ------------------------------------------------------------------ */
@@ -208,8 +202,8 @@ rc_result_t drv_imu_init(void)
 
     /* Magnetometer: resolution/ODR, full scale, then continuous mode. On
      * the LSM303D these share the accelerometer's address. (void)-cast
-     * because the magnetometer is telemetry-only - a failure here must not
-     * take down the hump/pitch feature, which needs only the accel. */
+     * because nothing uses the magnetometer - a failure here must not take
+     * down the hump/lift features, which need only the accel. */
     (void)reg_write(RC_I2C_ADDR_MAG, M_CTRL5, M_CTRL5_VAL);
     (void)reg_write(RC_I2C_ADDR_MAG, M_CTRL6, M_CTRL6_VAL);
     (void)reg_write(RC_I2C_ADDR_MAG, M_CTRL7, M_CTRL7_VAL);
@@ -245,8 +239,7 @@ rc_result_t drv_imu_read_accel(int16_t *x, int16_t *y, int16_t *z)
 
     /* LSM303D accelerometer output is 16-bit, little-endian (low byte
      * first) and RIGHT-justified - the whole 16-bit value is used, with
-     * NO >>4 shift (the >>4 was for the DLHC's 12-bit left-justified
-     * format). Rebuild each axis from its low+high byte, then scale to
+     * no shift. Rebuild each axis from its low+high byte, then scale to
      * milli-g: at +/-2 g full scale the sensitivity is 0.061 mg/LSB, so
      * mg = raw * 61 / 1000. The product is held in int32 because raw
      * (+/-32767) * 61 overflows 16 bits. Downstream (pitch, lift_height)
@@ -260,7 +253,7 @@ rc_result_t drv_imu_read_accel(int16_t *x, int16_t *y, int16_t *z)
 
 rc_result_t drv_imu_read_mag(int16_t *x, int16_t *y, int16_t *z)
 {
-    /* raw bytes from the chip - note the different order, see below */
+    /* raw bytes from the chip: [X low, X high, Y low, Y high, Z low, Z high] */
     UB b[6];
 
     if ((x == NULL) || (y == NULL) || (z == NULL)) {
@@ -270,10 +263,8 @@ rc_result_t drv_imu_read_mag(int16_t *x, int16_t *y, int16_t *z)
         return RC_ERR_HARDWARE;
     }
 
-    /* LSM303D magnetometer output is 16-bit, LITTLE-endian (low byte
-     * first), in natural X, Y, Z order - different from the DLHC, which
-     * was big-endian and X, Z, Y. Returned as raw counts: only telemetry
-     * reads the magnetometer, so no unit scaling is applied. */
+    /* LSM303D magnetometer output is 16-bit, little-endian (low byte
+     * first), in X, Y, Z order. Returned as raw counts, no unit scaling. */
     *x = (int16_t)(((uint16_t)b[1] << 8) | b[0]);
     *y = (int16_t)(((uint16_t)b[3] << 8) | b[2]);
     *z = (int16_t)(((uint16_t)b[5] << 8) | b[4]);
@@ -366,8 +357,8 @@ void drv_imu_sample(void)
      * "address-of" operator) so drv_imu_read_mag can write its results
      * directly into them - same output-via-pointer pattern as above.
      * Magnetometer failure is ignored (`(void)`-discarded) rather than
-     * aborting the whole sample, since accel/pitch is the feature that
-     * matters most and shouldn't be held hostage by a flaky compass. */
+     * aborting the whole sample, since the accelerometer is the part that
+     * matters and shouldn't be held hostage by a flaky compass. */
     (void)drv_imu_read_mag(&mx, &my, &mz);
 
 #if S4_IMU_PRINT
@@ -398,10 +389,6 @@ void drv_imu_sample(void)
     /* Z keeps its 1 g offset on purpose: it is the reference the pitch
      * calculation needs. Only the level-sitting error is removed. */
     az = (int16_t)((z_sign * az) - bias_z);
-
-    last_ax = ax;
-    last_ay = ay;
-    last_az = az;
 
     evt.id = RC_EVT_IMU_SAMPLE;
     /* 12-bit milli-g (+/-2 g full scale), clamped. The magnetometer is
@@ -470,34 +457,4 @@ rc_result_t drv_imu_calibrate(uint16_t n)
 bool drv_imu_available(void)
 {
     return imu_ready;
-}
-
-/* Turns the last accelerometer X reading into a tilt angle, without any
- * trigonometry functions and without a gyroscope. See sub_terrain.c and
- * the Buddy 4 guide for the full "why this works" explanation - short
- * version: gravity always pulls straight down, so when the car is level
- * all of that pull shows up on the Z axis; tilt the car nose-up and part
- * of that same pull rotates onto the X axis instead. More X reading
- * means more tilt. */
-int16_t drv_imu_pitch_ddeg(void)
-{
-    /*
-     *  Small-angle approximation: for pitch under about 25 degrees,
-     *  asin(ax/g) is within a couple of percent of ax/g in radians, and
-     *  a speed hump never exceeds that. Avoiding atan2 keeps this
-     *  integer-only, which matters because the Cortex-M0+ has no FPU and
-     *  a soft-float atan2 would cost thousands of cycles at 100 Hz.
-     *
-     *  ax is in mg, 1 g = 1000. radians = ax/1000.
-     *  tenths of a degree = radians * 573.
-     *
-     *  Where does 573 come from? 1 radian = 180/pi degrees = 57.3
-     *  degrees = 573 tenths-of-a-degree. So multiplying a radians value
-     *  by 573 converts it straight to "tenths of a degree" in one step -
-     *  it's just the degrees-per-radian conversion factor, scaled by 10
-     *  so the result can stay a whole number (see drv_imu.h's note on
-     *  fixed-point math). Division happens last so we keep as much
-     *  precision as an int32_t allows before rounding down to int16_t.
-     */
-    return (int16_t)(((int32_t)last_ax * 573) / 1000);
 }

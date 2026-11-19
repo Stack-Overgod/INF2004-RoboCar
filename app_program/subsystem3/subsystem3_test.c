@@ -23,9 +23,8 @@
  * sensor; sweep it across the printed barcode and every decoded letter is
  * printed.
  *
- * NOTE: The decoder as it is today also reports the '*' start and stop
- * guards; after fix F1 (code-fixes.md) it reports the letter only. Guard
- * results are printed but never counted, so both versions pass.
+ * NOTE: The decoder also reports the '*' start and stop guards. Guard
+ * results are printed but never counted.
  *
  * NOTE: Deviation from BARR-C 4.2.a / 4.3.c. By the template's design,
  * subsystem3_test() is declared in app.h (included through subsystem3.h),
@@ -79,7 +78,7 @@ extern volatile UW dev_i2c_diag[I2C_DIAG_N];
 #define WIDE_150_US   (60000U)  /* 9 mm at 150 mm/s */
 #define NARROW_350_US (8571U)   /* 3 mm at 350 mm/s */
 #define WIDE_350_US   (25714U)  /* 9 mm at 350 mm/s */
-#define TOO_WIDE_US   (250000U) /* over sub_barcode's 200 ms limit */
+#define TOO_WIDE_US   (250000U) /* 250 ms wide element (S3-U09) */
 #define QUIET_US      (500000U) /* white margin around a code */
 
 #define CHAR_ELEMENTS (9U)      /* 5 bars and 4 spaces per character */
@@ -962,7 +961,7 @@ static void run_barcode_test (bool b_user_seen, barcode_report_t * p_report)
 
 /*!
  * @brief  Part 1: feed known Code 39 widths straight to the decoder,
- *         with the barcode interrupt masked (S3-U06..S3-U09).
+ *         with the real sensor's edges disarmed (S3-U06..S3-U09).
  * @param  p_report  filled in with the results
  */
 static void synthetic_checks (barcode_report_t * p_report)

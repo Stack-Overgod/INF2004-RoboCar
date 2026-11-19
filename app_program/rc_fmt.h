@@ -21,8 +21,9 @@
  *      %%       literal percent
  *
  *  No floats (there is no FPU), no width or precision, no padding. Output is
- *  always NUL terminated as long as size >= 1. Returns the number of
- *  characters written, excluding the terminator.
+ *  always NUL terminated as long as size >= 1. Returns the length of the
+ *  full output, excluding the terminator, as snprintf does: a return value
+ *  >= size means the output was truncated.
  */
 
 #ifndef RC_FMT_H
@@ -31,10 +32,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdarg.h>
 
 int32_t rc_snprintf(char *buf, uint32_t size, const char *fmt, ...);
-int32_t rc_vsnprintf(char *buf, uint32_t size, const char *fmt, va_list ap);
 
 uint32_t rc_strlen(const char *s);
 

@@ -4,7 +4,6 @@
 
 #include "rc_prelude.h"
 #include "rc_pwm.h"
-#include "rc_config.h"
 
 #define SYS_CLK_HZ          (125000000UL)
 #define PWM_SLICE(pin)      (((pin) >> 1) & 0x07U)
@@ -137,13 +136,4 @@ rc_result_t rc_pwm_set_pulse_us(uint32_t pin, uint32_t pulse_us)
     }
 
     return (pwm_set_cc(pin, cc) == E_OK) ? RC_OK : RC_ERR_PARAM;
-}
-
-rc_result_t rc_pwm_enable(uint32_t pin, bool on)
-{
-    if (pin >= 30U) {
-        return RC_ERR_PARAM;
-    }
-    return (pwm_set_enabled(pin, on ? TRUE : FALSE) == E_OK)
-           ? RC_OK : RC_ERR_PARAM;
 }

@@ -16,7 +16,7 @@
  *      swamp it, so treat it as a slow correction at best.
  *    - Hump height cannot come from double-integrating acceleration; the
  *      drift over a two second climb is larger than the hump. Estimate
- *      peak pitch instead and convert with the wheelbase. See
+ *      peak pitch or roll instead and convert with the wheelbase. See
  *      sub_terrain.c for that.
  *
  *  The driver itself just produces calibrated samples. Interpretation
@@ -50,8 +50,7 @@ rc_result_t drv_imu_read_accel(int16_t *x, int16_t *y, int16_t *z);
 
 /* Same pattern as drv_imu_read_accel above, but for the magnetometer
  * (the compass sensor). Units are the chip's raw magnetic-field counts,
- * not physical units - we only ever compare them to each other, so the
- * raw scale is fine. */
+ * not physical units. */
 rc_result_t drv_imu_read_mag(int16_t *x, int16_t *y, int16_t *z);
 
 /*
@@ -83,14 +82,5 @@ bool drv_imu_available(void);
  * in. Always release it (false) at the end of the test. */
 void drv_imu_test_hold(bool hold);
 #endif
-
-/* Pitch in tenths of a degree, from the gravity vector. Positive is nose
- * up. Only meaningful when the car is not accelerating hard.
- * ("Pitch" = how much the car is tilted nose-up/nose-down, like the front
- * of a see-saw. "Tenths of a degree" means the number 40 here means 4.0
- * degrees - this is a trick called fixed-point math: using a plain whole
- * number to represent a fractional value, because this chip has no
- * floating-point hardware to do "4.0" style math efficiently.) */
-int16_t drv_imu_pitch_ddeg(void);
 
 #endif /* DRV_IMU_H */

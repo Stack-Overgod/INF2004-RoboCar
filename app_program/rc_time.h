@@ -3,8 +3,8 @@
  *
  *  Microsecond timebase, taken straight from the RP2040 TIMER block.
  *
- *  The kernel tick is 1 ms, which is far too coarse for an HC-SR04 echo
- *  (one tick is 170 mm of range) or for barcode bar widths. TIMERAWL is a
+ *  The kernel tick is 10 ms, which is far too coarse for an HC-SR04 echo
+ *  (one tick is ~1.7 m of range) or for encoder edge gaps. TIMERAWL is a
  *  free-running 1 MHz counter that needs no interrupt and no kernel call,
  *  so it is safe to read from an ISR.
  *
@@ -18,7 +18,8 @@
 
 #include <stdint.h>
 
-/* Latch the TIMER block out of reset. Called by rc_event_init. */
+/* Set the watchdog tick generator so the TIMER counts 1 us per tick
+ * (see rc_time.c). Called by rc_event_init. */
 void rc_time_init(void);
 
 /* Free-running microseconds. ISR safe. */

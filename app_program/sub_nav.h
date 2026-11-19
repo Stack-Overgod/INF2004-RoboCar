@@ -8,13 +8,14 @@
  *  dispatcher, or inside a sub_motion completion callback, which runs on
  *  that same dispatcher - so the state is only ever changed by one task.
  *
- *  Implemented: IDLE -> FOLLOWING; READING_BARCODE (on a Code 39 start
- *  character, with a decode timeout back to FOLLOWING, G10);
- *  EXECUTING_CMD (barcode A/B/C/D and remote turn commands as queued
- *  sub_motion moves, FR3/FR10b); the obstacle path (watch ping ->
- *  AVOIDING -> scan -> plan -> bypass -> RECOVERING -> FOLLOWING); the
- *  FR9 3 s recovery timeout; STOPPED (remote STOP, LIFTED, aborted move,
- *  failed recovery, no safe route). Not built: reverse-and-reattempt (G5).
+ *  Implemented: IDLE -> RECOVERING (START line-up scan) -> FOLLOWING;
+ *  READING_BARCODE (on a Code 39 start character, with a decode timeout
+ *  back to FOLLOWING, G10); EXECUTING_CMD (barcode A/B/C/D, run at the
+ *  next junction, and remote turn commands as queued sub_motion moves,
+ *  FR3/FR10b); the obstacle path (watch ping -> AVOIDING -> step scan ->
+ *  plan -> bypass -> RECOVERING -> FOLLOWING); the FR9 recovery timeout;
+ *  STOPPED (remote STOP, LIFTED, aborted move, failed recovery, no safe
+ *  route). Not built: reverse-and-reattempt (G5).
  */
 #ifndef SUB_NAV_H
 #define SUB_NAV_H
@@ -27,7 +28,7 @@ typedef enum {
     RC_NAV_READING_BARCODE,     /* start char seen, waiting for the data */
     RC_NAV_EXECUTING_CMD,       /* a barcode / remote turn is running    */
     RC_NAV_AVOIDING,            /* scanning, then driving the bypass     */
-    RC_NAV_RECOVERING,          /* bypass done, searching for the line   */
+    RC_NAV_RECOVERING,          /* rejoining the line (bypass / START)   */
     RC_NAV_STOPPED              /* motors braked; sub_nav_start() leaves */
 } rc_nav_state_t;
 
@@ -37,9 +38,10 @@ typedef enum {
  * machine in IDLE. */
 rc_result_t sub_nav_init(void);
 
-/* Begin the run: IDLE or STOPPED -> FOLLOWING. Call from usermain() once
- * every subsystem has started (report §6.5, IDLE). Returns RC_ERR_STATE
- * from any other state. */
+/* Begin the run: IDLE or STOPPED -> RECOVERING (line-up scan in place),
+ * then FOLLOWING. Called from usermain() once every subsystem has started
+ * (non-MQTT builds) or on a START command (report §6.5, IDLE). Returns
+ * RC_ERR_STATE from any other state. */
 rc_result_t sub_nav_start(void);
 
 /* Stop the run from any task. Goes through the event bus as a STOP
@@ -49,8 +51,9 @@ rc_result_t sub_nav_stop(void);
 rc_nav_state_t sub_nav_state(void);
 const char    *sub_nav_state_name(rc_nav_state_t s);
 
-/* Inject a command as if it had arrived over Buddy 1's link: publishes
- * RC_EVT_COMMAND_RX. `arg` is reserved; pass 0. Safe from any task. */
+/* Inject a command as if it had arrived over the telemetry link:
+ * publishes RC_EVT_COMMAND_RX. `arg` is reserved; pass 0. Safe from any
+ * task. */
 rc_result_t sub_nav_inject_command(rc_nav_cmd_t cmd, int32_t arg);
 
 #if APP_TEST

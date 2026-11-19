@@ -33,7 +33,7 @@
 
 #include "sub_telemetry.h"
 #include "subsystem1.h"             /* S1_PRI_TELEMETRY, app_start_task() */
-#include "../rc_fmt.h"              /* rc_snprintf(), rc_strlen() */
+#include "../rc_fmt.h"              /* rc_snprintf() */
 #include "../rc_config.h"
 #include "../rc_event.h"
 #include "../rc_time.h"
@@ -58,19 +58,19 @@
 #define HEARTBEAT_TICKS (8U)
 
 /* Every 4th state message (1 Hz) is the long form with the two 32-bit
- * encoder counts (27 B instead of 19 B); the dashboard keeps the last
+ * encoder counts (28 B instead of 20 B); the dashboard keeps the last
  * counts in between. */
 #define ENC_EVERY_TICKS (4U)
 
 /* A buddy counts as "live" in the heartbeat if we've heard its stream this
- * recently. Those streams run at 17-200 Hz, so a whole second of silence
+ * recently. Those streams run at 17-100 Hz, so a whole second of silence
  * means it has stopped, not that it's between samples. */
 #define LIVE_WINDOW_MS  (1000U)
 
 /* The servo angle that points straight ahead, the middle of the servo's
- * RC_SERVO_ANGLE_MIN..RC_SERVO_ANGLE_MAX swing. Only readings this close to it count
- * as "the range ahead" in the state message; the rest of a sweep is
- * reported as a whole on car/01/obstacle. */
+ * RC_SERVO_ANGLE_MIN..RC_SERVO_ANGLE_MAX swing. Only readings this close
+ * to it count as "the range ahead" in the state message; the rest of a
+ * sweep is reported as a whole on car/01/obstacle. */
 #define AHEAD_DEG       (90)
 #define AHEAD_TOL_DEG   (5)
 
@@ -116,7 +116,7 @@ static int16_t sent_cls = -1;
 typedef enum
 {
     LIVE_B2_ODOMETRY = 0,       /* RC_EVT_ODOMETRY, 50 Hz */
-    LIVE_B3_LINE,               /* RC_EVT_LINE_SAMPLE, 200 Hz */
+    LIVE_B3_LINE,               /* RC_EVT_LINE_SAMPLE, 100 Hz */
     LIVE_B4_IMU,                /* RC_EVT_IMU_SAMPLE, 100 Hz */
     LIVE_B5_ULTRA,              /* RC_EVT_ULTRA_RESULT, ~17 Hz while watching */
     LIVE_COUNT
@@ -185,8 +185,8 @@ static rc_result_t console_open(void)
     return RC_OK;
 }
 
-/* The payload is a binary frame now, so show it as the JSON it stands
- * for, with its size on the wire. */
+/* The payload is a binary frame: print the JSON it stands for, with its
+ * size on the wire. */
 static rc_result_t console_publish(const char *topic, const char *payload,
                                    uint16_t len)
 {
@@ -268,15 +268,15 @@ static rc_result_t send_evt(tm_type_t type, const int32_t *vals)
     return send(type, next_evt_seq(), vals);
 }
 
-/* The per-tick status frame: speed, distance, motor duty, line sensors,
+/* The per-tick state frame: speed, distance, motor duty, line sensors,
  * motion class, tallest hump, range ahead, last barcode, nav state, the
  * fault bitmask and the height above the start level (ramps) -- the
- * telemetry FR10a asks for -- and once a second the encoder counts too. Every field is a cached value updated by the
- * event callbacks below, except encoder counts and motor duty, which
- * Buddy 2 reports live through drv_encoder_count() and drv_motor_get(),
- * the nav state (sub_nav_state(), one byte), the faults (one kernel
- * read of the event flag) and Buddy 4's live height (one halfword).
- * Order = f_state[] in tm_frame.c. */
+ * telemetry FR10a asks for -- and, when with_enc, the encoder counts.
+ * Every field is a cached value updated by the event callbacks below,
+ * except encoder counts and motor duty (read live from Buddy 2's
+ * drv_encoder_count() and drv_motor_get()), the nav state (one byte), the
+ * faults (one read of the event flag) and Buddy 4's height (one halfword).
+ * Order = f_state[] / f_state_enc[] in tm_frame.c. */
 static void publish_state(bool with_enc)
 {
     int32_t v[16];
@@ -389,7 +389,7 @@ static void on_imu(const rc_event_t *evt, void *ctx)
 }
 
 /* Buddy 4: the motion class, sent only when it changes. Cache it for the
- * per-tick line; the task streams the change on car/01/motion (see
+ * state frame; the task streams the change on car/01/motion (see
  * stream_motion_class, which explains why it isn't sent from here). */
 static void on_motion_class(const rc_event_t *evt, void *ctx)
 {
@@ -411,9 +411,10 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
     }
 }
 
-/* Everything that gets its own message the moment it happens: barcode scan attempt,
- * hump, lifted, obstacle, avoidance plan, lost/found, move done.
- * Two of them also feed the per-tick line, so cache those on the way. */
+/* Everything that gets its own message the moment it happens: barcode
+ * (decoded, scan, raw bits), hump, ramp, lifted, obstacle, spin edges,
+ * avoidance plan, line lost/found, move done. Barcode and hump also feed
+ * the state frame, so cache those on the way. */
 static void on_notable(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
@@ -546,6 +547,9 @@ rc_result_t sub_telemetry_publish_event(const rc_event_t *evt)
 
         case RC_EVT_LIFTED:
             v[0] = (int32_t)evt->u.lifted.why;
+            v[1] = (int32_t)evt->u.lifted.h_mm;
+            v[2] = (int32_t)evt->u.lifted.v_cm_s;
+            v[3] = (int32_t)evt->u.lifted.ref_mg;
             return send_evt(TM_T_LIFTED, v);
 
         case RC_EVT_MOTION_CLASS:
@@ -826,7 +830,7 @@ rc_result_t sub_telemetry_init(void)
 }
 
 /* Pass two: start the telemetry task in subsystem 1's priority band
- * (TEAM.md section 4). It's the slow lane, so it never holds up control. */
+ * (TEAM.md section 4), below every control task. */
 rc_result_t sub_telemetry_start_task(void)
 {
     telem_tid = app_start_task(telemetry_task, S1_PRI_TELEMETRY, 0,
@@ -866,10 +870,10 @@ rc_result_t sub_telemetry_on_command(sub_telemetry_cmd_cb_t cb, void *ctx)
     return RC_OK;
 }
 
-/* (L/R/S/U/X) and the barcode letters (A/B/C/D), either case; P also means
- * stop and G (go) restarts a stopped run. Anything else is RC_CMD_NONE and
- * gets ignored. Lives here rather
- * than in the MQTT file so it can be tested without a WiFi build. */
+/* The dashboard keys (L/R/S/U/X) and the barcode letters (A/B/C/D), either
+ * case; P also means stop and G (go) starts a run. Anything else is
+ * RC_CMD_NONE and gets ignored. Lives here rather than in the MQTT file so
+ * it can be tested without a WiFi build. */
 rc_nav_cmd_t sub_telemetry_parse_cmd(char c)
 {
     switch (c)

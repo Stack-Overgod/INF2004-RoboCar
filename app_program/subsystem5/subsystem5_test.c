@@ -9,10 +9,6 @@
  *	  HC-SR04 optional: TRIG GP2, ECHO GP3 through the 1k/2k divider
  *	With no sensor every ping simply times out, which still exercises the
  *	whole trigger -> timer alarm -> timeout -> deferred publish chain.
- *
- *	Watch the servo while S5-U09 runs: it should stop at 70, 80, 90, 100 
- * / and 110 degrees (plus a 5-degree fine sweep if something is closer 
- * / than the obstacle threshold). The servo only swings ±20 degrees.
  */
 
 #include "../rc_prelude.h"	/* must be first: size_t clash, see the file */
@@ -32,10 +28,10 @@
 #include "../sub_nav.h"
 
 /*
- * 0 now that the shared core and subsystem 5's drivers are brought up by
- * the system itself: app_main.c runs rc_defer/rc_event/rc_gpioirq in
- * Phase 0, and subsystem5_init() runs drv_servo_init / drv_ultrasonic_init
- * / sub_scan_init in Phase 1.  Re-initialising them here would create
+ * 0: the shared core and subsystem 5's drivers are brought up by the
+ * system itself: app_main.c runs rc_defer/rc_event/rc_gpioirq in Phase 0,
+ * and subsystem5_init() runs drv_servo_init / drv_ultrasonic_init /
+ * sub_scan_init in Phase 1.  Re-initialising them here would create
  * duplicate kernel objects and double-register the ECHO IRQ, so the init
  * checks (S5-U01/U02/U05/U08) are dropped when this is 0; usermain()'s
  * CHECK() reports any init failure instead.
@@ -74,10 +70,6 @@ static volatile int16_t  ultra_angle;
 static volatile uint16_t ultra_range;
 static volatile bool     ultra_valid;
 
-static volatile bool     scan_done;
-static rc_pl_profile_t   scan_profile;
-static rc_pl_plan_t      scan_plan;
-
 static void on_ultra(const rc_event_t *evt, void *ctx)
 {
 	(void)ctx;
@@ -86,16 +78,6 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
 	ultra_valid = RC_ULTRA_VALID(&evt->u.ultra);
 	S5_BARRIER();
 	ultra_count++;
-}
-
-static void on_scan(const rc_pl_profile_t *p, const rc_pl_plan_t *plan,
-		    void *ctx)
-{
-	(void)ctx;
-	scan_profile = *p;
-	scan_plan    = *plan;
-	S5_BARRIER();
-	scan_done = true;
 }
 
 /* Sleep in 10 ms steps until ultra_count passes `from`, or `ms` runs out. */
@@ -107,16 +89,6 @@ static bool wait_ultra(uint32_t from, INT ms)
 	}
 	S5_BARRIER();
 	return ultra_count != from;
-}
-
-static bool wait_scan(INT ms)
-{
-	while (!scan_done && (ms > 0)) {
-		(void)tk_dly_tsk(10);
-		ms -= 10;
-	}
-	S5_BARRIER();
-	return scan_done;
 }
 
 /* Sleep in 10 ms steps until sub_nav's state is (is == true) or is no
@@ -140,7 +112,7 @@ static void on_recov_failed(const rc_event_t *evt, void *ctx)
 	recov_failed++;
 }
 
-/* Publish what Buddy 3's sub_barcode would on a decode. */
+/* Publish what sub_barcode would on a decode. */
 static void fake_barcode(char symbol, rc_nav_cmd_t cmd)
 {
 	rc_event_t e = { 0 };
@@ -169,7 +141,7 @@ static void fake_junction(void)
 
 /* True if nav is busy with the command (EXECUTING_CMD) or has already
  * stopped because sub_motion refused or aborted the move. Either means
- * the command was taken, with or without Buddy 2's motion wired. */
+ * the command was taken, with or without the motors connected. */
 static bool nav_took_command(void)
 {
 	rc_nav_state_t s = sub_nav_state();
@@ -182,18 +154,6 @@ static void nav_reset(void)
 {
 	(void)sub_nav_stop();
 	(void)wait_nav(RC_NAV_STOPPED, true, 300);
-}
-
-static const char *plan_name(rc_nav_cmd_t c)
-{
-	switch (c) {
-	case RC_CMD_TURN_LEFT:   return "TURN_LEFT";
-	case RC_CMD_TURN_RIGHT:  return "TURN_RIGHT";
-	case RC_CMD_GO_STRAIGHT: return "GO_STRAIGHT";
-	case RC_CMD_U_TURN:      return "U_TURN";
-	case RC_CMD_STOP:        return "STOP";
-	default:                 return "NONE";
-	}
 }
 
 #if S5_LIVE_BENCH
@@ -334,38 +294,11 @@ EXPORT void subsystem5_test(void)
 	}
 
 #if S5_TEST_STANDALONE
-	/* S5-U08: scan task and its event flag are created. */
+	/* S5-U08: scan task and its kernel objects are created. */
 	TEST_CHECK("S5-U08", sub_scan_init() == RC_OK,
 		   "scan task starts");
 #endif
 
-	/* S5-U09: a whole coarse (+ fine, if something is close) scan runs
-	 * and reports.  Coarse is 70..110 deg in 10-deg steps = 5 bearings;
-	 * every bearing is recorded, even when it timed out. */
-	scan_done = false;
-	(void)sub_scan_on_complete(on_scan, NULL);
-	r1  = sub_scan_start();
-	got = wait_scan(5000);
-
-	TEST_CHECK("S5-U09",
-		   (r1 == RC_OK) && got && (scan_profile.n_points >= 5U),
-		   "full scan finishes within 5 s with all 5 coarse bearings");
-
-	if (got) {
-		tm_printf((UB*)"[INFO] S5 profile: %d points, closest %d mm"
-			  " at %d deg, width %d mm, clear L=%d R=%d\n",
-			  (INT)scan_profile.n_points,
-			  (INT)scan_profile.closest_mm,
-			  (INT)scan_profile.closest_angle_deg,
-			  (INT)scan_profile.width_mm,
-			  (INT)scan_profile.clearance_left_mm,
-			  (INT)scan_profile.clearance_right_mm);
-		tm_printf((UB*)"[INFO] S5 plan: %s lateral %d mm forward %d mm\n",
-			  plan_name(scan_plan.action),
-			  (INT)scan_plan.lateral_mm, (INT)scan_plan.forward_mm);
-	}
-
-	(void)sub_scan_on_complete(NULL, NULL);
 	(void)drv_servo_set_angle(90);
 
 	/* ---- S5-N01..N06: sub_nav skeleton, obstacle path -------------
@@ -406,7 +339,7 @@ EXPORT void subsystem5_test(void)
 
 	/* S5-N04: the scan finishes and its plan is acted on: FOLLOWING
 	 * (nothing close), STOPPED (no gap, or bypass refused) or
-	 * RECOVERING (bypass driven, once sub_motion is wired). */
+	 * RECOVERING (bypass driven). */
 	got = wait_nav(RC_NAV_AVOIDING, false, 20000);	/* step scan ~6-10 s */
 	TEST_CHECK("S5-N04", got,
 		   "scan plan handled: nav leaves AVOIDING within 20 s");
@@ -437,9 +370,9 @@ EXPORT void subsystem5_test(void)
 		   "a close reading while STOPPED does not restart avoidance");
 
 	/* ---- S5-N08..N13: barcode, remote commands, state timeouts -----
-	 * All events are faked, so these pass on a bare board.  ONCE BUDDY
-	 * 2'S MOTION IS WIRED THE WHEELS TURN during N09, N11 and N13: run
-	 * the test image with the car on a stand. */
+	 * All events are faked, so these pass on a bare board.  ON THE CAR
+	 * THE WHEELS TURN during N09, N11 and N13: run the test image with
+	 * the car on a stand. */
 	(void)rc_event_subscribe(RC_EVT_RECOVERY_FAILED, RC_LANE_FAST,
 				 on_recov_failed, NULL);
 

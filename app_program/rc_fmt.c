@@ -2,6 +2,7 @@
  *  rc_fmt.c
  */
 
+#include <stdarg.h>
 #include "rc_fmt.h"
 
 #define DIGITS_MAX      (12U)   /* -2147483648 plus terminator */
@@ -67,7 +68,8 @@ static void put_int(sink_t *s, int32_t v)
     put_uint(s, mag);
 }
 
-int32_t rc_vsnprintf(char *buf, uint32_t size, const char *fmt, va_list ap)
+static int32_t rc_vsnprintf(char *buf, uint32_t size, const char *fmt,
+                            va_list ap)
 {
     sink_t s;
     bool   is_long;

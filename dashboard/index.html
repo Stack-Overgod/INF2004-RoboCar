@@ -489,7 +489,7 @@ document.addEventListener("keydown", e => {
 const NAV = ["IDLE", "FOLLOWING", "READING_BARCODE", "EXECUTING_CMD",
              "AVOIDING", "RECOVERING", "STOPPED"];
 const FAULTS = ["MOTOR_STALL", "ENCODER", "IMU", "NO_ECHO", "WIFI_LOSS",
-                "LIFTED", "BARCODE_ADC"];
+                "LIFTED", "BARCODE_ADC", "WDOG_RESET"];
 function onState(d, t, epoch) {
   const L = d.line?.[0] === "1", R = d.line?.[1] === "1";
   setTile("senL", L); setTile("senR", R);

@@ -10,45 +10,26 @@
  *	usermain() runs inside that initial task at priority 1 (the highest).
  *	On a single core nothing you create runs until usermain() blocks, but
  *	on the dual-core build the OTHER core may start a new task at once.
- *	So usermain() works in two phases:
+ *	So usermain() works in phases:
+ *	  0. the shared layer (rc_defer, rc_event, rc_gpioirq, rc_fault)
  *	  1. every subsystem creates its kernel objects  (subsystemN_init)
  *	  2. every subsystem starts its tasks             (subsystemN_start)
- *	and then puts the initial task to sleep forever.
+ *	then starts the Sense task and the watchdog, and puts the initial
+ *	task to sleep forever.
  *	If usermain() RETURNS, the kernel shuts the whole system down.
  *
- *	The example system: one subsystem per folder, one task each
- *	------------------------------------------------------------
- *	  subsystem1/  LED       blinks GP19, paced by a cyclic handler
- *	  subsystem2/  Producer  makes a "sample" every 300 ms     (core 1)
- *	  subsystem3/  Consumer  collects samples into statistics  (core 0)
- *	  subsystem4/  Monitor   prints reports, pauses/resumes the LED
- *	  subsystem5/  (empty template for the fifth student)
+ *	The subsystems, one per folder
+ *	------------------------------
+ *	  subsystem1/  WiFi/MQTT telemetry and remote commands
+ *	  subsystem2/  motors, wheel encoders, wheel-speed PID, moves/turns
+ *	  subsystem3/  IR line following and Code 39 barcode
+ *	  subsystem4/  IMU: hump/terrain, lift/overturn detection
+ *	  subsystem5/  ultrasonic + servo scan, obstacle avoidance
+ *	  sub_nav.c    the mission state machine (shared)
  *
- *	How they talk to each other (the interfaces, see TEAM.md section 5):
- *	  IF-01  S2 -> S3  mailbox mbx_samples      (owned by S3)
- *	  IF-02  S3 -> S2  semaphore sem_slots + memory pool mpf_samples
- *	                   (owned by S2: S3 hands slots and blocks back)
- *	  IF-03  S3 -> S4  message buffer mbf_summary + event flag flg_events
- *	                   (owned by S4)
- *	  IF-04  S4 -> S3  reads app_stats under mutex mtx_stats (owned by S3)
- *	  IF-05  S4 -> S1  suspends/resumes the LED task tid_led (owned by S1)
- *	The subsystem that RECEIVES or OWNS the data creates the object and
- *	publishes its ID in its header; the other side just uses it.
- *
- *	micro T-Kernel APIs used, and where to find them:
- *	  tasks       tk_cre_tsk tk_sta_tsk tk_slp_tsk tk_wup_tsk tk_can_wup
- *	              tk_dly_tsk tk_sus_tsk tk_rsm_tsk tk_chg_pri tk_ref_tsk
- *	              tk_get_tid tk_get_prc                         app_main.c, S1-S4
- *	  semaphore   tk_cre_sem tk_wai_sem tk_sig_sem tk_ref_sem       S2, S3, S4
- *	  mem. pool   tk_cre_mpf tk_get_mpf tk_rel_mpf tk_ref_mpf       S2, S3, S4
- *	  mailbox     tk_cre_mbx tk_snd_mbx tk_rcv_mbx                  S2, S3
- *	  mutex       tk_cre_mtx tk_loc_mtx tk_unl_mtx                  S3, S4
- *	  msg buffer  tk_cre_mbf tk_snd_mbf tk_rcv_mbf                  S3, S4
- *	  event flag  tk_cre_flg tk_set_flg tk_wai_flg                  S3, S4
- *	  cyclic      tk_cre_cyc tk_ref_cyc                             S1
- *	  alarm       tk_cre_alm tk_sta_alm tk_stp_alm                  S4
- *	  time        tk_get_tim                                        S2, S4
- *	  system      tk_ref_ver                                        app_main.c
+ *	They talk through the event bus (rc_event.h): a subsystem publishes
+ *	an event and whoever needs it subscribes.  The interfaces are listed
+ *	in TEAM.md section 5.
  *
  *	Output appears on the USB serial port (115200 8N1 in any terminal).
  */
@@ -60,7 +41,9 @@
 #include "rc_fault.h"		/* shared layer: fault bitmask (event flag) */
 #include "sub_nav.h"		/* shared layer: mission state machine (report §6.5) */
 #include "rc_sense.h"		/* shared layer: the one Sense task (report §3) */
-#include "rc_config.h"		/* shared layer: RC_RISK1_SOAK_SECS */
+#include "rc_wdog.h"		/* shared layer: watchdog + reset reason */
+#include "rc_config.h"		/* shared layer: RC_RISK1_SOAK_SECS, pins */
+#include "subsystem2/sub_motion.h"	/* TEST summary: motion cycle time */
 
 /*
  * Create and start one task (declared in app.h for every subsystem).
@@ -99,6 +82,34 @@ EXPORT ID app_start_task(FP entry, PRI pri, UW prc, const char *name)
 	return tid;
 }
 
+/*
+ * The USB console enables the USB controller interrupt (USBCTRL_IRQ, 5)
+ * without setting a priority, so it stays at the NVIC reset level 0, above
+ * PendSV. Its handler wakes the USB service task, so it is moved to the
+ * PendSV level (3), where it cannot preempt a task switch. The NVIC is per
+ * core and the console takes this interrupt on core 0, so the write runs in
+ * a short task pinned to core 0.
+ */
+#define INTNO_USBCTRL		(5U)
+#define INTPRI_PENDSV_LEVEL	(3U)
+
+LOCAL void usb_irq_prio_task(INT stacd, void *exinf)
+{
+	UW	reg = NVIC_IPR((INTNO_USBCTRL / 4U) * 4U);
+	UINT	shift = (INTNO_USBCTRL % 4U) * 8U;
+	UINT	sts;
+
+	(void)stacd;
+	(void)exinf;
+	DI(sts);
+	out_w(reg, (in_w(reg) & ~(0xFFUL << shift))
+		   | ((UW)(INTPRI_PENDSV_LEVEL << 6) << shift));
+	EI(sts);
+	tm_printf((UB*)"[irq] USB interrupt priority %u\n",
+		  (UINT)((in_w(reg) >> (shift + 6U)) & 3U));
+	tk_ext_tsk();
+}
+
 EXPORT INT usermain(void)
 {
 	T_RVER	ver;
@@ -130,6 +141,12 @@ EXPORT INT usermain(void)
 	if (rc_fault_init() != RC_OK) {		/* before any driver sets a fault */
 		tm_printf((UB*)"ERROR rc_fault_init\n");
 	}
+	rc_wdog_boot();				/* report a watchdog reboot */
+#if TK_SUPPORT_SMP
+	(void)app_start_task((FP)usb_irq_prio_task, 1, TP_PRC1, "usb_irq_prio");
+#else
+	(void)app_start_task((FP)usb_irq_prio_task, 1, 0, "usb_irq_prio");
+#endif
 
 	/* Phase 1: every subsystem creates its kernel objects */
 	CHECK(subsystem1_init(), "subsystem1_init");
@@ -152,17 +169,23 @@ EXPORT INT usermain(void)
 	CHECK(subsystem4_start(), "subsystem4_start");
 	CHECK(subsystem5_start(), "subsystem5_start");
 
-	/* Phase 2b: the shared Sense task polls the IR line pair and the
-	   barcode sensor (S3, 10 ms) and the IMU (S4, 10 ms).  After every subsystemN_start(), so S4's
+	/* Phase 2b: the shared Sense task polls the IR line pair (S3, 10 ms)
+	   and the IMU (S4, 10 ms); the barcode ADC streams by FIFO interrupt
+	   (drv_ir.c, RC_BAR_ADC_FIFO).  After every subsystemN_start(), so S4's
 	   boot calibration has finished before the first IMU sample. */
 	if (rc_sense_start() != RC_OK) {
 		tm_printf((UB*)"ERROR rc_sense_start\n");
 	}
 
+	/* Phase 2c: every task that checks in is running: arm the watchdog */
+	if (rc_wdog_start() != RC_OK) {
+		tm_printf((UB*)"ERROR rc_wdog_start\n");
+	}
+
 	tm_printf((UB*)"all subsystems started\n\n");
 
 #if !APP_TEST
-	/* Phase 3: begin the run, IDLE -> FOLLOWING (report §6.5).  Not in a
+	/* Phase 3: begin the run (sub_nav_start, report §6.5).  Not in a
 	   TEST=1 build: the forward watch would ping in the background and
 	   collide with the subsystem tests' own pings.  subsystem5_test()
 	   starts and stops nav itself (S5-N02..N05). */
@@ -172,9 +195,11 @@ EXPORT INT usermain(void)
 	   on its own after a boot or flash. */
 	tm_printf((UB*)"start: IDLE, waiting for START (G) over MQTT\n");
 #else
-	/* No MQTT: nothing can send START, so start the run now. */
-	if (sub_nav_start() != RC_OK) {
-		tm_printf((UB*)"ERROR sub_nav_start\n");
+	/* No MQTT: nothing can send START, so start the run now. START goes
+	   through the event bus like a dashboard START, so sub_nav (and the
+	   sub_terrain re-level it does) runs on the FAST lane that owns it. */
+	if (sub_nav_inject_command(RC_CMD_START, 0) != RC_OK) {
+		tm_printf((UB*)"ERROR START\n");
 	}
 #endif
 #endif
@@ -203,8 +228,8 @@ EXPORT INT usermain(void)
 			  (int)RC_RISK1_SOAK_SECS);
 		rc_event_probe_reset();
 		rc_gpioirq_probe_reset();
-		if (sub_nav_start() != RC_OK) {
-			tm_printf((UB*)"[RISK1] WARN: sub_nav_start failed\n");
+		if (sub_nav_inject_command(RC_CMD_START, 0) != RC_OK) {
+			tm_printf((UB*)"[RISK1] WARN: START failed\n");
 		}
 		for (s = 0; s < (INT)RC_RISK1_SOAK_SECS; s++) {
 			(void)tk_dly_tsk(1000);
@@ -224,6 +249,27 @@ EXPORT INT usermain(void)
 	tm_printf((UB*)"[RISK1] gpio_irq max=%u us over %u irqs\n",
 		  (unsigned)rc_gpioirq_max_us(),
 		  (unsigned)rc_gpioirq_irq_count());
+
+	/* NFR5 split by source, and the task run times for the response-time
+	 * table (rc_config.h task priorities). */
+	{
+		uint32_t line_us = 0U;
+		uint32_t imu_us = 0U;
+
+		rc_sense_max_us(&line_us, &imu_us);
+		tm_printf((UB*)"[RISK1] isr cb max: enc L %u, enc R %u, echo %u us\n",
+			  (unsigned)rc_gpioirq_pin_max_us(RC_PIN_ENC_L_A),
+			  (unsigned)rc_gpioirq_pin_max_us(RC_PIN_ENC_R_A),
+			  (unsigned)rc_gpioirq_pin_max_us(RC_PIN_ULTRA_ECHO));
+		tm_printf((UB*)"[RISK1] task max: sense line %u + imu %u + bar %u us,"
+			  " motion %u us\n",
+			  (unsigned)line_us, (unsigned)imu_us,
+			  (unsigned)rc_sense_bar_max_us(),
+			  (unsigned)sub_motion_wcet_us());
+		tm_printf((UB*)"[RISK1] missed periods: sense %u, motion %u\n",
+			  (unsigned)rc_sense_overruns(),
+			  (unsigned)sub_motion_overruns());
+	}
 
 	tm_printf((UB*)"[TEST] === test run end ===\n");
 #endif

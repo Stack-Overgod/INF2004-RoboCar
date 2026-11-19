@@ -7,8 +7,8 @@
  *  Target: Raspberry Pi Pico W on a Cytron Robo Pico carrier, running
  *  micro T-Kernel 3.0 (mtk3smp-rp2040 port).
  *
- *  Read docs/HARDWARE.md before changing anything here. Several of these
- *  pins are fixed by the Robo Pico board and cannot be moved.
+ *  Several of these pins are fixed by the Robo Pico board and cannot be
+ *  moved.
  */
 
 #ifndef RC_CONFIG_H
@@ -32,8 +32,7 @@
  *  Chosen by us. Move these if your wiring differs.
  *
  *  Each sensor below sits on one Robo Pico Grove socket, so each is one
- *  4-wire Grove cable: GND, 3V3, and the two GPIOs listed. The only
- *  exception is the status LED, which hangs off the breakout header.
+ *  4-wire Grove cable: GND, 3V3, and the two GPIOs listed.
  * ------------------------------------------------------------------ */
 
 /* Wheel encoders: two-channel (A/B) Hall-effect encoders built into the
@@ -50,15 +49,18 @@
  * Left  = Grove 1 (GP0/GP1). Right = Grove 7 (GP7/GP28).
  *
  * GP0/GP1 are also UART0, the port's default console. This build MUST use
- * the USB console (make CONSOLE=usb_cdc) - a UART build would drive GP0 as
- * TX and fight the encoder. */
+ * the USB console (make CONSOLE=usb_cdc): a UART build would drive GP0 as
+ * TX and fight the encoder, so the #error below refuses it. */
 #define RC_PIN_ENC_L_A          (0U)
 #define RC_PIN_ENC_L_B          (1U)
 #define RC_PIN_ENC_R_A          (7U)
 #define RC_PIN_ENC_R_B          (28U)
+#if defined(TM_CONSOLE_UART) && TM_CONSOLE_UART && (RC_PIN_ENC_L_A <= 1U)
+#error "UART0 console (CONSOLE=uart or CRASH_REPORT=1) takes GP0/GP1, the left encoder"
+#endif
 
 /* HC-SR04 on Grove 2 (GP2/GP3).
- * ECHO is 5 V on this module and MUST go through a divider. See HARDWARE.md. */
+ * ECHO is 5 V on this module and MUST go through a divider. */
 #define RC_PIN_ULTRA_TRIG       (2U)
 #define RC_PIN_ULTRA_ECHO       (3U)
 
@@ -72,9 +74,9 @@
 #define RC_PIN_IR_LINE_R        (6U)
 
 /* IR barcode sensor on Grove 6 (GP26/GP27). Only AOUT (GP26, ADC0) is
- * read, by the Sense task (needs config_device.h DEVCNF_USE_ADC 1). DOUT
- * (GP27) is wired but deliberately not configured and has no IRQ, so its
- * trim pot does not matter. */
+ * read, as set by RC_BAR_ADC_FIFO below (needs config_device.h
+ * DEVCNF_USE_ADC 1). DOUT (GP27) is wired but deliberately not configured
+ * and has no IRQ, so its trim pot does not matter. */
 #define RC_PIN_IR_BARCODE_A     (26U)
 #define RC_ADC_CH_IR_BARCODE    (0U)
 
@@ -89,14 +91,25 @@
 #define RC_BAR_ADC_MIN_BAR      (800U)
 #define RC_BAR_ADC_BLACK_HIGH   (1)
 
-/* Liveness LED on the GPIO breakout header. The port defaults
- * BOARD_LED_PIN to GP16, which is line sensor 1 above, so override it in
- * sysdef.h to this pin. */
-#define RC_PIN_STATUS_LED       (19U)
+/* How the barcode AO is sampled (drv_ir.c):
+ * 1: the ADC converts continuously at RC_BAR_ADC_HZ x RC_BAR_ADC_OVERSAMPLE
+ *    into its FIFO; the FIFO interrupt averages each OVERSAMPLE readings
+ *    into one value at RC_BAR_ADC_HZ and hands it to the defer task, which
+ *    runs the edge detector. Nothing waits for a conversion.
+ * 0: one reading per Sense tick (RC_PERIOD_LINE_MS) through the "adca"
+ *    device driver.
+ * 1 kHz is >= 10x the Nyquist rate of the barcode signal up to 300 mm/s
+ * (3 mm elements: 50 Hz fundamental) and times edges to ~1 ms. AO has no
+ * analogue anti-alias filter: the averaging is the filter. Its nulls fall
+ * on every multiple of RC_BAR_ADC_HZ, and the 20 kHz motor PWM, sampled at
+ * 8 kHz, folds to 4 kHz, onto one of them. */
+#define RC_BAR_ADC_FIFO         (1)
+#define RC_BAR_ADC_HZ           (1000U)
+#define RC_BAR_ADC_OVERSAMPLE   (8U)
 
 /* IMU on Grove 3 (GP4/GP5). Those pins are I2C0 SDA/SCL in silicon, so the
  * IMU is on I2C unit 0. The stock driver maps I2C0 to GP8/GP9 (the right
- * motor), so its unit-0 pin table is patched to GP4/GP5. See HARDWARE.md. */
+ * motor), so its unit-0 pin table is patched to GP4/GP5. */
 #define RC_I2C_UNIT_IMU         (0U)
 #define RC_PIN_I2C0_SDA         (4U)
 #define RC_PIN_I2C0_SCL         (5U)
@@ -127,21 +140,41 @@
 #endif
 
 /* ------------------------------------------------------------------ *
- *  Task priorities. Lower number wins in micro T-Kernel.
+ *  Task priorities. Lower number wins in micro T-Kernel, which schedules
+ *  by fixed priority with preemption. The priorities are deadline-
+ *  monotonic: the shorter the time a task has to finish its work, the
+ *  higher it runs.
+ *    DEFER          ISR bottom halves (encoder, echo, barcode samples)
+ *    DISPATCH_FAST  event handlers that must react before the next
+ *                   10 ms sample (line steering, nav, terrain)
+ *    SENSE          10 ms sampling of line and IMU
+ *    MOTION         20 ms wheel PID
+ *    SCAN           one ultrasonic ping per 60 ms step
+ *    DISPATCH_SLOW  logging-type handlers, no hard deadline
+ *    TELEMETRY      250 ms publish, no hard deadline
+ *  sub_nav has no task of its own: its handlers run in the FAST
+ *  dispatcher.
  * ------------------------------------------------------------------ */
 
-#define RC_PRI_DEFER            (4)   /* bottom halves, above all */
+#define RC_PRI_DEFER            (4)
 #define RC_PRI_DISPATCH_FAST    (5)
-#define RC_PRI_MOTION           (6)
-#define RC_PRI_SENSE            (7)
+#define RC_PRI_SENSE            (6)
+#define RC_PRI_MOTION           (7)
+#define RC_PRI_SCAN             (8)
 #define RC_PRI_DISPATCH_SLOW    (9)
-#define RC_PRI_TELEMETRY        (10)
-/* Reserved. sub_nav has no task of its own today - its handlers run in
- * the FAST dispatcher - but keep the slot so a future nav task lands
- * between Sense and the SLOW dispatcher. */
-#define RC_PRI_NAV              (8)
+#define RC_PRI_TELEMETRY        (12)  /* lowest application priority */
 
 #define RC_STACK_SZ             (4096)  /* SMP kernel paths are deep */
+
+/* Watchdog (rc_wdog.c): reboot if Sense, Motion or the FAST dispatcher
+ * stops checking in for this long. Normal gaps are <= 50 ms; one I2C
+ * transfer can block Sense for up to 1 s (the driver's timeout), so 2 s
+ * reboots only on a real stall. The supervisor looks every CHECK_MS. */
+#define RC_WDOG_MS              (2000U)
+#define RC_WDOG_CHECK_MS        (250U)
+/* 1: the Sense task stops checking in 30 s after boot, so the watchdog
+ * must reboot the car and report "stopped: Sense". Keep 0 in the repo. */
+#define RC_WDOG_STALL_TEST      (0)
 
 /* ------------------------------------------------------------------ *
  *  Mechanical constants. Measure these on your own car.
@@ -156,7 +189,7 @@
  *
  * Measured on the car, 10 hand turns per wheel: left 6350, right 6419
  * counts (635 / 642 per turn, within hand-counting error).
- * Cross-check: 35% duty gave ~900 counts/s = ~280 mm/s. Buddy 2 to confirm. */
+ * Cross-check: 35% duty gave ~900 counts/s = ~280 mm/s. */
 #define RC_ENC_TICKS_PER_REV    (640U)
 /* Effective rolling diameter: roll test, one wheel turn on paper = 211,
  * 208, 217 mm, mean 212 mm / pi = 67.5 mm. 68 rather than 67
@@ -188,10 +221,12 @@
  *           angle, on its side); past 90 deg it is reported as
  *           overturned. A one-wheel 10 mm hump tilts the car ~5 deg. */
 #define RC_LIFT_UP_MM           (20)
+#define RC_LIFT_V_MM_S          (120)    /* and rising at least this fast */
 #define RC_LIFT_TAN2_PERMILLE   (490)    /* tan^2(35 deg) x 1000 */
 #define RC_LIFT_TILT_MS         (300U)
 
-/* drv_imu_calibrate() sample count at boot; 5 ms each, so ~0.3 s. */
+/* drv_imu_calibrate() sample count at boot. Each sample is followed by
+ * tk_dly_tsk(5), one to two 10 ms kernel ticks, so ~1 s in all. */
 #define RC_IMU_CAL_SAMPLES      (64U)
 
 /* ------------------------------------------------------------------ *
@@ -202,20 +237,6 @@
 #define RC_ULTRA_TRIG_US        (12UL)     /* datasheet asks for >= 10 us */
 #define RC_ULTRA_MAX_MM         (4000U)
 #define RC_ULTRA_MIN_MM         (20U)
-
-/* ------------------------------------------------------------------ *
- *  Servo scan geometry
- * ------------------------------------------------------------------ */
-
-/* The scan servo only swings ±20 deg about 90 (drv_servo.h), so the
- * coarse sweep covers 70..110: 5 bearings 10 deg apart. The fine sweep
- * re-scans ±1 coarse step around the closest hit in 5 deg steps, which
- * is already finer than the HC-SR04's ~15 deg beam. */
-#define RC_SCAN_COARSE_START    (70)
-#define RC_SCAN_COARSE_END      (110)
-#define RC_SCAN_COARSE_STEP     (10)
-#define RC_SCAN_FINE_STEP       (5)
-#define RC_SCAN_MAX_POINTS      (32U)
 
 /* ------------------------------------------------------------------ *
  *  Event bus sizing
@@ -236,18 +257,9 @@
 /* ------------------------------------------------------------------ *
  *  Buddy 1 - communication, command and telemetry
  *
- *  RC_NET_ENABLE is the master switch for the WiFi radio path. It is OFF
- *  by default so the graded mission image builds and links exactly as
- *  before, with telemetry going to the USB console. Turn it on ONLY in a
- *  build whose port links the Pico W WiFi profile (pico_cyw43_arch_lwip_
- *  threadsafe_background) and the lwIP MQTT app - see
- *  docs/buddy1-telemetry/MQTT.md. With it off, the UDP and MQTT sink
- *  accessors return NULL and pull in no network headers at all.
+ *  The WiFi network, broker address and client id are set in
+ *  config/wifi_secrets.h (git-ignored; copy wifi_secrets.example.h).
  * ------------------------------------------------------------------ */
-
-#ifndef RC_NET_ENABLE
-#define RC_NET_ENABLE           (0)
-#endif
 
 /* Topic namespace. One base per car so several cars can share a broker:
  * car/+/state addresses every car, car/01/# just this one. Buddy 1 owns
@@ -255,25 +267,6 @@
 #define RC_TOPIC_BASE           "car/01"
 /* The one topic we subscribe to, for inbound commands. */
 #define RC_TOPIC_CMD            RC_TOPIC_BASE "/cmd"
-
-/* WiFi association. Fill SSID/pass for your demo hotspot. Country matters
- * for the CYW43 regulatory domain; keep it correct for legal TX power. */
-#define RC_WIFI_SSID            "robocar-net"
-#define RC_WIFI_PASS            "changeme123"
-#define RC_WIFI_COUNTRY         "SG"
-#define RC_WIFI_CONNECT_TMO_MS  (15000U)
-
-/* MQTT broker (e.g. a laptop running mosquitto). An IPv4 literal avoids a
- * DNS round trip the port's lwIP profile may not have configured. */
-#define RC_MQTT_BROKER_IP       "192.168.4.1"
-#define RC_MQTT_BROKER_PORT     (1883U)
-#define RC_MQTT_CLIENT_ID       "robocar-01"
-#define RC_MQTT_KEEPALIVE_S     (10U)
-
-/* UDP telemetry destination, used by the intermediate UDP sink (prove the
- * network path before bringing MQTT up). Point it at the listening host. */
-#define RC_UDP_DEST_IP          "192.168.4.2"
-#define RC_UDP_DEST_PORT        (5005U)
 
 /* Reconnect backoff for the telemetry task. On a dropped link it closes,
  * waits (doubling from MIN up to MAX), and reopens - never a busy loop. */

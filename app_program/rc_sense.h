@@ -14,7 +14,9 @@
  *  and S4 own their drivers, nobody else calls them.
  *
  *  Sensors that are interrupt-driven are NOT polled here: the encoders
- *  (S2) and the ultrasonic echo (S5, paced by the Scan task).
+ *  (S2), the ultrasonic echo (S5, paced by the Scan task) and, with
+ *  RC_BAR_ADC_FIFO 1, the barcode ADC (S3, ADC FIFO interrupt). With
+ *  RC_BAR_ADC_FIFO 0 this task also reads the barcode ADC every tick.
  */
 #ifndef RC_SENSE_H
 #define RC_SENSE_H
@@ -47,7 +49,8 @@ uint32_t rc_sense_ticks(void);
  * in microseconds. Either near RC_PERIOD_LINE_MS x 1000 explains overruns. */
 void rc_sense_max_us(uint32_t *line_us, uint32_t *imu_us);
 
-/* Longest drv_ir_sample_barcode() (one ADC read + threshold), in us. */
+/* Longest drv_ir_sample_barcode() call by this task, in us (0 when
+ * RC_BAR_ADC_FIFO is 1: the task does not call it). */
 uint32_t rc_sense_bar_max_us(void);
 #endif
 

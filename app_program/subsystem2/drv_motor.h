@@ -8,16 +8,15 @@
  *  This layer is pure output. It has no idea how fast the car is actually
  *  going. Closing that loop is sub_motion's job.
  *
- *  Beginner notes (see TEAM_GUIDE.md §1 for the bigger picture):
+ *  Beginner notes:
  *  - "PWM" = Pulse Width Modulation. The pin is flipped on/off thousands
  *    of times a second; the *fraction* of time it's on ("duty cycle")
  *    controls how much average power the motor sees. 100% duty = full
  *    power, 0% = off. There's no analogue voltage knob on this chip, so
  *    this on/off flicker trick is how "half speed" is created digitally.
  *  - "permille" = parts per thousand, this codebase's stand-in for a
- *    percentage with two extra digits of precision (avoids needing
- *    fractional numbers, which this chip can't do fast - see §2 in
- *    TEAM_GUIDE.md, "No floating point anywhere").
+ *    percentage with one extra digit of precision (avoids needing
+ *    fractional numbers, which this chip has no FPU for).
  */
 #ifndef DRV_MOTOR_H
 #define DRV_MOTOR_H

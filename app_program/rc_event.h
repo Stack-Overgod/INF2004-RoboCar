@@ -3,10 +3,11 @@
  *
  *  The callback spine of the robot.
  *
- *  Producers (ISRs, drivers, subsystems) publish an rc_event_t. Consumers
- *  register a callback against an event id. Nothing blocks: publishing is
- *  a bounded copy into a lock-free-ish ring plus a tk_set_flg, and that is
- *  legal from interrupt context.
+ *  Producers (drivers, bottom halves, subsystems, timer handlers) publish
+ *  an rc_event_t. Consumers register a callback against an event id.
+ *  Nothing blocks: publishing is a bounded copy into a ring under a short
+ *  critical section plus a tk_set_flg, and that is legal from interrupt
+ *  context.
  *
  *  Two lanes exist so that a slow telemetry consumer can never delay the
  *  control loop:
@@ -44,8 +45,8 @@ typedef enum {
 typedef void (*rc_event_cb_t)(const rc_event_t *evt, void *ctx);
 
 /*
- *  Build the kernel objects and start both dispatcher tasks.
- *  Call once from usermain before any other rc_* init.
+ *  Build the kernel objects and start both dispatcher tasks. Call from
+ *  usermain before any subsystem subscribes; later calls do nothing.
  */
 rc_result_t rc_event_init(void);
 
@@ -78,12 +79,6 @@ rc_result_t rc_event_publish_i(rc_event_t *evt);
  *  Non-zero means a consumer is too slow or a ring is too small.
  */
 uint32_t rc_event_dropped(rc_lane_t lane);
-
-/*
- *  Maximum ring occupancy observed on a lane since init / probe reset.
- *  Approaching RC_EVENT_RING_SZ-1 means the ring ran near full.
- */
-uint32_t rc_event_high_water(rc_lane_t lane);
 
 #if APP_TEST
 /* Risk 1 instrumentation, TEST builds only. probe_reset zeroes the

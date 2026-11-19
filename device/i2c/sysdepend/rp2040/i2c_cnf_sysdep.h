@@ -37,9 +37,10 @@
 
 /* Register initial value */
 
-// Interrupt priority
-#define	DEVCNF_I2C0_INTPRI	2
-#define	DEVCNF_I2C1_INTPRI	2
+// Interrupt priority: the same level as PendSV (3), so the handler, which
+// calls kernel services, cannot preempt a task switch on the SMP kernel
+#define	DEVCNF_I2C0_INTPRI	3
+#define	DEVCNF_I2C1_INTPRI	3
 
 /* Communication timeout time */
 #define	DEVCNF_I2C0_TMO		1000

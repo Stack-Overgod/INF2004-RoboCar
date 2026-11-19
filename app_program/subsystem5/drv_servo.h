@@ -1,8 +1,8 @@
 /*
- *  drv_servo.h  -  Buddy 5 hardware layer
+ *  drv_servo.h  -  scan servo driver
  *
  *  Standard hobby servo on a Robo Pico servo port: 50 Hz frame, pulse
- *  width from about 500 us to 2400 us.
+ *  width limited to the RC_SERVO_ANGLE_MIN..MAX swing (see drv_servo.c).
  *
  *  There is no position feedback on an RC servo, so "has it arrived" is
  *  a timer, not a measurement. drv_servo_settle_ms tells the caller how
@@ -15,8 +15,7 @@
 #include "../rc_types.h"
 
 /* The physical limits of the servo bracket's swing, in degrees. 90 is
- * straight ahead (see the Buddy 5 guide for how "straight ahead" is set
- * mechanically); smaller angles look right, larger look left. Our servo
+ * straight ahead; smaller angles look right, larger look left. Our servo
  * can only swing 20 degrees either side of centre, so the usable range
  * is 70..110, not the 0..180 of a full hobby servo. Every angle passed
  * into this driver gets clamped to this range, so nothing ever drives
@@ -27,10 +26,9 @@
 #define RC_SERVO_ANGLE_MIN  (RC_SERVO_ANGLE_CENTRE - RC_SERVO_HALF_SWING)
 #define RC_SERVO_ANGLE_MAX  (RC_SERVO_ANGLE_CENTRE + RC_SERVO_HALF_SWING)
 
-/* Sets up the PWM (Pulse Width Modulation — a way to encode a value, here
- * an angle, as how long a repeating electrical pulse stays "on") signal
- * on the servo pin and centers the sensor at 90 degrees (straight ahead).
- * Call once at boot. */
+/* Sets up the PWM (Pulse Width Modulation: the angle is encoded as how
+ * long a repeating pulse stays "on") signal on the servo pin and centres
+ * the sensor at 90 degrees (straight ahead). Call once at boot. */
 rc_result_t drv_servo_init(void);
 
 /* Command an angle in degrees. Returns immediately (does NOT wait for the
@@ -48,9 +46,5 @@ int16_t drv_servo_get_angle(void);
  * a diving board settling). Used by sub_scan to schedule the ping after
  * the move, since there's no feedback to say "arrived." */
 uint32_t drv_servo_settle_ms(int16_t from, int16_t to);
-
-/* Stop sending pulses. The servo goes limp and stops drawing current,
- * which matters on a shared battery when the motors are also loaded. */
-rc_result_t drv_servo_release(void);
 
 #endif /* DRV_SERVO_H */
