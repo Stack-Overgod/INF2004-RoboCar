@@ -191,6 +191,14 @@ static const field_t f_move[] =
     { "mm", RC_BITS_MOVE_MM, K_U }
 };
 
+/* The barcode command waiting for the next junction (sub_nav), sent when
+ * it changes; sym "-" = none stored. */
+static const field_t f_stored[] =
+{
+    { "sym", RC_BITS_SYM, K_SYM },
+    { "cmd", RC_BITS_CMD, K_U   }
+};
+
 static const field_t f_ack[] =
 {
     { "rx",  8,           K_CHAR },
@@ -214,7 +222,8 @@ static const schema_t schema[TM_T_COUNT] =
     [TM_T_LINE]      = { "line",     f_line,      N(f_line),      0U },
     [TM_T_MOVE]      = { "move",     f_move,      N(f_move),      0U },
     [TM_T_ACK]       = { "ack",      f_ack,       N(f_ack),       0U },
-    [TM_T_RAMP]      = { "ramp",     f_ramp,      N(f_ramp),      0U }
+    [TM_T_RAMP]      = { "ramp",     f_ramp,      N(f_ramp),      0U },
+    [TM_T_STORED]    = { "stored",   f_stored,    N(f_stored),    0U }
 };
 
 static const schema_t *schema_of(uint32_t type)

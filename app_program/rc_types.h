@@ -115,6 +115,10 @@ typedef enum {
     RC_EVT_SPIN_EDGES,          /* each pass's edge, after a spin scan   */
     /* buddy 4, ramp height */
     RC_EVT_RAMP_END,            /* one slope climbed/descended, height   */
+    /* buddy 5, navigation */
+    RC_EVT_CMD_STORED,          /* barcode command waiting for the next  */
+                                /* junction changed; u.barcode (sym and  */
+                                /* command, RC_SYM_NONE = none stored)   */
 
     /* New ids go here, so existing ids keep their values. */
     RC_EVT_COUNT                /* keep last */

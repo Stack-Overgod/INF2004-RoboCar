@@ -356,7 +356,7 @@ details.more[open] summary { margin-bottom: 4px; }
   </section>
 
   <section class="card">
-    <h2>Barcode <small id="bcAge">no scan yet</small></h2>
+    <h2>Barcode <small id="bcAge">no scan yet</small> <small>· stored: <b id="bcStored">none</b></small></h2>
     <div class="stats">
       <div><div class="label">Last symbol</div><div class="stat num" id="bcSym">-</div></div>
       <div><div class="label">Last scan</div><div class="stat num" id="bcRes">-</div></div>
@@ -614,6 +614,12 @@ function onBarcode(d, t, replay) {
   if (!replay) view.readUntil = Date.now() + 2500;
 }
 function onBits(d) { pend.bits = d; }
+// The barcode command the car keeps until the next junction (car/01/stored,
+// sent when it changes: stored, run at a junction, or cleared by STOP/START).
+function onStored(d, t) {
+  $("bcStored").textContent = d.sym === "-" ? "none" : `${d.sym} → ${CMD[d.cmd] ?? d.cmd}`;
+}
+
 function onScan(d, t, replay) {
   $("bcRes").textContent = `${d.res} "${d.txt}"`;
   $("bcEdges").textContent = `${d.edges} / ${d.f_ratio}`;
@@ -1032,7 +1038,7 @@ function drawPolar(d) {
 }
 
 /* ---------- event log ---------- */
-const CHIP_TOPICS = ["link", "ack", "barcode", "bcscan", "bcbits", "obstacle", "avoid", "spin", "hump", "ramp", "lifted", "motion", "line", "move", "status", "cmd"];
+const CHIP_TOPICS = ["link", "ack", "barcode", "stored", "bcscan", "bcbits", "obstacle", "avoid", "spin", "hump", "ramp", "lifted", "motion", "line", "move", "status", "cmd"];
 CHIP_TOPICS.forEach(k => {
   const b = document.createElement("button");
   b.className = "chip"; b.textContent = k;
@@ -1088,6 +1094,7 @@ function handle(ev, replay) {
     case "barcode": onBarcode(d, t, replay); break;
     case "bcscan": onScan(d, t, replay); break;
     case "bcbits": onBits(d); break;
+    case "stored": onStored(d, t); break;
     case "ack": onAck(d, t); break;
   }
   logLine(t, ev.leaf, typeof d === "string" ? d : JSON.stringify(d), ev.leaf === "lifted" || (ev.leaf === "line" && d.lost));

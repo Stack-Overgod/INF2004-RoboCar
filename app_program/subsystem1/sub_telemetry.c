@@ -564,6 +564,11 @@ rc_result_t sub_telemetry_publish_event(const rc_event_t *evt)
             v[0] = 0;
             return send_evt(TM_T_LINE, v);
 
+        case RC_EVT_CMD_STORED:
+            v[0] = (int32_t)evt->u.barcode.sym;
+            v[1] = (int32_t)evt->u.barcode.command;
+            return send_evt(TM_T_STORED, v);
+
         case RC_EVT_MOTION_DONE:
             v[0] = (int32_t)evt->u.motion_done.move_id;
             v[1] = (int32_t)evt->u.motion_done.completed;
@@ -790,7 +795,10 @@ static const telem_sub_t subs[] =
     { RC_EVT_ULTRA_RESULT,      on_ultra        },  /* state: rng         */
     { RC_EVT_OBSTACLE_PROFILE,  on_notable      },  /* car/01/obstacle    */
     { RC_EVT_AVOIDANCE_PLAN,    on_notable      },  /* car/01/avoid       */
-    { RC_EVT_SPIN_EDGES,        on_notable      }   /* car/01/spin        */
+    { RC_EVT_SPIN_EDGES,        on_notable      },  /* car/01/spin        */
+
+    /* Buddy 5, navigation */
+    { RC_EVT_CMD_STORED,        on_notable      }   /* car/01/stored      */
 };
 
 /* Pass one: subscribe to everything in subs[] and, in a WiFi build, make

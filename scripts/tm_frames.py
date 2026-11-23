@@ -21,7 +21,7 @@ dashboard/fake_car.py (encode).
 import json
 import sys
 
-VERSION = 4                             # = TM_VER in tm_frame.h
+VERSION = 5                             # = TM_VER in tm_frame.h
 
 # (key, bits, kind). kinds: u, s (signed), line2, sym, sym3, char, flags4, sink
 _STATE = [
@@ -63,6 +63,7 @@ FRAMES = {
     15: ("ack", False, [("rx", 8, "char"), ("cmd", 3, "u")]),
     16: ("ramp", False, [("rise_mm", 9, "u"), ("net_mm", 10, "s"),
                          ("deg", 6, "u"), ("len_mm", 12, "u")]),
+    17: ("stored", False, [("sym", 5, "sym"), ("cmd", 3, "u")]),
 }
 
 NAV_STATES = ["IDLE", "FOLLOWING", "READING_BARCODE", "EXECUTING_CMD",
@@ -131,6 +132,8 @@ def decode(buf):
                  live="".join("1" if v["live"] >> i & 1 else "0" for i in range(4)))
     elif leaf == "barcode":
         d.update(sym=sym_char(v["sym"]) or "-", cmd=v["cmd"], rev=v["rev"])
+    elif leaf == "stored":
+        d.update(sym=sym_char(v["sym"]) or "-", cmd=v["cmd"])
     elif leaf == "bcscan":
         txt = ""
         for i in range(3):
@@ -213,6 +216,9 @@ def encode(leaf, d, seq=0):
     if leaf == "barcode":
         v.update(sym=sym_code(d.get("sym")))
         return pack(4, seq, v)
+    if leaf == "stored":
+        v.update(sym=sym_code(d.get("sym")))
+        return pack(17, seq, v)
     if leaf == "bcscan":
         txt = d.get("txt", "")[:3]
         pat = d.get("pat", "-")

@@ -15,7 +15,8 @@
  *  FR3/FR10b); the obstacle path (watch ping -> AVOIDING -> step scan ->
  *  plan -> bypass -> RECOVERING -> FOLLOWING); the FR9 recovery timeout;
  *  STOPPED (remote STOP, LIFTED, aborted move, failed recovery, no safe
- *  route). Not built: reverse-and-reattempt (G5).
+ *  route, no line found by the START line-up). Not built:
+ *  reverse-and-reattempt (G5).
  */
 #ifndef SUB_NAV_H
 #define SUB_NAV_H

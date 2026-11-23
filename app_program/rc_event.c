@@ -313,6 +313,7 @@ static const char *evt_name(rc_evt_id_t id)
     case RC_EVT_BARCODE_RAW:      return "BARCODE_RAW";
     case RC_EVT_SPIN_EDGES:       return "SPIN_EDGES";
     case RC_EVT_RAMP_END:         return "RAMP_END";
+    case RC_EVT_CMD_STORED:       return "CMD_STORED";
     default:                      return "?";
     }
 }
@@ -417,7 +418,13 @@ static void dispatch_lane(lane_t *ln)
 #if APP_TEST
                 uint32_t t0 = rc_time_us();
 #endif
+                if (RC_WDOG_TRACE && (ln == &lanes[RC_LANE_FAST])) {
+                    rc_wdog_trace_enter((uint32_t)evt.id, (const void *)cb);
+                }
                 cb(&evt, ctx);
+                if (RC_WDOG_TRACE && (ln == &lanes[RC_LANE_FAST])) {
+                    rc_wdog_trace_leave();
+                }
 #if APP_TEST
                 {
                     uint32_t dt = rc_time_since(t0);
@@ -438,6 +445,12 @@ static void dispatcher_task(INT stacd, void *exinf)
 
     (void)stacd;
 
+#if TK_SUPPORT_SMP
+    if (ln == &lanes[RC_LANE_FAST]) {
+        tm_printf((UB *)"[evt] FAST dispatcher on processor %d\n",
+                  (INT)tk_get_prc());
+    }
+#endif
     for (;;) {
         /* The timeout is a safety net, not a period. If a flag is ever
          * missed the ring still drains within ~50 ms instead of stalling. */
@@ -507,6 +520,12 @@ static rc_result_t event_init_once(void)
         ctsk.task    = dispatcher_task;
         ctsk.exinf   = &lanes[i];
         ctsk.tskatr  = TA_HLNG | TA_RNG3;
+        ctsk.assprc  = 0U;
+        if (i == (uint32_t)RC_LANE_FAST) {
+            /* shares the motion mutex with Motion and Scan */
+            ctsk.tskatr |= RC_CTL_TSKATR;
+            ctsk.assprc  = RC_CTL_ASSPRC;
+        }
 
         lanes[i].tskid = tk_cre_tsk(&ctsk);
         if (lanes[i].tskid <= E_OK) {

@@ -3,7 +3,8 @@
  *
  *  Subscribes to RC_EVT_LINE_SAMPLE and turns it into steering commands
  *  for sub_motion. Owns the "line lost" and "line reacquired" decisions
- *  (RC_EVT_LINE_LOST, RC_EVT_LINE_REACQUIRED, RC_EVT_RECOVERY_FAILED).
+ *  (RC_EVT_LINE_LOST, RC_EVT_LINE_REACQUIRED, RC_EVT_RECOVERY_FAILED); a
+ *  lost line is searched for with line_scan.h.
  */
 #ifndef SUB_LINE_H
 #define SUB_LINE_H
@@ -34,11 +35,6 @@ rc_result_t sub_line_set_reading(bool on);
 /* true while sub_barcode is reading a barcode (see sub_line_set_reading):
  * its white spaces read 0/0, which is not a junction or a lost line. */
 bool sub_line_reading(void);
-
-/* Find the line now with the in-place sweep (start of a run, after a
- * junction turn), sweep_deg each side; 0 = the full LOST search angle.
- * Call after sub_line_enable(true). */
-rc_result_t sub_line_find(int16_t sweep_deg);
 
 #endif /* SUB_LINE_H */
 /*** end of file ***/

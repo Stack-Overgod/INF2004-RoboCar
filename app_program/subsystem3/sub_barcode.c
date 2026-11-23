@@ -2,7 +2,9 @@
  *  sub_barcode.c  -  Code 39 decoder on RC_EVT_BARCODE_EDGE widths
  */
 #include "../rc_prelude.h"
+#include <tm/tmonitor.h>
 #include "sub_barcode.h"
+#include "bar_frame.h"
 #include "drv_ir.h"
 #include "sub_line.h"
 #include "../rc_config.h"
@@ -102,6 +104,9 @@ static uint32_t         scan_edges;
 static int8_t           scan_dir;
 /* a letter has been decoded since the last '*' */
 static bool             frame_letter;
+/* a letter has been decoded in this attempt (else scan_finish tries
+ * bar_frame_guess) */
+static bool             attempt_letter;
 
 /* every element of the attempt, 10 us units, for car/01/bcbits */
 static uint16_t         raw_w[RC_BAR_RAW_MAX];
@@ -334,12 +339,61 @@ static void raw_publish(void)
 }
 
 
+/* Appends a decoded symbol to the attempt's text (first 3 kept). */
+static void scan_symbol(char symbol)
+{
+    uint32_t len = (uint32_t)scan.ok;
+
+    if (len < (sizeof(scan.text) - 1U)) {
+        scan.text[len]      = symbol;
+        scan.text[len + 1U] = '\0';
+    }
+    scan.ok = sat_inc(scan.ok);
+}
+
+/* Reports one decoded symbol: the attempt's text and RC_EVT_BARCODE_DECODED. */
+static void publish_symbol(char symbol, bool reversed)
+{
+    rc_event_t out;
+
+    scan_symbol(symbol);
+    out.id = RC_EVT_BARCODE_DECODED;
+    out.u.barcode.sym      = rc_sym_code(symbol);   /* 5-bit symbol code */
+    out.u.barcode.command  = symbol_to_cmd(symbol);
+    out.u.barcode.reversed = reversed ? 1U : 0U;
+    (void)rc_event_publish(&out);
+}
+
+/* The attempt ended without a letter: if one letter decodes cleanly with a
+ * '*' read by its bars on both sides (bar_frame.c), the '*'s were there
+ * and only their spaces misread. Report it as '*' then the letter, as a
+ * clean read would (FR5: the letter still follows a start character).
+ * Only when every element was recorded. */
+static void frame_guess(void)
+{
+    char     letter;
+    bool     reversed;
+    uint32_t at;
+
+    if (attempt_letter || (raw_more != 0U)
+        || !bar_frame_guess(raw_w, raw_n, raw_first_bar, find,
+                            &letter, &reversed, &at)) {
+        return;
+    }
+    tm_printf((UB *)"[S3] barcode: '*' misread, '%c' framed by '*' bars"
+              " at element %d%s\n", (INT)letter, (INT)at,
+              reversed ? ", backwards" : "");
+    publish_symbol('*', reversed);
+    publish_symbol(letter, reversed);
+}
+
 /* Publishes the open attempt (if it is big enough) and closes it. */
 static void scan_finish(void)
 {
     rc_event_t out;
 
     if (scan_open && (scan_edges >= NOISE_EDGES)) {
+        frame_guess();
         raw_publish();
         out.id         = RC_EVT_BARCODE_SCAN;
         out.u.bar_scan = scan;
@@ -366,6 +420,7 @@ static void scan_edge(uint32_t t_us)
         scan_edges        = 0U;
         scan_dir          = 0;
         frame_letter      = false;
+        attempt_letter    = false;
         raw_n             = 0U;
         raw_more          = 0U;
         scan_open         = true;
@@ -389,18 +444,6 @@ static void scan_width(uint32_t w)
     if (w10 > scan.max_10us) {
         scan.max_10us = w10;
     }
-}
-
-/* Appends a decoded symbol to the attempt's text (first 3 kept). */
-static void scan_symbol(char symbol)
-{
-    uint32_t len = (uint32_t)scan.ok;
-
-    if (len < (sizeof(scan.text) - 1U)) {
-        scan.text[len]      = symbol;
-        scan.text[len + 1U] = '\0';
-    }
-    scan.ok = sat_inc(scan.ok);
 }
 
 /* Line samples arrive every RC_PERIOD_LINE_MS whatever the barcode is
@@ -428,7 +471,6 @@ static void on_edge(const rc_event_t *evt, void *ctx)
     char         symbol;
     bool         reversed;
     cls_result_t cls;
-    rc_event_t   out;
 
     (void)ctx;
 
@@ -484,21 +526,16 @@ static void on_edge(const rc_event_t *evt, void *ctx)
 
     /* Successful decode: reset the window */
     n_widths = 0U;
-    scan_symbol(symbol);
     if (symbol != '*') {
-        frame_letter = true;
+        frame_letter   = true;
+        attempt_letter = true;
     } else if (frame_letter) {
         scan_dir     = 0;           /* closing '*': this code is done */
         frame_letter = false;
     } else {
         /* opening '*': lookup() has set scan_dir */
     }
-
-    out.id = RC_EVT_BARCODE_DECODED;
-    out.u.barcode.sym      = rc_sym_code(symbol);   /* 5-bit symbol code */
-    out.u.barcode.command  = symbol_to_cmd(symbol);
-    out.u.barcode.reversed = reversed ? 1U : 0U;
-    (void)rc_event_publish(&out);
+    publish_symbol(symbol, reversed);
 }
 
 /* ------------------------------------------------------------------ */

@@ -24,6 +24,7 @@ to get every car's state on a shared broker.
 | `car/01/lifted` | car → | the car is picked up, tilted or overturned (it stops) | Buddy 4 `RC_EVT_LIFTED` |
 | `car/01/obstacle` | car → | a scan completes | Buddy 5 `RC_EVT_OBSTACLE_PROFILE` |
 | `car/01/avoid` | car → | an avoidance plan is chosen | Buddy 5 `RC_EVT_AVOIDANCE_PLAN` |
+| `car/01/stored` | car → | the barcode command kept for the next junction changes (stored, run, or cleared by STOP/START) | Buddy 5 `RC_EVT_CMD_STORED` |
 | `car/01/spin` | car → | a step scan completes (edge diagnostics) | Buddy 5 `RC_EVT_SPIN_EDGES` |
 | `car/01/move` | car → | a queued move finishes or aborts | Buddy 2 `RC_EVT_MOTION_DONE` |
 | `car/01/ack` | car → | each command character received | Buddy 1 |
@@ -38,7 +39,7 @@ a second plus events, so there's plenty of room.
 
 Every payload the car sends is a compact binary frame (`subsystem1/tm_frame.h`:
 a 2-byte header, `[ver:3 | type:5]` and an 8-bit seq, then each field in only
-the bits its range needs; `TM_VER` 4). On the laptop, `scripts/tm_frames.py`
+the bits its range needs; `TM_VER` 5). On the laptop, `scripts/tm_frames.py`
 decodes a frame into the JSON shown below; the broker (`scripts/mqtt_broker.py`)
 logs that JSON and the dashboard reads it. A decoder refuses a frame with the
 wrong version or length, so the car image, `tm_frames.py` and the dashboard
@@ -97,6 +98,7 @@ A state frame is 20 bytes, 28 with the encoder counts.
 | Topic | Example | Fields |
 |---|---|---|
 | `barcode` | `{"sym":"A","cmd":1,"rev":0}` | character, command it maps to (below), `rev` 1 = read back to front |
+| `stored` | `{"sym":"A","cmd":1}` / `{"sym":"-","cmd":0}` | letter and command kept for the next junction; `-` = none |
 | `line` | `{"lost":1}` / `{"lost":0}` | 1 = line lost, 0 = found again |
 | `hump` | `{"peak_mm":37,"ms":420,"pitch":12}` | peak height, how long it took, steepest pitch in degrees |
 | `motion` | `{"cls":4}` | the new motion class |

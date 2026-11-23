@@ -175,6 +175,29 @@
 /* 1: the Sense task stops checking in 30 s after boot, so the watchdog
  * must reboot the car and report "stopped: Sense". Keep 0 in the repo. */
 #define RC_WDOG_STALL_TEST      (0)
+/* 1: the FAST dispatcher records the event and callback it is running in
+ * the watchdog scratch registers (they survive a watchdog reset), and the
+ * boot after a "stopped: FAST" reset prints them. Two register writes
+ * per FAST callback. */
+#define RC_WDOG_TRACE           (1)
+/* 1: stand soak test for the watchdog: START goes straight to FOLLOWING (no
+ * line-up scan, which needs the chassis to turn), the line is never
+ * declared lost and the forward watch never starts avoidance, so line
+ * steering and the Motion task run for as long as the car is left on the
+ * stand. Keep 0 in the repo. */
+#define RC_STAND_SOAK           (0)
+
+/* Tasks that share the motion mutex (the FAST dispatcher, Motion, Scan)
+ * all run on core 1, so a wait for the mutex and its release never cross
+ * cores; the CYW43 WiFi task and the USB console task are pinned to
+ * core 0 by the port. Single-core builds ignore it. */
+#if defined(TK_SUPPORT_SMP) && TK_SUPPORT_SMP
+#define RC_CTL_TSKATR           (TA_ASSPRC)
+#define RC_CTL_ASSPRC           (TP_PRC2)
+#else
+#define RC_CTL_TSKATR           (0U)
+#define RC_CTL_ASSPRC           (0U)
+#endif
 
 /* ------------------------------------------------------------------ *
  *  Mechanical constants. Measure these on your own car.

@@ -2,8 +2,8 @@
  * @file  subsystem3.c
  * @brief Subsystem 3 -- line following and barcode decoding.
  *
- * subsystem3_init()  sets up the IR driver, the line follower and the
- *                    barcode decoder: their event-bus subscriptions and the
+ * subsystem3_init()  sets up the IR driver, the line scan, the line follower
+ *                    and the barcode decoder: their event-bus subscriptions and the
  *                    barcode ADC (edge reporting left disarmed). No thread.
  * subsystem3_start() nothing to start: the line pair is sampled every
  *                    RC_PERIOD_LINE_MS (10 ms, 100 Hz) by the shared Sense
@@ -25,6 +25,7 @@
 #include "subsystem3.h"
 #include "../rc_config.h"
 #include "drv_ir.h"
+#include "line_scan.h"
 #include "sub_line.h"
 #include "sub_barcode.h"
 
@@ -40,6 +41,7 @@ static UB const msg_step_failed[] = "[S3] %s failed (%d)\n";
 static UB const msg_not_started[] =
 	"[S3] not started: subsystem3_init() failed\n";
 static UB const name_drv_ir[]      = "drv_ir_init()";
+static UB const name_line_scan[]   = "line_scan_init()";
 static UB const name_sub_line[]    = "sub_line_init()";
 static UB const name_sub_barcode[] = "sub_barcode_init()";
 #if (S3_FOLLOW_AT_START)
@@ -66,6 +68,12 @@ EXPORT ER subsystem3_init (void)
 	/* Each step runs only if the one before it worked; step_ok() prints
 	 * the first failure. */
 	b_init_ok = step_ok(drv_ir_init(), name_drv_ir);
+	if (b_init_ok)
+	{
+		/* before sub_line: the scan sees each sample first, so a scan
+		 * that ends on a sample hands over to steering on that sample */
+		b_init_ok = step_ok(line_scan_init(), name_line_scan);
+	}
 	if (b_init_ok)
 	{
 		b_init_ok = step_ok(sub_line_init(), name_sub_line);

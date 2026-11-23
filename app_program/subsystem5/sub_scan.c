@@ -723,7 +723,8 @@ rc_result_t sub_scan_init(void)
     ctsk.itskpri = RC_PRI_SCAN;
     ctsk.stksz   = RC_STACK_SZ;
     ctsk.task    = scan_task;
-    ctsk.tskatr  = TA_HLNG | TA_RNG3;
+    ctsk.tskatr  = TA_HLNG | TA_RNG3 | RC_CTL_TSKATR;
+    ctsk.assprc  = RC_CTL_ASSPRC;   /* same core as the motion mutex's users */
 
     scan_tskid = tk_cre_tsk(&ctsk);
     if (scan_tskid <= E_OK) {
