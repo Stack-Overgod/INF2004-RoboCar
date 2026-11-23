@@ -121,13 +121,13 @@ static bool             raw_first_bar;
 static rc_nav_cmd_t symbol_to_cmd(char c)
 {
     switch (c) {
-    case 'A':
+    case 'W':
         return RC_CMD_TURN_LEFT;
-    case 'B':
+    case 'X':
         return RC_CMD_TURN_RIGHT;
-    case 'C':
+    case 'Y':
         return RC_CMD_GO_STRAIGHT;
-    case 'D':
+    case 'Z':
         return RC_CMD_U_TURN;
     default:            /* the other 22 letters and '*' decode but do nothing */
         return RC_CMD_NONE;
