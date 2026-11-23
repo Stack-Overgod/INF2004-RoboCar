@@ -40,4 +40,9 @@ rc_result_t rc_wdog_start(void);
 /* The calling task is alive. Cheap (one byte store); any context. */
 void rc_wdog_checkin(rc_wdog_who_t who);
 
+/* RC_WDOG_TRACE: the FAST dispatcher is about to call `cb` for event
+ * `evt_id` / has returned from it. Two register writes each. */
+void rc_wdog_trace_enter(uint32_t evt_id, const void *cb);
+void rc_wdog_trace_leave(void);
+
 #endif /* RC_WDOG_H */

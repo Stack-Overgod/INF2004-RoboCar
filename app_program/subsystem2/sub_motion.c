@@ -865,6 +865,9 @@ static void motion_task(INT stacd, void *exinf)
     (void)stacd;
     (void)exinf;
 
+#if TK_SUPPORT_SMP
+    tm_printf((UB *)"[motion] task on processor %d\n", (INT)tk_get_prc());
+#endif
     for (;;) {
         motion_overruns += rc_period_wait();
         rc_wdog_checkin(RC_WDOG_MOTION);
@@ -983,7 +986,8 @@ rc_result_t sub_motion_init(void)
     ctsk.itskpri = RC_PRI_MOTION;
     ctsk.stksz   = RC_STACK_SZ;
     ctsk.task    = motion_task;
-    ctsk.tskatr  = TA_HLNG | TA_RNG3;
+    ctsk.tskatr  = TA_HLNG | TA_RNG3 | RC_CTL_TSKATR;
+    ctsk.assprc  = RC_CTL_ASSPRC;   /* same core as the mutex's other users */
 
     motion_tskid = tk_cre_tsk(&ctsk);
     if (motion_tskid <= E_OK) {

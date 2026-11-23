@@ -14,7 +14,8 @@ python -I dashboard\dashboard.py --start-broker   # also start the broker at lau
 - **Telemetry**: everything the broker prints (all `car/01/*` topics + connects).
   Payloads are binary frames, decoded by `scripts/tm_frames.py`. The IMU card shows the
   per-hump max pitch, the motion class, the live height above the start level (state `h`)
-  and each finished ramp (`car/01/ramp`).
+  and each finished ramp (`car/01/ramp`). The Barcode card shows the letter and
+  command kept for the next junction (`car/01/stored`).
 - The HTTP server binds 127.0.0.1 only; the broker binds 0.0.0.0 so the car can reach it.
 
 ## For Claude / troubleshooting (while the dashboard runs)

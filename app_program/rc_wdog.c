@@ -15,6 +15,8 @@
 #define WDOG_LOAD           (WDOG_BASE + 0x04UL)
 #define WDOG_REASON         (WDOG_BASE + 0x08UL)
 #define WDOG_SCRATCH0       (WDOG_BASE + 0x0CUL)
+#define WDOG_SCRATCH1       (WDOG_BASE + 0x10UL)
+#define WDOG_SCRATCH2       (WDOG_BASE + 0x14UL)
 #define WDOG_CTRL_ENABLE    (1UL << 30)
 #define WDOG_CTRL_PAUSE_DBG (7UL << 24)     /* pause while a debugger halts */
 #define WDOG_REASON_TIMER   (1UL << 0)
@@ -37,6 +39,12 @@
 #define MISS_TAG            (0x57D00000UL)
 #define MISS_TAG_MASK       (0xFFF00000UL)
 
+/* FAST breadcrumb (RC_WDOG_TRACE): SCRATCH2 = TRACE_TAG | busy bit | event
+ * id, SCRATCH1 = the callback's address while it runs. */
+#define TRACE_TAG           (0x7CA00000UL)
+#define TRACE_TAG_MASK      (0xFFF00000UL)
+#define TRACE_BUSY          (0x00010000UL)
+
 /* One byte per task, so a check-in is a single store (no read-modify-
  * write that two cores could interleave). */
 static volatile uint8_t alive[RC_WDOG_N];
@@ -47,6 +55,43 @@ void rc_wdog_checkin(rc_wdog_who_t who)
 {
     if ((uint32_t)who < (uint32_t)RC_WDOG_N) {
         alive[who] = 1U;
+    }
+}
+
+void rc_wdog_trace_enter(uint32_t evt_id, const void *cb)
+{
+#if RC_WDOG_TRACE
+    out_w(WDOG_SCRATCH1, (uint32_t)cb);
+    out_w(WDOG_SCRATCH2, TRACE_TAG | TRACE_BUSY | (evt_id & 0xFFFFUL));
+#else
+    (void)evt_id;
+    (void)cb;
+#endif
+}
+
+void rc_wdog_trace_leave(void)
+{
+#if RC_WDOG_TRACE
+    out_w(WDOG_SCRATCH2, TRACE_TAG | (in_w(WDOG_SCRATCH2) & 0xFFFFUL));
+#endif
+}
+
+/* What the FAST dispatcher was doing when the watchdog fired: inside a
+ * callback (event id, callback address: look it up in the .map file), or
+ * between callbacks (waiting for an event, or in the dispatcher itself). */
+static void trace_report(void)
+{
+    uint32_t s2 = in_w(WDOG_SCRATCH2);
+
+    if ((s2 & TRACE_TAG_MASK) != TRACE_TAG) {
+        tm_printf((UB *)"[wdog] FAST trace: none recorded\n");
+    } else if ((s2 & TRACE_BUSY) != 0U) {
+        tm_printf((UB *)"[wdog] FAST was inside the callback 0x%08x"
+                  " for event %d\n", (UINT)in_w(WDOG_SCRATCH1),
+                  (INT)(s2 & 0xFFFFUL));
+    } else {
+        tm_printf((UB *)"[wdog] FAST was not in a callback (last event"
+                  " %d done)\n", (INT)(s2 & 0xFFFFUL));
     }
 }
 
@@ -105,6 +150,9 @@ void rc_wdog_boot(void)
             }
         }
         tm_printf((UB *)"\n");
+        if (RC_WDOG_TRACE && ((missing & (1UL << RC_WDOG_FAST)) != 0U)) {
+            trace_report();
+        }
     } else {
         tm_printf((UB *)"supervisor stopped (system hang)\n");
     }
@@ -121,6 +169,8 @@ rc_result_t rc_wdog_start(void)
         alive[i] = 0U;
     }
     out_w(WDOG_SCRATCH0, MISS_TAG);
+    out_w(WDOG_SCRATCH1, 0U);
+    out_w(WDOG_SCRATCH2, 0U);
     out_w(PSM_WDSEL, PSM_WDSEL_ALL_BUT_OSC);
     out_w(WDOG_LOAD, WDOG_LOAD_VAL);
     out_w(WDOG_CTRL, WDOG_CTRL_ENABLE | WDOG_CTRL_PAUSE_DBG);

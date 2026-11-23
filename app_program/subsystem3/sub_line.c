@@ -3,6 +3,7 @@
  */
 #include "../rc_prelude.h"
 #include "sub_line.h"
+#include "line_scan.h"
 #include "../subsystem2/sub_motion.h"
 #include "../subsystem2/drv_encoder.h"
 #include "../rc_config.h"
@@ -157,28 +158,22 @@
  * onto something dark and the inner one found the line: keep turning. */
 #define CROSS_AFTER         (15U)
 
-/* FR9 / FR12 line search. Once LOST the car spins in place
- * SEARCH_SWEEP_DEG left, then back right to SEARCH_SWEEP_DEG right of
- * where it started, at SEARCH_SPIN_MM_S per wheel (closed loop). The
- * first sample with either sensor on the line ends the search: the spin
- * stops and the normal correction takes over. Line not
- * found by the end of the right sweep: brake and report RECOVERY_FAILED.
- * The angle comes from the encoder clicks (both wheels, any direction):
- * a wheel travels (W/2) * pi / 180 = 977 um per degree of spin. */
+/* FR4 line search. Once LOST: a slight turn ON THE MOVE toward the side
+ * the line was last seen on (last_position), the likely side, at line
+ * speed with a SEARCH_NUDGE_STEER correction until the heading has
+ * changed SEARCH_NUDGE_DEG (~0.9 s, ~28 mm); skipped if no side was ever
+ * seen. A sensor seeing the line during it ends the search. Then the line
+ * scan (line_scan.c) in place, up to SEARCH_SWEEP_DEG toward the
+ * last-seen side first (left if none), then SEARCH_SWEEP_DEG the other
+ * way, at SEARCH_SPIN_MM_S per wheel: the car turns onto the line both
+ * sensors crossed. Not found: brake and report RECOVERY_FAILED. */
 #define SEARCH_SWEEP_DEG    (135)
-/* sub_line_find() passes its own limit: after a junction turn the branch
- * line is close, so sub_nav sweeps only 35 degrees. */
-/* Before the sweep: a slight turn ON THE MOVE toward the side the line
- * was last seen on (last_position), the likely side, to check there
- * first: line speed with a SEARCH_NUDGE_STEER correction
- * until the heading has changed SEARCH_NUDGE_DEG (~0.9 s, ~28 mm).
- * Skipped if no side was ever seen. The sweep limits stay measured from
- * the heading at LOST. */
 #define SEARCH_NUDGE_DEG    (10)    /* ~0.9 s */
 #define SEARCH_NUDGE_STEER  (60)    /* permille, = STEER_MAX */
 /* Sensor tip ~125 mm/s: an 18 mm line stays under it ~14 samples; 135
  * degrees in ~1.9 s. */
 #define SEARCH_SPIN_MM_S    (70)
+/* Each wheel's travel per degree of turn, um: (W/2) x pi/180 = 977. */
 #define SEARCH_UM_PER_DEG   ((uint32_t)RC_WHEEL_BASE_MM * 1000UL * 31416UL \
                              / (2UL * 180UL * 10000UL))
 
@@ -224,19 +219,14 @@ static int16_t  prev_err;
 /* sub_barcode is reading a barcode: the line is not declared LOST (see
  * sub_line_set_reading) */
 static bool     reading;
-/* line search after LOST (see SEARCH_SWEEP_DEG): which leg is running,
- * both wheels' encoder clicks when it started, the leg's direction (+1
- * right, -1 left) and the heading it started from (degrees from the
- * heading at LOST, < 0 = left) */
-typedef enum { SWEEP_NONE = 0, SWEEP_NUDGE, SWEEP_LEFT, SWEEP_RIGHT } sweep_t;
-static sweep_t  sweep;
-static uint32_t sweep_clicks_l0;
-static uint32_t sweep_clicks_r0;
-static int32_t  sweep_dir;
-static int32_t  sweep_from_deg;
-/* this search's sweep limit each side, degrees (SEARCH_SWEEP_DEG, or the
- * one sub_line_find() was given) */
-static int32_t  sweep_limit = SEARCH_SWEEP_DEG;
+/* line search after LOST (see SEARCH_SWEEP_DEG): the nudge is running,
+ * both wheels' encoder clicks when it started and its direction (+1
+ * right, -1 left); our line scan is running */
+static bool     nudge_on;
+static uint32_t nudge_l0;
+static uint32_t nudge_r0;
+static int32_t  nudge_dir;
+static bool     lost_scan;
 
 /* Left/right motor match, permille of base added to the left wheel and
  * taken off the right: at equal duty the left wheel runs ~15 % slower and
@@ -360,87 +350,84 @@ static void publish_id(rc_evt_id_t id)
     (void)rc_event_publish(&out);
 }
 
-/* Heading now, degrees from the heading at LOST (< 0 = left). Clicks
- * count up whichever way a wheel turns, so the leg's direction gives the
- * sign. In place (LEFT / RIGHT legs) the heading change is the MEAN wheel
- * travel over SEARCH_UM_PER_DEG; on the move (NUDGE, both wheels forward)
- * it is HALF the outer-minus-inner travel over the same. */
-static int32_t sweep_heading(void)
+/* Degrees the nudge has turned so far: on the move (both wheels forward)
+ * the heading change is HALF the outer-minus-inner wheel travel over
+ * SEARCH_UM_PER_DEG. */
+static int32_t nudge_heading(void)
 {
-    uint32_t dl = drv_encoder_count(RC_SIDE_LEFT) - sweep_clicks_l0;
-    uint32_t dr = drv_encoder_count(RC_SIDE_RIGHT) - sweep_clicks_r0;
-    uint32_t half;
+    uint32_t dl    = drv_encoder_count(RC_SIDE_LEFT) - nudge_l0;
+    uint32_t dr    = drv_encoder_count(RC_SIDE_RIGHT) - nudge_r0;
+    uint32_t outer = (nudge_dir > 0) ? dl : dr;
+    uint32_t inner = (nudge_dir > 0) ? dr : dl;
+    uint32_t half  = (outer > inner) ? ((outer - inner) / 2U) : 0U;
 
-    if (sweep == SWEEP_NUDGE) {
-        uint32_t outer = (sweep_dir > 0) ? dl : dr;
-        uint32_t inner = (sweep_dir > 0) ? dr : dl;
-
-        half = (outer > inner) ? ((outer - inner) / 2U) : 0U;
-    } else {
-        half = (dl + dr) / 2U;
-    }
-    return sweep_from_deg
-           + (sweep_dir * (int32_t)((half * RC_ENC_UM_PER_TICK)
-                                    / SEARCH_UM_PER_DEG));
+    return (int32_t)((half * RC_ENC_UM_PER_TICK) / SEARCH_UM_PER_DEG);
 }
 
-/* Starts one leg of the line search from the current heading. */
-static void sweep_begin(sweep_t leg, int32_t dir)
+/* The line scan of the search ended (line_scan.c, FAST lane). Found: the
+ * car faces along the line, tracking resumes on the next sample. Not
+ * found: FR4, brake (the scan did) and report it; stay silent until
+ * sub_line_enable(). */
+static void lost_scan_done(bool found, void *ctx)
 {
-    int32_t from = (sweep == SWEEP_NONE) ? 0 : sweep_heading();
+    (void)ctx;
 
-    sweep           = leg;
-    sweep_dir       = dir;
-    sweep_from_deg  = from;
-    sweep_clicks_l0 = drv_encoder_count(RC_SIDE_LEFT);
-    sweep_clicks_r0 = drv_encoder_count(RC_SIDE_RIGHT);
+    lost_scan = false;
+    if (found) {
+        lost_count  = 0U;
+        curve_dir   = 0;
+        steer_level = 0;
+        d_term      = 0;
+        state       = RC_LINE_TRACKING;
+        publish_id(RC_EVT_LINE_REACQUIRED);
+    } else {
+        gave_up = true;
+        publish_id(RC_EVT_RECOVERY_FAILED);
+    }
+}
+
+/* Start the search's line scan: the last-seen side first. */
+static void lost_scan_begin(void)
+{
+    line_scan_cfg_t c;
+
+    c.first_dir  = (last_position > 0) ? (int16_t)-1 : (int16_t)1;
+    c.quick_deg  = 0;
+    c.first_deg  = SEARCH_SWEEP_DEG;
+    c.back_deg   = SEARCH_SWEEP_DEG;
+    c.speed_mm_s = SEARCH_SPIN_MM_S;
+    nudge_on     = false;
+    if (line_scan_start(&c, lost_scan_done, NULL) == RC_OK) {
+        lost_scan = true;
+    } else {
+        gave_up = true;             /* another scan owns the car */
+        (void)sub_motion_stop(true);
+        publish_id(RC_EVT_RECOVERY_FAILED);
+    }
 }
 
 /* Starts the search at LOST: the nudge toward the last-seen side, or
- * straight to the left sweep if no side was ever seen. */
+ * straight to the scan if no side was ever seen. */
 static void search_begin(void)
 {
-    sweep = SWEEP_NONE;
     if (last_position != 0) {
-        sweep_begin(SWEEP_NUDGE, (last_position < 0) ? -1 : 1);
+        nudge_on  = true;
+        nudge_dir = (last_position < 0) ? -1 : 1;
+        nudge_l0  = drv_encoder_count(RC_SIDE_LEFT);
+        nudge_r0  = drv_encoder_count(RC_SIDE_RIGHT);
     } else {
-        sweep_begin(SWEEP_LEFT, -1);
+        lost_scan_begin();
     }
 }
 
-/* One 0/0 sample while LOST: spin the current leg; nudge done -> sweep
- * left to -sweep_limit -> sweep right to +sweep_limit -> give up. */
-static void search_step(void)
+/* One 0/0 sample of the nudge: drive it, then hand over to the scan. */
+static void nudge_step(void)
 {
-    int32_t h;
-
-    if (sweep == SWEEP_NONE) {
-        search_begin();             /* LOST carried over a re-enable */
-    }
-    h = sweep_heading();
-    if ((sweep == SWEEP_NUDGE)
-        && (((sweep_dir < 0) ? -h : h) >= SEARCH_NUDGE_DEG)) {
-        sweep_begin(SWEEP_LEFT, -1);
-        h = sweep_heading();
-    }
-    if ((sweep == SWEEP_LEFT) && (h <= -sweep_limit)) {
-        sweep_begin(SWEEP_RIGHT, 1);
-        h = sweep_heading();
-    }
-    if ((sweep == SWEEP_RIGHT) && (h >= sweep_limit)) {
-        /* FR9 / FR12: not found either side. Brake and report it; stay
-         * silent until sub_line_enable(). */
-        sweep   = SWEEP_NONE;
-        gave_up = true;
-        (void)sub_motion_stop(true);
-        publish_id(RC_EVT_RECOVERY_FAILED);
+    if (nudge_heading() >= SEARCH_NUDGE_DEG) {
+        lost_scan_begin();
         return;
     }
-    if (sweep == SWEEP_NUDGE) {
-        line_drive(base_permille, sweep_dir * SEARCH_NUDGE_STEER);
-    } else {
-        (void)sub_motion_drive_speed(0, (int16_t)(sweep_dir * SEARCH_SPIN_MM_S));
-    }
+    line_drive(base_permille, nudge_dir * SEARCH_NUDGE_STEER);
 }
 
 /* A sensor sees the line again (1/0, 0/1 or 1/1). Report §6.5: "any
@@ -450,7 +437,7 @@ static void search_step(void)
 static void line_seen(void)
 {
     lost_count = 0U;
-    sweep      = SWEEP_NONE;    /* a search spin ends here */
+    nudge_on   = false;         /* a search nudge ends here */
 
     if (state == RC_LINE_LOST) {
         state = RC_LINE_TRACKING;
@@ -469,8 +456,8 @@ static void on_sample(const rc_event_t *evt, void *ctx)
 
     (void)ctx;
 
-    if (!enabled || gave_up) {
-        return;
+    if (!enabled || gave_up || line_scan_busy()) {
+        return;                     /* a line scan has the motors */
     }
 
     {
@@ -579,7 +566,7 @@ static void on_sample(const rc_event_t *evt, void *ctx)
         both_count = 0U;
         lost_count++;
 
-        if (reading && (lost_count >= LOST_THRESHOLD)) {
+        if ((reading || RC_STAND_SOAK) && (lost_count >= LOST_THRESHOLD)) {
             /* Reading a barcode: the white spaces between the bars are
              * not a lost line. Hold the count just short of LOST, so the
              * steering below carries on as usual; the line is declared
@@ -589,7 +576,7 @@ static void on_sample(const rc_event_t *evt, void *ctx)
 
         if (lost_count >= LOST_THRESHOLD) {
             /* Officially lost now: a slight turn on the move toward the
-             * last-seen side, then sweep left, then right in place (see
+             * last-seen side, then the line scan in place (see
              * SEARCH_NUDGE_DEG, SEARCH_SWEEP_DEG). */
             if (state != RC_LINE_LOST) {
                 state       = RC_LINE_LOST;
@@ -597,10 +584,11 @@ static void on_sample(const rc_event_t *evt, void *ctx)
                 steer_level = 0;
                 d_term      = 0;
                 publish_id(RC_EVT_LINE_LOST);
-                sweep_limit = SEARCH_SWEEP_DEG;
                 search_begin();
             }
-            search_step();
+            if (nudge_on) {
+                nudge_step();
+            }
         } else {
 #if RC_LINE_STRADDLE
             /* 0/0, not lost yet. In a curve: hold the arc (see
@@ -664,14 +652,17 @@ rc_result_t sub_line_init(void)
     return RC_OK;
 }
 
-/* Turns steering on/off. Also clears a timed-out search, so enabling
- * again starts afresh. */
+/* Turns steering on/off. Also ends a search (its scan too) and clears a
+ * failed one, so enabling again starts afresh. */
 rc_result_t sub_line_enable(bool on)
 {
+    if (lost_scan) {
+        line_scan_abort();
+        lost_scan = false;
+    }
     enabled     = on;
     gave_up     = false;
-    sweep       = SWEEP_NONE;
-    sweep_limit = SEARCH_SWEEP_DEG;
+    nudge_on    = false;
     if (state == RC_LINE_LOST) {
         state = RC_LINE_TRACKING;   /* a new run starts a new search */
     }
@@ -702,25 +693,6 @@ rc_result_t sub_line_set_reading(bool on)
 bool sub_line_reading(void)
 {
     return reading;
-}
-
-/* sub_nav: find the line now, with the in-place sweep (left then right,
- * no nudge: there is no last-seen side yet). For the start of a run and
- * after a junction turn. The first sample with a sensor on the line ends
- * it, as after LOST; not found: RECOVERY_FAILED.
- * sweep_deg: how far each side (SEARCH_SWEEP_DEG for a full search).
- * Call after sub_line_enable(true). */
-rc_result_t sub_line_find(int16_t sweep_deg)
-{
-    sweep_limit   = (sweep_deg > 0) ? sweep_deg : SEARCH_SWEEP_DEG;
-    state         = RC_LINE_LOST;   /* no LINE_LOST event: not a loss */
-    lost_count    = LOST_THRESHOLD;
-    last_position = 0;
-    curve_dir     = 0;
-    steer_level   = 0;
-    d_term        = 0;
-    search_begin();
-    return RC_OK;
 }
 
 /*** end of file ***/

@@ -100,7 +100,7 @@ The table covers every application field in the CR1 scope:
 
 | Bytes | Content |
 |---|---|
-| 0 | `[ver:3 \| type:5]`: `TM_VER` = 4; type 1..16 |
+| 0 | `[ver:3 \| type:5]`: `TM_VER` = 5; type 1..17 |
 | 1 | seq, 8 bits, wraps. State frames count state ticks; all other frames share one event counter. |
 | 2.. | The type's fields, back to back. Least significant bit first: body bit *i* is bit *i % 8* of body byte *i / 8*. Signed fields are two's complement in their own width. Out-of-range values are clamped. |
 

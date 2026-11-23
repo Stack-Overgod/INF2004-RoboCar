@@ -31,7 +31,7 @@
 #include "../rc_types.h"
 #include <stddef.h>
 
-#define TM_VER          (4U)    /* bump on any schema change */
+#define TM_VER          (5U)    /* bump on any schema change */
 #define TM_HDR_BYTES    (2U)
 #define TM_FRAME_MAX    (32U)   /* longest is STATE_ENC at 28 bytes */
 #define TM_FIELDS_MAX   (24U)
@@ -54,6 +54,7 @@ typedef enum
     TM_T_MOVE,          /* car/01/move, 6 B                             */
     TM_T_ACK,           /* car/01/ack, 4 B                              */
     TM_T_RAMP,          /* car/01/ramp, 7 B                             */
+    TM_T_STORED,        /* car/01/stored, 3 B                           */
     TM_T_COUNT
 } tm_type_t;
 

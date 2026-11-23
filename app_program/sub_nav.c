@@ -17,7 +17,9 @@
  *                                                                (Buddy 5)
  *    sub_nav -> sub_motion  turn_deg() / forward_mm() / drive_speed() /
  *                           stop() / get_speed() / set_speed()   (Buddy 2)
- *    sub_nav -> sub_line    enable() / find() / reading()        (Buddy 3)
+ *    sub_nav -> sub_line    enable() / reading()                 (Buddy 3)
+ *    sub_nav -> line_scan   start() / abort(): START line-up, bypass
+ *                           rejoin, junction branch line         (Buddy 3)
  *    sub_nav -> sub_barcode arm()                                (Buddy 3)
  *    sub_nav -> sub_terrain level_here() on START                (Buddy 4)
  *    events in:  ULTRA_RESULT, AVOIDANCE_PLAN (S5), LINE_SAMPLE,
@@ -32,8 +34,10 @@
 #include "rc_config.h"
 #include "rc_event.h"
 #include "rc_fault.h"
+#include "rc_time.h"
 #include "subsystem2/sub_motion.h"
 #include "subsystem2/drv_encoder.h"
+#include "subsystem3/line_scan.h"
 #include "subsystem3/sub_line.h"
 #include "subsystem3/sub_barcode.h"
 #include "subsystem4/sub_terrain.h"
@@ -104,38 +108,34 @@
 /* Rejoining the line. The car drives in at NAV_BYPASS_IN_DEG, line
  * steering off, until either line sensor sees
  * the line; then NAV_LINE_SENSOR_AHEAD_MM further, which puts the axle
- * where the sensors crossed it; then LINE SCAN: it spins in place toward
- * the plan side, noting the heading at which each sensor goes on to and
- * off the line. The line runs midway between those four headings (the
- * pair then straddles it, which straddle mode reads as centred), so it
- * turns there and follows. The crossing angle is measured, not assumed,
- * because turn errors over the detour can make it much shallower than
- * 45 degrees. */
+ * where the sensors crossed it; then the line scan (subsystem3/line_scan.c)
+ * in place, toward the plan side first: it finds the line both sensors
+ * cross and turns the car along it (the pair then straddles it, which
+ * straddle mode reads as centred). The crossing angle is measured, not
+ * assumed, because turn errors over the detour can make it much
+ * shallower than 45 degrees. */
 #define NAV_LINE_SENSOR_AHEAD_MM        (80U)   /* sensors ahead of the axle */
-/* The first sweep goes NAV_LINESCAN_SPARE_DEG past the planned re-entry
- * angle; if it misses, the second sweep goes back the other way to the
- * same amount past the heading the scan began at. */
-#define NAV_LINESCAN_SPARE_DEG          (45)
-/* Scan spin wheel speed: ~61 deg/s, ~0.6 deg per 10 ms line sample (the
- * slowest spin that does not stall on the foam, sub_motion). */
-#define NAV_LINESCAN_MM_S               (60)
-/* The START line-up scans at this instead: half speed, ~0.3 deg per line
- * sample, so a sensor crossing the line at an angle gives twice the
- * samples. Below NAV_LINESCAN_MM_S the spin may stall on the foam. */
-#define NAV_START_SCAN_MM_S             (30)
-/* Line samples (10 ms each) to let the car stop before the final turn. */
-#define NAV_LINESCAN_SETTLE             (15U)
 
-/* START (and a restart from STOPPED) lines the car up on the line it was
- * put on before following: the same line scan, in place, NAV_START_SCAN_DEG
- * left and then back to NAV_START_SCAN_DEG right, then the turn to the
- * middle. A line under the car shows up within that sweep at any angle
- * up to ~90 degrees off. No line found: sub_line_find's sweep and
- * FOLLOWING. */
-#define NAV_START_SCAN_DEG              (100)
-/* Each wheel's travel per degree of spin in place, um: (W/2) x pi/180 */
-#define NAV_UM_PER_DEG  ((uint32_t)RC_WHEEL_BASE_MM * 1000UL * 31416UL \
-                         / (2UL * 180UL * 10000UL))
+/* Every line scan nav asks for (line_scan_cfg_t: first direction, quick
+ * check, first sweep, second sweep, wheel speed). Speeds: 60 mm/s
+ * (~61 deg/s, ~0.6 deg per 10 ms sample) is the slowest spin that does not
+ * stall on the foam; START runs at 30 for twice the samples per crossing.
+ *   REJOIN    after a bypass: NAV_BYPASS_IN_DEG + 45 toward the plan side,
+ *             then 45 past the start heading the other way (FR10).
+ *   START     FR16: if exactly one sensor is on black, the line is right
+ *             beside the car on that side: a NAV_START_QUICK_DEG sweep
+ *             toward it carries the other sensor across the same line
+ *             (~20 degrees between the sensors, ~13 for the line at their
+ *             radius, plus foam slip). Then NAV_START_SCAN_DEG left and
+ *             right: a line up to ~45 degrees off. Nothing: STOPPED.
+ *   JUNCTION  FR6: after a junction turn the branch line is ahead:
+ *             NAV_JUNCTION_SWEEP_DEG each side, the turn's direction
+ *             first (an under-turn leaves the line that way). */
+#define NAV_LINESCAN_SPARE_DEG          (45)
+#define NAV_LINESCAN_MM_S               (60)
+#define NAV_START_SCAN_MM_S             (30)
+#define NAV_START_QUICK_DEG             (40)
+#define NAV_START_SCAN_DEG              (50)
 
 /* FR3 "C - go straight": a short forward move carries the car across the
  * junction before line following takes over again. Placeholder, to be
@@ -154,9 +154,9 @@
 
 /* State timeouts, ms (RELTIM).
  *   RECOVER  FR9: the drive back in gets NAV_RECOVER_SLACK_PCT of its
- *            planned length to reach the line (recover_timeout_ms), each
- *            rejoin move CMD, the line scan its two sweeps; then STOPPED
- *            + RECOVERY_FAILED.
+ *            planned length to reach the line (recover_timeout_ms), the
+ *            move onto it CMD; then STOPPED + RECOVERY_FAILED. A line scan
+ *            keeps its own time limit (line_scan.c).
  *   BARCODE  G10: start character seen but no data character -> back to
  *            FOLLOWING. At the ~30 mm/s line speed one character takes
  *            ~2.5 s to pass the sensor (narrow ~156 ms, wide ~460 ms; a
@@ -176,44 +176,38 @@
  * is put back when the detour ends. */
 #define NAV_DETOUR_MM_S         (32U)
 
+/* Barcode re-read (see "Barcode re-read"): a pass that was clearly a
+ * barcode but gave no letter is read again backwards, then forwards: three
+ * passes in all, then the car carries on. The car reverses from where the
+ * read ended to NAV_REREAD_BACK_EXTRA_MM before where it began (the read
+ * is noticed at its third edge, and the decoder needs white before the
+ * first bar), at NAV_DETOUR_MM_S, the speed of the first pass. It reverses
+ * blind (the ultrasonic looks forward) over ground it has just crossed;
+ * a read longer than NAV_REREAD_MAX_MM is not reversed over. */
+#define NAV_REREAD_BACK_EXTRA_MM    (60U)
+#define NAV_REREAD_MAX_MM           (450U)
+/* Backstop for the reverse: 450 mm at 32 mm/s is ~14 s. */
+#define NAV_REREAD_TIMEOUT_MS       (20000)
+
 /* ------------------------------------------------------------------ */
 
 static volatile rc_nav_state_t state = RC_NAV_IDLE;
 /* cruise speed saved while the detour runs slow (0 = not saved) */
 static uint16_t saved_cruise_mm_s;
 /* RECOVERING, step by step (see "Rejoining the line"): SEEK drives in
- * until a sensor sees the line, ONTO carries the axle onto it, SCAN
- * spins to find both sensors' crossings, SETTLE lets the car stop,
- * ALIGN turns to the middle. */
+ * until a sensor sees the line, ONTO carries the axle onto it, SCAN is
+ * the line scan (line_scan.c). */
 typedef enum {
-    RJ_SEEK, RJ_ONTO, RJ_SCAN, RJ_SETTLE, RJ_ALIGN
+    RJ_SEEK, RJ_ONTO, RJ_SCAN
 } rejoin_t;
 static rejoin_t rejoin;
 static uint32_t rejoin_move;
-/* line scan: spin direction (+1 left), heading where this sweep began
- * and where it stops (0.1 deg, > 0 left, 0 = where the scan began),
- * encoder counts where it began, which sweep (0, 1) */
-static int32_t  ls_dir;
-static int32_t  ls_base;
-static int32_t  ls_limit;
-static uint32_t ls_l0;
-static uint32_t ls_r0;
-static uint32_t ls_sweep;
-/* how far past the start heading the second sweep goes, degrees */
-static int32_t  ls_back_deg;
-static int32_t  ls_speed;           /* scan wheel speed, mm/s */
 /* this RECOVERING is the START line-up (NAV_START_SCAN_DEG), not a
  * bypass rejoin; cleared on entry to any other state */
 static bool     rejoin_start;
-/* per sensor (0 left, 1 right): headings where it went on to / off the
- * line, progress (0 not yet, 1 on, 2 on and off), its last sample */
-static int32_t  ls_on[2];
-static int32_t  ls_off[2];
-static uint8_t  ls_seen[2];
-static bool     ls_prev[2];
-/* the heading the line runs along, and the stop countdown */
-static int32_t  ls_target;
-static uint32_t ls_settle;
+/* a line scan nav started is running (sub_line's own lost-line scan is
+ * not nav's to stop) */
+static bool     nav_scanning;
 /* the creep up to NAV_MEASURE_MM before the step scan */
 static uint32_t approach_move;
 
@@ -228,10 +222,30 @@ static uint32_t     cmd_move;       /* id of the EXECUTING_CMD move */
  * pair straddles the line just outside its edges, so only a crossing line
  * darkens both). Cleared on START and in STOPPED / IDLE. */
 static rc_nav_cmd_t pending_cmd = RC_CMD_NONE;
+static uint8_t      pending_sym = RC_SYM_NONE;  /* the letter it came from */
 static uint32_t     junction_count; /* 1/1 samples in a row, pending set */
-/* the EXECUTING_CMD move is a junction turn: find the line with
- * sub_line's sweep when it ends */
+/* the EXECUTING_CMD move is a junction turn: scan for the branch line
+ * when it ends (junction_scan_begin) */
 static bool         cmd_at_junction;
+static rc_nav_cmd_t cmd_kind;       /* the EXECUTING_CMD command */
+/* Barcode re-read: NONE = first pass; BACK = reversing over the barcode
+ * (state READING_BARCODE, line steering, watch, junctions and remote
+ * turns off); FWD = the last pass, following forward again. Back to NONE
+ * when the last pass's summary arrives or the car leaves FOLLOWING /
+ * READING_BARCODE. */
+typedef enum {
+    RR_NONE, RR_BACK, RR_FWD
+} reread_t;
+static reread_t     reread;
+static uint32_t     reread_move;    /* id of the reverse move */
+static uint32_t     reread_fwd_us;  /* the last pass began (bus time) */
+/* a letter was read in this re-read, and whether it maps to a command
+ * (see on_barcode: a command letter replaces one without; otherwise the
+ * first letter stays) */
+static bool         reread_got;
+static bool         reread_got_cmd;
+static bool         read_was_on;    /* sub_line_reading() last sample */
+static uint32_t     read_start_mm;  /* odometer where the read began */
 /* the turn to make once the NAV_JUNCTION_FWD_MM approach move is done */
 static rc_nav_cmd_t junction_turn;
 
@@ -289,6 +303,24 @@ static void tmo_arm(RELTIM ms)
     if (tmo_almid > 0) {
         (void)tk_sta_alm(tmo_almid, ms);
     }
+}
+
+/* Stores (or, with RC_CMD_NONE / RC_SYM_NONE, clears) the barcode command
+ * waiting for the next junction, and publishes RC_EVT_CMD_STORED when it
+ * changes, so the dashboard can show it. */
+static void pending_set(rc_nav_cmd_t cmd, uint8_t sym)
+{
+    rc_event_t out = { 0 };
+
+    if ((cmd == pending_cmd) && (sym == pending_sym)) {
+        return;
+    }
+    pending_cmd = cmd;
+    pending_sym = sym;
+    out.id = RC_EVT_CMD_STORED;
+    out.u.barcode.sym     = sym;
+    out.u.barcode.command = cmd;
+    (void)rc_event_publish(&out);
 }
 
 /* ------------------------------------------------------------------ *
@@ -438,6 +470,53 @@ static void bypass_done(uint32_t move_id, bool completed,
  *  (COMMAND_RX) both come through here.
  * ------------------------------------------------------------------ */
 
+/* The junction command's line scan ended (line_scan.c, FAST lane). Found:
+ * FOLLOWING. Not found: FR9 / FR12 as for a failed rejoin, STOPPED with
+ * RECOVERY_FAILED. */
+static void junction_scan_done(bool found, void *ctx)
+{
+    rc_event_t out = { 0 };
+
+    (void)ctx;
+
+    nav_scanning = false;
+    if (state != RC_NAV_EXECUTING_CMD) {
+        return;
+    }
+    if (found) {
+        enter(RC_NAV_FOLLOWING);
+        return;
+    }
+    tm_printf((UB *)"[nav] junction: branch line not found\n");
+    out.id = RC_EVT_RECOVERY_FAILED;
+    (void)rc_event_publish(&out);
+    enter(RC_NAV_STOPPED);
+}
+
+/* FR6: after a junction command, the line scan for the branch line,
+ * NAV_JUNCTION_SWEEP_DEG each side, the turn's direction first (a left
+ * turn left; right and the U-turn, a right spin, right; straight left).
+ * Stays in EXECUTING_CMD until the scan ends; the scan keeps its own time
+ * limit, so the state timer stops. */
+static void junction_scan_begin(void)
+{
+    line_scan_cfg_t c;
+
+    c.first_dir  = ((cmd_kind == RC_CMD_TURN_RIGHT)
+                    || (cmd_kind == RC_CMD_U_TURN)) ? (int16_t)-1 : (int16_t)1;
+    c.quick_deg  = 0;
+    c.first_deg  = NAV_JUNCTION_SWEEP_DEG;
+    c.back_deg   = NAV_JUNCTION_SWEEP_DEG;
+    c.speed_mm_s = NAV_LINESCAN_MM_S;
+    tmo_cancel();
+    if (line_scan_start(&c, junction_scan_done, NULL) == RC_OK) {
+        nav_scanning = true;
+    } else {
+        tm_printf((UB *)"[nav] junction: line scan refused\n");
+        enter(RC_NAV_STOPPED);
+    }
+}
+
 static void cmd_done(uint32_t move_id, bool completed,
                      uint32_t travelled_mm, void *ctx)
 {
@@ -447,11 +526,10 @@ static void cmd_done(uint32_t move_id, bool completed,
     if ((state != RC_NAV_EXECUTING_CMD) || (move_id != cmd_move)) {
         return;     /* stale, e.g. cut short by a STOP or the backstop */
     }
-    if (completed) {
+    if (completed && cmd_at_junction) {
+        junction_scan_begin();      /* the branch line */
+    } else if (completed) {
         enter(RC_NAV_FOLLOWING);
-        if (cmd_at_junction) {
-            (void)sub_line_find(NAV_JUNCTION_SWEEP_DEG);  /* the branch line */
-        }
     } else {
         tm_printf((UB *)"[nav] command move aborted\n");
         enter(RC_NAV_STOPPED);
@@ -462,6 +540,7 @@ static void execute(rc_nav_cmd_t cmd, const char *source)
 {
     tm_printf((UB *)"[nav] %s command %d\n", source, (INT)cmd);
     cmd_at_junction = false;        /* on_line_sample sets it after this */
+    cmd_kind        = cmd;
     enter(RC_NAV_EXECUTING_CMD);
 
     switch (cmd) {
@@ -511,8 +590,8 @@ static void junction_fwd_done(uint32_t move_id, bool completed,
 
 /* Runs a stored barcode command at a junction. A turn first drives
  * NAV_JUNCTION_FWD_MM so it pivots over the junction; straight is a plain
- * NAV_STRAIGHT_MM move across it. Either way sub_line's sweep finds the
- * line when the move is done (cmd_done). */
+ * NAV_STRAIGHT_MM move across it. Either way a line scan finds the line
+ * when the move is done (cmd_done, junction_scan_begin). */
 static void execute_at_junction(rc_nav_cmd_t cmd)
 {
     if (cmd == RC_CMD_GO_STRAIGHT) {
@@ -546,8 +625,16 @@ static void enter(rc_nav_state_t next)
     }
     state = next;
     tmo_cancel();                   /* every timed state arms its own */
+    if (nav_scanning) {
+        /* a scan nav started belongs to the state being left */
+        line_scan_abort();
+        nav_scanning = false;
+    }
     if (next != RC_NAV_RECOVERING) {
         rejoin_start = false;
+    }
+    if ((next != RC_NAV_FOLLOWING) && (next != RC_NAV_READING_BARCODE)) {
+        reread = RR_NONE;           /* a re-read ends with the line */
     }
     tm_printf((UB *)"[nav] %s -> %s\n",
               sub_nav_state_name(prev), sub_nav_state_name(next));
@@ -642,7 +729,7 @@ static void enter(rc_nav_state_t next)
             (void)sub_scan_abort();
         }
         scan_pending = false;
-        pending_cmd  = RC_CMD_NONE;     /* a restart begins clean */
+        pending_set(RC_CMD_NONE, RC_SYM_NONE);  /* a restart begins clean */
         (void)sub_motion_stop(true);
         break;
     }
@@ -687,7 +774,8 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
 
-    if ((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE)) {
+    if (((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE))
+        || (reread == RR_BACK) || RC_STAND_SOAK) {
         return;     /* scan pings during AVOIDING land here too */
     }
     if (!RC_ULTRA_VALID(&evt->u.ultra)
@@ -760,76 +848,6 @@ static void on_plan(const rc_event_t *evt, void *ctx)
 static void rejoin_done(uint32_t move_id, bool completed,
                         uint32_t travelled_mm, void *ctx);
 
-/* Car heading during the line scan, 0.1 deg (> 0 left), from the
- * encoders: the mean wheel travel since this sweep began over
- * NAV_UM_PER_DEG. */
-static int32_t ls_heading(void)
-{
-    uint32_t dl = drv_encoder_count(RC_SIDE_LEFT) - ls_l0;
-    uint32_t dr = drv_encoder_count(RC_SIDE_RIGHT) - ls_r0;
-    uint32_t um = ((dl + dr) / 2U) * RC_ENC_UM_PER_TICK;
-
-    return ls_base + (ls_dir * (int32_t)((um * 10U) / NAV_UM_PER_DEG));
-}
-
-/* One sweep: spin in direction `dir` (+1 left) from heading `from` until
- * heading `limit` (rejoin_sample watches it). */
-static void ls_sweep_start(int32_t dir, int32_t from, int32_t limit)
-{
-    ls_base    = from;
-    ls_dir     = dir;
-    ls_limit   = limit;
-    ls_l0      = drv_encoder_count(RC_SIDE_LEFT);
-    ls_r0      = drv_encoder_count(RC_SIDE_RIGHT);
-    ls_seen[0] = 0U;
-    ls_seen[1] = 0U;
-    ls_prev[0] = false;
-    ls_prev[1] = false;
-    /* sub_motion steer > 0 turns right; dir > 0 is left */
-    (void)sub_motion_drive_speed(0, (int16_t)(-dir * ls_speed));
-}
-
-/* The line scan: after a bypass, first toward the plan side (the way
- * that turns the car back along the line), NAV_LINESCAN_SPARE_DEG past
- * the planned re-entry angle, then back to NAV_LINESCAN_SPARE_DEG past
- * the start; at START, NAV_START_SCAN_DEG left then right. The timeout
- * covers both sweeps. */
-static void ls_begin(void)
-{
-    int32_t  dir;
-    int32_t  first_deg;
-    uint32_t sweep_deg;
-
-    if (rejoin_start) {
-        dir         = 1;
-        first_deg   = NAV_START_SCAN_DEG;
-        ls_back_deg = NAV_START_SCAN_DEG;
-    } else {
-        dir         = (plan.action == RC_CMD_TURN_LEFT) ? 1 : -1;
-        first_deg   = NAV_BYPASS_IN_DEG + NAV_LINESCAN_SPARE_DEG;
-        ls_back_deg = NAV_LINESCAN_SPARE_DEG;
-    }
-    sweep_deg = (uint32_t)((2 * first_deg) + ls_back_deg);
-    ls_speed  = rejoin_start ? NAV_START_SCAN_MM_S : NAV_LINESCAN_MM_S;
-
-    rejoin   = RJ_SCAN;
-    ls_sweep = 0U;
-    /* um per degree / (mm per s) = ms per degree */
-    tmo_arm((RELTIM)(((sweep_deg * NAV_UM_PER_DEG) / (uint32_t)ls_speed)
-                     + NAV_RECOVER_SPARE_MS));
-    ls_sweep_start(dir, 0, dir * first_deg * 10);
-}
-
-/* The START line-up found no line (or never finished): start the run
- * with sub_line's sweep instead, so a car put down off the line still
- * gets going. */
-static void start_scan_missed(void)
-{
-    tm_printf((UB *)"[nav] start line scan found no line: sweep instead\n");
-    enter(RC_NAV_FOLLOWING);
-    (void)sub_line_find(0);
-}
-
 /* FR9 / FR12: give up, brake, and say so. */
 static void rejoin_fail(const char *why)
 {
@@ -841,108 +859,93 @@ static void rejoin_fail(const char *why)
     enter(RC_NAV_STOPPED);
 }
 
-/* RECOVERING's line samples (from on_line_sample). */
-static void rejoin_sample(const rc_pl_line_t *s)
+/* The START line-up found no line (or never finished): STOPPED. A wider
+ * search that stops on the first black either sensor touches could pick
+ * another line, a junction branch or a mark on the mat; the operator is at
+ * the car at START, so they put it on the line and send START again. */
+static void start_scan_missed(void)
 {
-    bool     on[2];
-    int32_t  h, d;
-    uint32_t i;
+    tm_printf((UB *)"[nav] start line scan found no line within %d deg:"
+              " place the car on the line and send START\n",
+              (INT)NAV_START_SCAN_DEG);
+    enter(RC_NAV_STOPPED);
+}
 
-    on[0] = s->on_line_l;
-    on[1] = s->on_line_r;
+/* RECOVERING's line scan ended (line_scan.c, FAST lane). */
+static void rejoin_scan_done(bool found, void *ctx)
+{
+    (void)ctx;
 
-    switch (rejoin) {
-    case RJ_SEEK:
-        if (on[0] || on[1]) {
-            tm_printf((UB *)"[nav] line found: driving onto it\n");
-            rejoin      = RJ_ONTO;
-            tmo_arm(NAV_CMD_TIMEOUT_MS);
-            rejoin_move = sub_motion_forward_mm(NAV_LINE_SENSOR_AHEAD_MM,
-                                                rejoin_done, NULL);
-            if (rejoin_move == 0U) {
-                enter(RC_NAV_STOPPED);
-            }
-        }
-        break;
-
-    case RJ_SCAN:
-        h = ls_heading();
-        for (i = 0U; i < 2U; i++) {
-            if (on[i] && !ls_prev[i] && (ls_seen[i] == 0U)) {
-                ls_on[i]   = h;
-                ls_seen[i] = 1U;
-            } else if (!on[i] && ls_prev[i] && (ls_seen[i] == 1U)) {
-                ls_off[i]  = h;
-                ls_seen[i] = 2U;
-            } else {
-                /* no change */
-            }
-            ls_prev[i] = on[i];
-        }
-        if ((ls_seen[0] == 2U) && (ls_seen[1] == 2U)) {
-            /* both sensors have crossed it: the line runs midway */
-            ls_target = (ls_on[0] + ls_off[0] + ls_on[1] + ls_off[1]) / 4;
-            tm_printf((UB *)"[nav] line scan: L %d..%d R %d..%d -> %d"
-                      " (0.1 deg)\n", (INT)ls_on[0], (INT)ls_off[0],
-                      (INT)ls_on[1], (INT)ls_off[1], (INT)ls_target);
-            (void)sub_motion_stop(true);
-            rejoin    = RJ_SETTLE;
-            ls_settle = NAV_LINESCAN_SETTLE;
-        } else if ((ls_dir * (h - ls_limit)) >= 0) {
-            if (ls_sweep == 0U) {
-                tm_printf((UB *)"[nav] line scan: sweeping back\n");
-                ls_sweep = 1U;
-                ls_sweep_start(-ls_dir, h, -ls_dir * ls_back_deg * 10);
-            } else {
-                (void)sub_motion_stop(true);
-                if (rejoin_start) {
-                    start_scan_missed();
-                } else {
-                    rejoin_fail("line scan found no line");
-                }
-            }
-        } else {
-            /* still sweeping */
-        }
-        break;
-
-    case RJ_SETTLE:
-        if (ls_settle > 0U) {
-            ls_settle--;
-            break;
-        }
-        d      = ls_target - ls_heading();      /* > 0: turn left */
-        rejoin = RJ_ALIGN;
-        if ((d > -20) && (d < 20)) {
-            tm_printf((UB *)"[nav] on the line\n");
-            enter(RC_NAV_FOLLOWING);
-        } else {
-            tmo_arm(NAV_CMD_TIMEOUT_MS);
-            /* sub_motion: deg < 0 turns left; rounded to the degree.
-             * Not bypass_turn(): the scan measured d in encoder degrees
-             * at the same spin speed, so the slip is already in it. */
-            rejoin_move = sub_motion_turn_deg(
-                (int16_t)(-((d + ((d > 0) ? 5 : -5)) / 10)), rejoin_done, NULL);
-            if (rejoin_move == 0U) {
-                enter(RC_NAV_STOPPED);
-            }
-        }
-        break;
-
-    case RJ_ONTO:
-    case RJ_ALIGN:
-    default:
-        break;                          /* a move is running */
+    nav_scanning = false;
+    if ((state != RC_NAV_RECOVERING) || (rejoin != RJ_SCAN)) {
+        return;
+    }
+    if (found) {
+        tm_printf((UB *)"[nav] on the line\n");
+        enter(RC_NAV_FOLLOWING);
+    } else if (rejoin_start) {
+        start_scan_missed();
+    } else {
+        rejoin_fail("line scan found no line");
     }
 }
 
+/* RECOVERING's line scan: the START line-up, or after a bypass toward the
+ * plan side first (see NAV_LINESCAN_SPARE_DEG). The scan keeps its own
+ * time limit, so the state timer stops. */
+static void ls_begin(void)
+{
+    line_scan_cfg_t c;
+
+    if (rejoin_start) {
+        c.first_dir  = 1;
+        c.quick_deg  = NAV_START_QUICK_DEG;
+        c.first_deg  = NAV_START_SCAN_DEG;
+        c.back_deg   = NAV_START_SCAN_DEG;
+        c.speed_mm_s = NAV_START_SCAN_MM_S;
+    } else {
+        c.first_dir  = (plan.action == RC_CMD_TURN_LEFT) ? 1 : -1;
+        c.quick_deg  = 0;
+        c.first_deg  = NAV_BYPASS_IN_DEG + NAV_LINESCAN_SPARE_DEG;
+        c.back_deg   = NAV_LINESCAN_SPARE_DEG;
+        c.speed_mm_s = NAV_LINESCAN_MM_S;
+    }
+    rejoin = RJ_SCAN;
+    tmo_cancel();
+    if (line_scan_start(&c, rejoin_scan_done, NULL) == RC_OK) {
+        nav_scanning = true;
+    } else {
+        tm_printf((UB *)"[nav] line scan refused\n");
+        enter(RC_NAV_STOPPED);
+    }
+}
+
+/* RECOVERING's line samples (from on_line_sample): the drive in, until a
+ * sensor sees the line. */
+static void rejoin_sample(const rc_pl_line_t *s)
+{
+    if ((rejoin != RJ_SEEK) || (!s->on_line_l && !s->on_line_r)) {
+        return;
+    }
+    tm_printf((UB *)"[nav] line found: driving onto it\n");
+    rejoin      = RJ_ONTO;
+    tmo_arm(NAV_CMD_TIMEOUT_MS);
+    rejoin_move = sub_motion_forward_mm(NAV_LINE_SENSOR_AHEAD_MM,
+                                        rejoin_done, NULL);
+    if (rejoin_move == 0U) {
+        enter(RC_NAV_STOPPED);
+    }
+}
+
+/* The drive onto the line ended: scan for it. */
 static void rejoin_done(uint32_t move_id, bool completed,
                         uint32_t travelled_mm, void *ctx)
 {
     (void)travelled_mm;
     (void)ctx;
 
-    if ((state != RC_NAV_RECOVERING) || (move_id != rejoin_move)) {
+    if ((state != RC_NAV_RECOVERING) || (move_id != rejoin_move)
+        || (rejoin != RJ_ONTO)) {
         return;
     }
     if (!completed) {
@@ -950,13 +953,144 @@ static void rejoin_done(uint32_t move_id, bool completed,
         enter(RC_NAV_STOPPED);
         return;
     }
-    if (rejoin == RJ_ONTO) {
-        ls_begin();
-    } else if (rejoin == RJ_ALIGN) {
-        tm_printf((UB *)"[nav] on the line\n");
-        enter(RC_NAV_FOLLOWING);
-    } else {
-        /* not expecting a move */
+    ls_begin();
+}
+
+/* ------------------------------------------------------------------ *
+ *  Barcode re-read
+ *
+ *  Pass 1 is the normal read while following. If its summary
+ *  (RC_EVT_BARCODE_SCAN, sent when the read ends, 2 s after its last
+ *  edge) shows a barcode but no letter (scan_needs_reread), pass 2
+ *  reverses over it with the decoder armed (Code 39 reads either way);
+ *  pass 3 follows the line forward over it again. A letter from any pass
+ *  is stored as usual (on_barcode). After pass 3 the car carries on
+ *  whatever it read. The reverse stays in READING_BARCODE, so the
+ *  dashboard shows a read in progress.
+ * ------------------------------------------------------------------ */
+
+/* Odometer: mean of both wheels' distance since the last move began
+ * (line following is not a move, so it runs on through a read). */
+static uint32_t odo_mm(void)
+{
+    return (drv_encoder_distance_mm(RC_SIDE_LEFT)
+            + drv_encoder_distance_mm(RC_SIDE_RIGHT)) / 2U;
+}
+
+/* Was this pass clearly over a barcode, yet gave no letter? Then it is
+ * worth reading again. More than NAV_REREAD_MIN_EDGES edges is well over
+ * one character (9 elements) and far more than a tile joint or speck; a
+ * pass that decoded only '*' still counts as no letter. text holds the
+ * first 3 symbols decoded. */
+#define NAV_REREAD_MIN_EDGES    (15U)
+
+static bool scan_needs_reread(const rc_pl_bar_scan_t *s)
+{
+    uint32_t i;
+
+    if (s->edges <= NAV_REREAD_MIN_EDGES) {
+        return false;
+    }
+    for (i = 0U; (i < sizeof(s->text)) && (s->text[i] != '\0'); i++) {
+        if (s->text[i] != '*') {
+            return false;       /* a letter was read */
+        }
+    }
+    return true;
+}
+
+/* The reverse (pass 2) ended: follow forward over the barcode again
+ * (pass 3). The decoder is re-armed so the reverse read is closed (and
+ * its summary sent, stamped before reread_fwd_us) before pass 3 starts. */
+static void reread_back_done(uint32_t move_id, bool completed,
+                             uint32_t travelled_mm, void *ctx)
+{
+    (void)travelled_mm;
+    (void)ctx;
+
+    if ((state != RC_NAV_READING_BARCODE) || (reread != RR_BACK)
+        || (move_id != reread_move)) {
+        return;
+    }
+    if (!completed) {
+        tm_printf((UB *)"[nav] barcode re-read: reverse aborted\n");
+        enter(RC_NAV_STOPPED);
+        return;
+    }
+    (void)sub_barcode_arm(false);
+    (void)sub_barcode_arm(true);
+    reread        = RR_FWD;
+    reread_fwd_us = rc_time_us();
+    tm_printf((UB *)"[nav] barcode re-read: pass 3, forward\n");
+    enter(RC_NAV_FOLLOWING);
+}
+
+/* Pass 2: reverse to NAV_REREAD_BACK_EXTRA_MM before where the read
+ * began. Not when the distance is unknown (a move reset the odometer) or
+ * longer than NAV_REREAD_MAX_MM. */
+static void reread_begin(void)
+{
+    uint32_t now = odo_mm();
+    uint32_t back;
+
+    if (now < read_start_mm) {
+        return;
+    }
+    back = (now - read_start_mm) + NAV_REREAD_BACK_EXTRA_MM;
+    if (back > NAV_REREAD_MAX_MM) {
+        tm_printf((UB *)"[nav] barcode re-read: %d mm is too far to"
+                  " reverse, carrying on\n", (INT)back);
+        return;
+    }
+    tm_printf((UB *)"[nav] barcode not read: pass 2, reversing %d mm\n",
+              (INT)back);
+    enter(RC_NAV_READING_BARCODE);
+    reread         = RR_BACK;
+    reread_got     = false;
+    reread_got_cmd = false;
+    (void)sub_line_enable(false);
+    (void)sub_scan_set_watch(false, 0U);
+    if (saved_cruise_mm_s == 0U) {
+        saved_cruise_mm_s = sub_motion_get_speed();
+    }
+    (void)sub_motion_set_speed(NAV_DETOUR_MM_S);
+    tmo_arm(NAV_REREAD_TIMEOUT_MS);
+    reread_move = sub_motion_backward_mm(back, reread_back_done, NULL);
+    if (reread_move == 0U) {
+        tm_printf((UB *)"[nav] barcode re-read: reverse refused\n");
+        enter(RC_NAV_STOPPED);
+    }
+}
+
+/* A read ended (sub_barcode, FAST lane): start a re-read, or end one. */
+static void on_bar_scan(const rc_event_t *evt, void *ctx)
+{
+    const rc_pl_bar_scan_t *s = &evt->u.bar_scan;
+
+    (void)ctx;
+
+    if ((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE)) {
+        return;
+    }
+    switch (reread) {
+    case RR_NONE:
+        if (scan_needs_reread(s)) {
+            reread_begin();
+        }
+        break;
+
+    case RR_FWD:
+        if ((int32_t)(evt->t_us - reread_fwd_us) < 0) {
+            break;          /* the reverse read, closed as pass 3 began */
+        }
+        tm_printf((UB *)"[nav] barcode re-read done (%s), carrying on\n",
+                  scan_needs_reread(s) ? "no letter on pass 3" : "read");
+        reread = RR_NONE;
+        break;
+
+    case RR_BACK:
+    default:
+        break;              /* the reverse is judged when it ends */
     }
 }
 
@@ -971,17 +1105,38 @@ static void on_barcode(const rc_event_t *evt, void *ctx)
 
     (void)ctx;
 
+    if ((reread != RR_NONE) && (b->sym != RC_SYM_STAR)) {
+        /* In a re-read a letter with a command (whichever letters
+         * sub_barcode maps to commands: b->command) replaces one without;
+         * otherwise the first letter stays, so pass 3 (or a late letter
+         * from the reverse read) cannot swap one command for another. */
+        bool has_cmd = (b->command != RC_CMD_NONE);
+
+        if (reread_got && (!has_cmd || reread_got_cmd)) {
+            tm_printf((UB *)"[nav] barcode re-read: '%c' ignored, already"
+                      " read\n", (INT)rc_sym_char(b->sym));
+            if ((state == RC_NAV_READING_BARCODE) && (reread == RR_FWD)) {
+                enter(RC_NAV_FOLLOWING);
+            }
+            return;
+        }
+        reread_got     = true;
+        reread_got_cmd = has_cmd;
+    }
+
     if (state == RC_NAV_FOLLOWING) {
         if (b->sym == RC_SYM_STAR) {
             enter(RC_NAV_READING_BARCODE);
         }
     } else if (state == RC_NAV_READING_BARCODE) {
         if (b->command != RC_CMD_NONE) {
-            pending_cmd    = b->command;    /* a newer barcode replaces it */
+            pending_set(b->command, (uint8_t)b->sym);   /* a newer one replaces it */
             junction_count = 0U;
             tm_printf((UB *)"[nav] barcode '%c': command %d stored for the"
                       " next junction\n", (INT)rc_sym_char(b->sym), (INT)b->command);
-            enter(RC_NAV_FOLLOWING);
+            if (reread != RR_BACK) {
+                enter(RC_NAV_FOLLOWING);    /* reversing: the move ends it */
+            }
         }
         /* '*' again (the stop character) or an unmapped symbol: keep
          * reading until the decode timeout. */
@@ -1008,7 +1163,11 @@ static void on_line_sample(const rc_event_t *evt, void *ctx)
         rejoin_sample(s);
         return;
     }
-    if ((pending_cmd == RC_CMD_NONE)
+    if (sub_line_reading() && !read_was_on) {
+        read_start_mm = odo_mm();   /* where a re-read reverses to */
+    }
+    read_was_on = sub_line_reading();
+    if ((pending_cmd == RC_CMD_NONE) || (reread == RR_BACK)
         || ((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE))
         || !s->on_line_l || !s->on_line_r || sub_line_reading()) {
         junction_count = 0U;
@@ -1017,7 +1176,7 @@ static void on_line_sample(const rc_event_t *evt, void *ctx)
     junction_count++;
     if (junction_count >= NAV_JUNCTION_CONFIRM) {
         cmd            = pending_cmd;
-        pending_cmd    = RC_CMD_NONE;
+        pending_set(RC_CMD_NONE, RC_SYM_NONE);
         junction_count = 0U;
         execute_at_junction(cmd);
     }
@@ -1070,7 +1229,8 @@ static void on_command_rx(const rc_event_t *evt, void *ctx)
         }
         return;
     }
-    if ((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE)) {
+    if (((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE))
+        || (reread == RR_BACK)) {
         tm_printf((UB *)"[nav] remote command %d ignored in %s\n",
                   (INT)cmd, sub_nav_state_name(state));
         return;
@@ -1118,6 +1278,12 @@ static void on_timeout(const rc_event_t *evt, void *ctx)
         break;
 
     case RC_NAV_READING_BARCODE:
+        if (reread == RR_BACK) {
+            tm_printf((UB *)"[nav] barcode re-read: reverse never"
+                      " finished\n");
+            enter(RC_NAV_STOPPED);
+            break;
+        }
         tm_printf((UB *)"[nav] barcode not decoded, carrying on\n");
         enter(RC_NAV_FOLLOWING);
         break;
@@ -1153,6 +1319,8 @@ rc_result_t sub_nav_init(void)
                                on_plan, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_BARCODE_DECODED, RC_LANE_FAST,
                                on_barcode, NULL) < 0)
+        || (rc_event_subscribe(RC_EVT_BARCODE_SCAN, RC_LANE_FAST,
+                               on_bar_scan, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_LIFTED, RC_LANE_FAST,
                                on_lifted, NULL) < 0)
         || (rc_event_subscribe(RC_EVT_COMMAND_RX, RC_LANE_FAST,
@@ -1184,13 +1352,17 @@ rc_result_t sub_nav_start(void)
      * before this, in subsystemN_init()/_start(), which usermain() has
      * already run. */
     scan_pending   = false;
-    pending_cmd    = RC_CMD_NONE;
+    pending_set(RC_CMD_NONE, RC_SYM_NONE);
     junction_count = 0U;
     /* the car stands on the track: that is level for the IMU, and START
      * acknowledges an earlier lift or watchdog reset */
     sub_terrain_level_here();
     rc_fault_clear(RC_FAULT_LIFTED | RC_FAULT_WDOG_RESET);
     /* line up on the line first (NAV_START_SCAN_DEG), then FOLLOWING */
+    if (RC_STAND_SOAK) {
+        enter(RC_NAV_FOLLOWING);    /* stand soak: no line-up scan */
+        return RC_OK;
+    }
     rejoin_start   = true;
     enter(RC_NAV_RECOVERING);
     return RC_OK;
