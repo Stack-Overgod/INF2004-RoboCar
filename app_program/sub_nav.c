@@ -32,6 +32,7 @@
 #include "rc_config.h"
 #include "rc_event.h"
 #include "rc_fault.h"
+#include "rc_time.h"
 #include "subsystem2/sub_motion.h"
 #include "subsystem2/drv_encoder.h"
 #include "subsystem3/sub_line.h"
@@ -168,6 +169,31 @@
 #define NAV_RECOVER_SPARE_MS    (2000U)  /* ramps and settling */
 #define NAV_BARCODE_TIMEOUT_MS  (6000)
 #define NAV_CMD_TIMEOUT_MS      (5000)
+/*   AVOID    Backstop for each AVOIDING step (approach + step scan, then
+ *            each bypass leg), for a plan or MOTION_DONE that never comes.
+ *            The step scan takes ~6-10 s; the longest leg is ~300 mm at
+ *            NAV_DETOUR_MM_S (~10 s), and sub_motion gives up on a move
+ *            itself after twice its expected time plus a margin. 30 s is
+ *            past all of those, so it only fires when an answer was lost. */
+#define NAV_AVOID_TIMEOUT_MS    (30000)
+
+/* Fault response limits (see "Fault response").
+ *   ULTRA_STALE  No forward-watch result at all for this long while
+ *                following = the ultrasonic chain has stopped (driver,
+ *                defer task or scan task). The watch pings every
+ *                RC_PERIOD_SCAN_MS plus up to RC_ULTRA_TIMEOUT_US, i.e.
+ *                ~60-90 ms, so 500 ms is 5 or more pings missed.
+ *   HOLD         How long HOLDING waits for the ultrasonic to answer
+ *                again before giving up in STOPPED.
+ *   BOTH_BLACK   Both line sensors black for this long while following.
+ *                The pair straddles the 18 mm line, so 1/1 means a
+ *                crossing line or a barcode bar, which pass in well under
+ *                a second at ~30 mm/s. 2 s of it means the sensors see no
+ *                floor (car lifted: air reads black) or a sensor is stuck
+ *                or unplugged. The same 2 s as sub_line's 0/0 loss limit. */
+#define NAV_ULTRA_STALE_MS      (500U)
+#define NAV_HOLD_TIMEOUT_MS     (5000)
+#define NAV_BOTH_BLACK_MS       (2000U)
 
 /* The obstacle detour (AVOIDING's turns and moves, and RECOVERING's
  * drive back to the line) runs at the line-following speed, not the
@@ -243,6 +269,15 @@ static rc_nav_cmd_t junction_turn;
 static ID                tmo_almid;
 static volatile uint32_t tmo_gen;
 
+/* Fault response state (FAST lane only). fault_prev = the fault mask at
+ * the last check, so a stop fault acts once, when its bit goes up;
+ * ultra_seen_us = when the last forward-watch result arrived;
+ * black_since_us / black_on = start of the current 1/1 run. */
+static uint32_t fault_prev;
+static uint32_t ultra_seen_us;
+static uint32_t black_since_us;
+static bool     black_on;
+
 static void enter(rc_nav_state_t next);
 static void ls_begin(void);
 
@@ -256,6 +291,7 @@ const char *sub_nav_state_name(rc_nav_state_t s)
     case RC_NAV_AVOIDING:        return "AVOIDING";
     case RC_NAV_RECOVERING:      return "RECOVERING";
     case RC_NAV_STOPPED:         return "STOPPED";
+    case RC_NAV_HOLDING:         return "HOLDING";
     default:                     return "?";
     }
 }
@@ -400,6 +436,8 @@ static void bypass_next(void)
         tm_printf((UB *)"[nav] bypass step %d refused by sub_motion\n",
                   (INT)bypass_step);
         enter(RC_NAV_STOPPED);
+    } else {
+        tmo_arm(NAV_AVOID_TIMEOUT_MS);
     }
 }
 
@@ -578,6 +616,10 @@ static void enter(rc_nav_state_t next)
             (void)sub_barcode_arm(true);
         }
         (void)sub_scan_set_watch(true, NAV_WATCH_TRIGGER_MM);
+        /* the watch may only just have started: the stale-result check
+         * counts from here, and a 1/1 run from the next sample */
+        ultra_seen_us = rc_time_us();
+        black_on      = false;
         break;
 
     case RC_NAV_READING_BARCODE:
@@ -607,6 +649,22 @@ static void enter(rc_nav_state_t next)
         (void)sub_barcode_arm(false);
         (void)sub_scan_set_watch(false, 0U);
         (void)sub_motion_stop(true);
+        tmo_arm(NAV_AVOID_TIMEOUT_MS);  /* re-armed for each step */
+        break;
+
+    case RC_NAV_HOLDING:
+        /* The forward watch cannot see (fault response): stand still on
+         * the line rather than drive on blind. The watch keeps pinging so
+         * on_ultra can see it answer again and resume FOLLOWING; a stored
+         * junction command is kept for then. The barcode read in
+         * progress is dropped: the car is not moving over it. */
+        (void)sub_line_enable(false);
+        (void)sub_barcode_arm(false);
+        (void)sub_scan_set_watch(true, NAV_WATCH_TRIGGER_MM);
+        (void)sub_motion_stop(true);
+        junction_count = 0U;
+        ultra_seen_us  = rc_time_us();
+        tmo_arm(NAV_HOLD_TIMEOUT_MS);
         break;
 
     case RC_NAV_RECOVERING:
@@ -658,6 +716,7 @@ static void start_measure(void)
 {
     if (sub_scan_start_measure() == RC_OK) {
         scan_pending = true;
+        tmo_arm(NAV_AVOID_TIMEOUT_MS);
     } else {
         tm_printf((UB *)"[nav] scan refused\n");
         enter(RC_NAV_STOPPED);
@@ -687,6 +746,17 @@ static void on_ultra(const rc_event_t *evt, void *ctx)
 {
     (void)ctx;
 
+    if (evt->u.ultra.angle_deg == NAV_WATCH_ANGLE_DEG) {
+        ultra_seen_us = rc_time_us();   /* the watch chain is alive */
+    }
+    if ((state == RC_NAV_HOLDING)
+        && (evt->u.ultra.angle_deg == NAV_WATCH_ANGLE_DEG)
+        && ((rc_fault_get() & RC_FAULT_NO_ECHO) == 0U)) {
+        /* drv_ultrasonic updates NO_ECHO before it publishes, so the
+         * sensor answered this ping: the watch can see again */
+        tm_printf((UB *)"[nav] ultrasonic answering again, resuming\n");
+        enter(RC_NAV_FOLLOWING);
+    }
     if ((state != RC_NAV_FOLLOWING) && (state != RC_NAV_READING_BARCODE)) {
         return;     /* scan pings during AVOIDING land here too */
     }
@@ -960,6 +1030,145 @@ static void rejoin_done(uint32_t move_id, bool completed,
     }
 }
 
+/* ------------------------------------------------------------------ *
+ *  Fault response
+ *
+ *  Every subsystem flags bad or missing data in the shared fault mask
+ *  (rc_fault.h); this is where the run reacts to it, so no part of the
+ *  car carries on as if a lost measurement were still good. Checked on
+ *  every line sample (RC_PERIOD_LINE_MS, FAST lane), so a response comes
+ *  within one sample of the fault. If the Sense task that produces those
+ *  samples stops, the watchdog (rc_wdog.c) resets the car, which then
+ *  waits in IDLE for START.
+ *
+ *  Three responses:
+ *    STOP      the car cannot move safely or knows nothing about where it
+ *              is going: STOPPED (motors braked), a person must look and
+ *              press START. Acts once, when the bit goes up.
+ *    HOLD      the car cannot see ahead but could carry on once it can:
+ *              HOLDING (braked on the line) while the bit is up, then
+ *              FOLLOWING again; STOPPED after NAV_HOLD_TIMEOUT_MS.
+ *    CARRY_ON  the mission does not need the lost function: the run
+ *              carries on without it and the fault shows on the
+ *              dashboard (telemetry sends the mask).
+ *
+ *  Two checks use the data directly instead of a bit: a forward watch
+ *  that has gone silent (NAV_ULTRA_STALE_MS) holds like NO_ECHO, and both
+ *  line sensors black for NAV_BOTH_BLACK_MS stops like a lift.
+ * ------------------------------------------------------------------ */
+
+typedef enum {
+    FR_CARRY_ON = 0,
+    FR_HOLD,
+    FR_STOP
+} fault_resp_t;
+
+typedef struct {
+    uint32_t     bit;
+    const char  *name;
+    fault_resp_t resp;
+    const char  *why;
+} fault_rule_t;
+
+static const fault_rule_t fault_rules[] = {
+    { RC_FAULT_MOTOR_STALL, "MOTOR_STALL", FR_STOP,
+      "both wheels pushed but not turning: the car is blocked" },
+    { RC_FAULT_ENCODER,     "ENCODER",     FR_STOP,
+      "one wheel's speed unknown: the speed loop and turns are blind" },
+    { RC_FAULT_IMU,         "IMU",         FR_CARRY_ON,
+      "no hump or lift detection; both-black line sensors still stop a"
+      " lifted car" },
+    { RC_FAULT_NO_ECHO,     "NO_ECHO",     FR_HOLD,
+      "ultrasonic not answering: obstacles cannot be seen" },
+    { RC_FAULT_WIFI_LOSS,   "WIFI_LOSS",   FR_CARRY_ON,
+      "no telemetry or remote commands; the run is autonomous" },
+    { RC_FAULT_LIFTED,      "LIFTED",      FR_STOP,
+      "lifted or overturned" },
+    { RC_FAULT_BARCODE_ADC, "BARCODE_ADC", FR_CARRY_ON,
+      "no barcode commands; line following goes on" },
+    { RC_FAULT_WDOG_RESET,  "WDOG_RESET",  FR_CARRY_ON,
+      "the car restarted after a hang and waited for START" },
+};
+
+#define FAULT_RULES     (sizeof(fault_rules) / sizeof(fault_rules[0]))
+
+/* The both-black stop. Off in a TEST build: the self-tests run on the
+ * stand, where both sensors see air and read black the whole time. */
+#define NAV_BOTH_BLACK_STOP     (!APP_TEST)
+
+/* Run the fault response for one line sample. True if it changed the
+ * state, in which case the sample is not used for anything else. */
+static bool fault_check(const rc_pl_line_t *s)
+{
+    uint32_t now      = rc_fault_get();
+    uint32_t risen    = now & ~fault_prev;
+    bool     stop     = false;
+    bool     hold     = false;
+    bool     watching = (state == RC_NAV_FOLLOWING)
+                        || (state == RC_NAV_READING_BARCODE);
+    uint32_t i;
+
+    fault_prev = now;
+    if ((state == RC_NAV_IDLE) || (state == RC_NAV_STOPPED)) {
+        return false;               /* nothing is moving */
+    }
+
+    for (i = 0U; i < FAULT_RULES; i++) {
+        const fault_rule_t *r = &fault_rules[i];
+
+        if ((risen & r->bit) != 0U) {
+            tm_printf((UB *)"[nav] fault %s in %s: %s\n", r->name,
+                      sub_nav_state_name(state), r->why);
+            if (r->resp == FR_STOP) {
+                stop = true;
+            }
+        }
+        if ((r->resp == FR_HOLD) && ((now & r->bit) != 0U)) {
+            hold = true;
+        }
+    }
+    if (stop) {
+        enter(RC_NAV_STOPPED);
+        return true;
+    }
+    if (!watching) {
+        return false;               /* the watch is off in the other states */
+    }
+
+    if (!hold && (rc_time_since(ultra_seen_us)
+                  > (NAV_ULTRA_STALE_MS * 1000U))) {
+        tm_printf((UB *)"[nav] no ultrasonic result for %d ms: holding\n",
+                  (INT)NAV_ULTRA_STALE_MS);
+        hold = true;
+    }
+    if (hold) {
+        enter(RC_NAV_HOLDING);
+        return true;
+    }
+
+#if NAV_BOTH_BLACK_STOP
+    if (s->on_line_l && s->on_line_r) {
+        if (!black_on) {
+            black_on       = true;
+            black_since_us = rc_time_us();
+        } else if (rc_time_since(black_since_us)
+                   > (NAV_BOTH_BLACK_MS * 1000U)) {
+            tm_printf((UB *)"[nav] both line sensors black for %d ms (lifted,"
+                      " or a sensor fault): stopping\n", (INT)NAV_BOTH_BLACK_MS);
+            enter(RC_NAV_STOPPED);
+            return true;
+        } else {
+            /* still within a crossing's time */
+        }
+    } else {
+        black_on = false;
+    }
+#else
+    (void)s;
+#endif
+    return false;
+}
+
 /* FR3 / report §6.5: '*' (start or stop character) opens READING_BARCODE;
  * a data character while reading is STORED (pending_cmd) and run at the
  * next junction (on_line_sample), not at once. A data character seen in
@@ -1004,6 +1213,9 @@ static void on_line_sample(const rc_event_t *evt, void *ctx)
 
     (void)ctx;
 
+    if (fault_check(s)) {
+        return;
+    }
     if (state == RC_NAV_RECOVERING) {
         rejoin_sample(s);
         return;
@@ -1124,6 +1336,17 @@ static void on_timeout(const rc_event_t *evt, void *ctx)
 
     case RC_NAV_EXECUTING_CMD:
         tm_printf((UB *)"[nav] command move never finished\n");
+        enter(RC_NAV_STOPPED);
+        break;
+
+    case RC_NAV_AVOIDING:
+        tm_printf((UB *)"[nav] avoidance step never finished\n");
+        enter(RC_NAV_STOPPED);
+        break;
+
+    case RC_NAV_HOLDING:
+        tm_printf((UB *)"[nav] ultrasonic still not answering after %d ms\n",
+                  (INT)NAV_HOLD_TIMEOUT_MS);
         enter(RC_NAV_STOPPED);
         break;
 

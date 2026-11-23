@@ -15,8 +15,8 @@
  *                                        the other turns
  *    2    IMU                 Buddy 4    IMU not ready, read        a good read
  *                                        failed or readings frozen
- *    3    NO_ECHO             Buddy 5    ultrasonic timeout / out   a valid echo
- *                                        of range
+ *    3    NO_ECHO             Buddy 5    3 pings in a row the       the sensor
+ *                                        sensor never answered      answers
  *    4    WIFI_LOSS           Buddy 1    WiFi or broker down        link back up
  *    5    LIFTED              Buddy 4    lifted or overturned       START command
  *    6    BARCODE_ADC         Buddy 3    ADC set-up failed at boot  never
@@ -24,6 +24,8 @@
  *                                        watchdog's (rc_wdog.c)
  *
  *  8 bits used; telemetry sends the low 8 (subsystem1/tm_frame.c).
+ *  What the run does about each bit (stop, hold or carry on) is decided
+ *  in one place: sub_nav.c, "Fault response".
  *  Set from an ISR is fine (tk_set_flg is ISR-callable); clear only from
  *  task context.
  */

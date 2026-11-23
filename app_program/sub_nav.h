@@ -15,7 +15,11 @@
  *  FR3/FR10b); the obstacle path (watch ping -> AVOIDING -> step scan ->
  *  plan -> bypass -> RECOVERING -> FOLLOWING); the FR9 recovery timeout;
  *  STOPPED (remote STOP, LIFTED, aborted move, failed recovery, no safe
- *  route). Not built: reverse-and-reattempt (G5).
+ *  route); the fault response (sub_nav.c "Fault response"): a stalled
+ *  wheel, a dead encoder or line sensors that read black for too long
+ *  stop the run, a blind ultrasonic holds the car in HOLDING until it
+ *  answers again, and the other faults let the run carry on with that
+ *  function missing. Not built: reverse-and-reattempt (G5).
  */
 #ifndef SUB_NAV_H
 #define SUB_NAV_H
@@ -29,7 +33,10 @@ typedef enum {
     RC_NAV_EXECUTING_CMD,       /* a barcode / remote turn is running    */
     RC_NAV_AVOIDING,            /* scanning, then driving the bypass     */
     RC_NAV_RECOVERING,          /* rejoining the line (bypass / START)   */
-    RC_NAV_STOPPED              /* motors braked; sub_nav_start() leaves */
+    RC_NAV_STOPPED,             /* motors braked; sub_nav_start() leaves */
+    RC_NAV_HOLDING              /* motors braked until the ultrasonic
+                                 * answers again, then FOLLOWING; the
+                                 * last value telemetry's 3 bits hold    */
 } rc_nav_state_t;
 
 /* Create the state timer and subscribe to the events below. Call once

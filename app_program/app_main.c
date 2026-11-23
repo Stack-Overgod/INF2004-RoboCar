@@ -197,8 +197,14 @@ EXPORT INT usermain(void)
 #else
 	/* No MQTT: nothing can send START, so start the run now. START goes
 	   through the event bus like a dashboard START, so sub_nav (and the
-	   sub_terrain re-level it does) runs on the FAST lane that owns it. */
-	if (sub_nav_inject_command(RC_CMD_START, 0) != RC_OK) {
+	   sub_terrain re-level it does) runs on the FAST lane that owns it.
+	   Not after a watchdog reset (rc_wdog_boot set WDOG_RESET): the car
+	   restarted because something hung, possibly in the middle of a
+	   manoeuvre and off the line, so it stays in IDLE until a person
+	   resets it. */
+	if ((rc_fault_get() & RC_FAULT_WDOG_RESET) != 0U) {
+		tm_printf((UB*)"start: watchdog reset, staying in IDLE\n");
+	} else if (sub_nav_inject_command(RC_CMD_START, 0) != RC_OK) {
 		tm_printf((UB*)"ERROR START\n");
 	}
 #endif

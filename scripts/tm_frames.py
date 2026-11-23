@@ -66,7 +66,7 @@ FRAMES = {
 }
 
 NAV_STATES = ["IDLE", "FOLLOWING", "READING_BARCODE", "EXECUTING_CMD",
-              "AVOIDING", "RECOVERING", "STOPPED"]
+              "AVOIDING", "RECOVERING", "STOPPED", "HOLDING"]
 FAULTS = ["MOTOR_STALL", "ENCODER", "IMU", "NO_ECHO", "WIFI_LOSS", "LIFTED",
           "BARCODE_ADC", "WDOG_RESET"]
 SINKS = ["console", "mqtt", "other", "other"]

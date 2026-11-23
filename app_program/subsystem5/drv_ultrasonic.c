@@ -58,8 +58,14 @@ static volatile uint32_t      t_rise;
 /* servo angle this ping was taken at, so the result can be matched back to a
  * bearing */
 static volatile int16_t       tag_angle;
-/* last reading had an echo; RC_FAULT_NO_ECHO is its inverse (defer task) */
+/* RC_FAULT_NO_ECHO: set after ULTRA_MISS_N pings in a row that the sensor
+ * never answered (ECHO never rose), cleared by the next answer. A ping it
+ * answered with nothing in range (ECHO rose but stayed high past the
+ * timeout) is a good reading of "clear ahead", not a fault. Three misses
+ * (~200 ms of watch pings) ride out a single lost ping. Defer task only. */
+#define ULTRA_MISS_N        (3U)
 static bool                   echo_ok = true;
+static uint32_t               miss_n;
 /* optional callback registered via drv_ultrasonic_on_result() */
 static drv_ultra_cb_t         user_cb;
 /* the free-form context pointer handed back unchanged to user_cb */
@@ -73,6 +79,9 @@ static int32_t                defer_h = -1;
 static volatile uint32_t      result_width_us;
 /* true if a real echo was measured; false if we timed out instead */
 static volatile bool          result_valid;
+/* true if ECHO rose at all (the sensor answered), even if it then timed
+ * out; false if it never rose */
+static volatile bool          result_answered;
 /* true once finish_i() has something for ultra_drain() to process */
 static volatile bool          result_ready;
 
@@ -137,13 +146,14 @@ static void alarm_cancel(uint32_t n)
  *  length of a task hop would let a ringing 5 V divider generate spurious
  *  edges that the state machine would then have to filter.
  */
-static void finish_i(uint32_t width_us, bool valid)
+static void finish_i(uint32_t width_us, bool valid, bool answered)
 {
     (void)rc_gpioirq_enable(RC_PIN_ULTRA_ECHO, false);
     alarm_cancel(ALARM_TMO);
 
     result_width_us = width_us;
     result_valid    = valid;
+    result_answered = answered;
     result_ready    = true;
     state           = ST_IDLE;
 
@@ -163,6 +173,7 @@ static void ultra_drain(void *ctx)
     uint32_t   mm = 0U;
     uint32_t   width;
     bool       valid;
+    bool       answered;
 
     (void)ctx;
 
@@ -171,8 +182,9 @@ static void ultra_drain(void *ctx)
     }
     result_ready = false;
 
-    width = result_width_us;
-    valid = result_valid;
+    width    = result_width_us;
+    valid    = result_valid;
+    answered = result_answered;
 
     if (valid) {
         mm = US_TO_MM(width);
@@ -191,13 +203,21 @@ static void ultra_drain(void *ctx)
     if (valid && (evt.u.ultra.range_mm == 0U)) {
         evt.u.ultra.range_mm = 1U;      /* keep 0 meaning "no echo" */
     }
-    if (valid != echo_ok) {
-        if (valid) {
+    /* before the publish: sub_nav reads the fault when the event lands */
+    if (answered) {
+        miss_n = 0U;
+        if (!echo_ok) {
             rc_fault_clear(RC_FAULT_NO_ECHO);
-        } else {
-            rc_fault_set(RC_FAULT_NO_ECHO);
+            echo_ok = true;
         }
-        echo_ok = valid;
+    } else if (miss_n < ULTRA_MISS_N) {
+        miss_n++;
+        if ((miss_n >= ULTRA_MISS_N) && echo_ok) {
+            rc_fault_set(RC_FAULT_NO_ECHO);
+            echo_ok = false;
+        }
+    } else {
+        /* still not answering; the fault is already up */
     }
     (void)rc_event_publish(&evt);
 
@@ -258,8 +278,10 @@ static void timeout_handler(UINT intno)
     clr_w(TIMER_INTF, (1U << ALARM_TMO));
 
     if (state != ST_IDLE) {
-        /* 0 width, not valid — see finish_i/ultra_drain */
-        finish_i(0U, false);
+        /* 0 width, not valid — see finish_i/ultra_drain. Still waiting
+         * for the rise = the sensor never answered; waiting for the fall
+         * = it answered but nothing reflected within range. */
+        finish_i(0U, false, (state == ST_WAIT_FALL));
     }
     EndOfInt(INTNO_TIMER_2);
 }
@@ -283,7 +305,7 @@ static void echo_isr(uint32_t pin, bool level, uint32_t t_us, void *ctx)
         t_rise = t_us;
         state  = ST_WAIT_FALL;
     } else if ((state == ST_WAIT_FALL) && !level) {
-        finish_i(t_us - t_rise, true);
+        finish_i(t_us - t_rise, true, true);
     } else {
         /* Spurious edge (ringing on the 5 V divider), ignore. */
     }

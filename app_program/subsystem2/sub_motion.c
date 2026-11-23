@@ -1091,6 +1091,10 @@ rc_result_t sub_motion_drive_speed(int16_t base_mm_s, int16_t steer_mm_s)
         res = RC_ERR_HARDWARE;          /* until stop() or a queued move */
     } else {
         if (mode != MODE_SPEED) {
+            /* a fresh drive, like a new queued move, clears the stall /
+             * encoder bits of the last one, so a new stall raises them
+             * again and sub_nav sees it */
+            rc_fault_clear(RC_FAULT_MOTOR_STALL | RC_FAULT_ENCODER);
             for (i = 0U; i < 2U; i++) {
                 wheels[i].stall_cycles = 0U;
                 pid_reset(&wheels[i].pid, wheels[i].meas);
